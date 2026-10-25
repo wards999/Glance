@@ -7,6 +7,7 @@
 #include <vector>
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+    trace("---- start");
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     std::vector<std::wstring> paths;

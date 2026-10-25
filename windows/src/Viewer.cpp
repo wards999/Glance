@@ -82,6 +82,21 @@ const std::unordered_set<std::wstring>& supportedExtensions() {
     return extensions;
 }
 
+ComPtr<ID3D11Device> createDevice() {
+    const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1,
+                                        D3D_FEATURE_LEVEL_10_0};
+    ComPtr<ID3D11Device> device;
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                   levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, device.put(), nullptr, nullptr);
+    if (FAILED(hr)) {
+        // No usable GPU (remote desktop, broken driver): software rendering still works.
+        D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels,
+                          ARRAYSIZE(levels), D3D11_SDK_VERSION, device.put(), nullptr, nullptr);
+    }
+    trace("GPU device created");
+    return device;
+}
+
 std::wstring fileName(const std::wstring& path) {
     size_t slash = path.find_last_of(L"\\/");
     return slash == std::wstring::npos ? path : path.substr(slash + 1);
@@ -98,6 +113,7 @@ Viewer::~Viewer() {
 // MARK: - Window
 
 bool Viewer::create() {
+    pendingDevice_ = std::async(std::launch::async, createDevice);
     WNDCLASSEXW wc{sizeof(wc)};
     wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = windowProc;
@@ -124,13 +140,15 @@ bool Viewer::create() {
     size_t costLimit = static_cast<size_t>(std::min<ULONGLONG>(memory.ullTotalPhys / 4, ULONGLONG(4) << 30));
     unsigned threads = std::clamp(std::thread::hardware_concurrency() / 4, 2u, 4u);
     pipeline_ = std::make_unique<Pipeline>(hwnd_, WM_APP_DECODED, costLimit, threads);
+    trace("window and decoder threads created");
     return true;
 }
 
 void Viewer::show(int showCommand) {
     ShowWindow(hwnd_, showCommand);
     UpdateWindow(hwnd_);
-    // Set up the GPU while the first image decodes on a worker thread.
+    trace("window shown");
+    // Finish setting up the GPU while the first image decodes on a worker thread.
     if (initGraphics() && current_) {
         shown_ = gpuFor(currentKey_, current_);
         applyZoomMode();
@@ -579,6 +597,7 @@ void Viewer::show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, b
 
 void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
     if (waiting_ && result->key == wantedKey_) {
+        trace("decode delivered");
         waiting_ = false;
         if (result->image) {
             show(result->key, result->image, true);
@@ -775,15 +794,9 @@ D2D1_MATRIX_3X2_F Viewer::imageTransform() const {
 // MARK: - Graphics
 
 bool Viewer::initGraphics() {
-    const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1,
-                                        D3D_FEATURE_LEVEL_10_0};
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                                   levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, d3d_.put(), nullptr, nullptr);
-    if (FAILED(hr)) {
-        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels,
-                               ARRAYSIZE(levels), D3D11_SDK_VERSION, d3d_.put(), nullptr, nullptr);
-    }
-    if (FAILED(hr)) return false;
+    // The device started at launch; after a GPU reset, make a new one here.
+    d3d_ = pendingDevice_.valid() ? pendingDevice_.get() : createDevice();
+    if (!d3d_) return false;
     if (!d2dFactory_ && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), nullptr,
                                                  reinterpret_cast<void**>(d2dFactory_.put())))) {
         return false;
@@ -816,6 +829,7 @@ bool Viewer::initGraphics() {
     const D2D1_COLOR_F white{1, 1, 1, 0.9f};
     context_->CreateSolidColorBrush(&white, nullptr, brush_.put());
     maxBitmapSize_ = context_->GetMaximumBitmapSize();
+    trace("Direct2D ready");
     return true;
 }
 
@@ -928,6 +942,11 @@ void Viewer::render() {
 
     HRESULT hr = context_->EndDraw();
     if (SUCCEEDED(hr)) hr = swapChain_->Present(1, 0);
+    static bool firstImagePresented = false;
+    if (!firstImagePresented && shown_) {
+        firstImagePresented = true;
+        trace("first image presented");
+    }
     if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
         // GPU reset or driver update: rebuild everything and draw again.
         releaseGraphics();

@@ -7,6 +7,7 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 
+#include <future>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -87,6 +88,9 @@ private:
 
     HINSTANCE instance_;
     HWND hwnd_ = nullptr;
+    /// Creating the Direct3D device loads the GPU driver, which is slow; it starts on another
+    /// thread the moment the app does, in parallel with the window and the first decode.
+    std::future<ComPtr<ID3D11Device>> pendingDevice_;
     std::unique_ptr<Pipeline> pipeline_;
     Navigator navigator_;
 
