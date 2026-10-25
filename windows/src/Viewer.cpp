@@ -1840,7 +1840,7 @@ bool Viewer::ensureText() {
                                   DWRITE_FONT_STRETCH_NORMAL, 13.0f * dpi / 96.0f, L"", textFormat_.put());
         textFormatDpi_ = dpi;
     }
-    return textFormat_ != nullptr;
+    return static_cast<bool>(textFormat_);
 }
 
 void Viewer::drawBusyNote() {
