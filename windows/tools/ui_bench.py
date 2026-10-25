@@ -170,7 +170,7 @@ def main():
     if sys.argv[1].startswith("--launches="):
         count = int(sys.argv[1].split("=")[1])
         folder, viewers = sys.argv[2], sys.argv[3:]
-        images = sorted(f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png")))
+        images = sorted(f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png", ".pdf")))
         screen = Screen()
         for viewer in viewers:
             times = launches(viewer, os.path.join(folder, images[0]), screen, count)
@@ -178,7 +178,8 @@ def main():
             print(f"{os.path.basename(viewer)} launch to photo (ms): {shown}")
         return
     folder, viewers = sys.argv[1], sys.argv[2:]
-    images = sorted(f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png")))
+    # A PDF's page turns are timed the same way as flipping images.
+    images = sorted(f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png", ".pdf")))
     first = os.path.join(folder, images[0])
     screen = Screen()
     print(f"{len(images)} images in {folder}; first: {images[0]}\n")

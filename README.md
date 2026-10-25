@@ -122,9 +122,12 @@ and the window always agree.
 
 `windows/` is a native C++ port: Win32, WIC decoding (with JPEG decoded directly at 1/2, 1/4 or
 1/8 size), Direct2D on the GPU, the same decode-ahead pipeline, and no runtime to install (about
-280 KB). So far it has the core viewer: open, folder navigation, zoom, pan, rotate, a drag
-rectangle to zoom, borderless full screen and a right-click menu. Settings, editing and PDF come
-next.
+480 KB). It has the viewer (folder navigation, zoom, pan, drag-to-zoom, borderless full screen,
+slideshow, info overlay), a JPEGView-style right-click menu, a Settings dialog, GPU adjustments
+(brightness, contrast, saturation, gamma, sharpen, colour balance, auto correction), crop
+(Ctrl+drag, Enter), Save processed image (Ctrl+S), lossless JPEG rotation, and PDF reading with
+magazine spreads, right to left, hold to zoom and zoom kept across page turns (MSVC builds, using
+Windows' built-in PDF renderer).
 
 It builds on GitHub's Windows machines (the **Build Windows** workflow) with MSVC, or locally with
 `windows/build.sh` (MinGW) or CMake.
