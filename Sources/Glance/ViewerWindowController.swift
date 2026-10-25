@@ -253,12 +253,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         content.addSubview(controlBar)
 
         NSLayoutConstraint.activate([
-            infoLabel.leadingAnchor.constraint(equalTo: infoBox.leadingAnchor, constant: 10),
-            infoLabel.trailingAnchor.constraint(equalTo: infoBox.trailingAnchor, constant: -10),
-            infoLabel.topAnchor.constraint(equalTo: infoBox.topAnchor, constant: 8),
-            infoLabel.bottomAnchor.constraint(equalTo: infoBox.bottomAnchor, constant: -8),
-            infoBox.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
-            infoBox.topAnchor.constraint(equalTo: content.topAnchor, constant: 36),
+            infoLabel.leadingAnchor.constraint(equalTo: infoBox.leadingAnchor, constant: 14),
+            infoLabel.trailingAnchor.constraint(equalTo: infoBox.trailingAnchor, constant: -14),
+            infoLabel.topAnchor.constraint(equalTo: infoBox.topAnchor, constant: 10),
+            infoLabel.bottomAnchor.constraint(equalTo: infoBox.bottomAnchor, constant: -10),
+            // The safe area keeps clear of the title bar in a window and of the camera
+            // housing and rounded corners in full screen.
+            infoBox.leadingAnchor.constraint(equalTo: content.safeAreaLayoutGuide.leadingAnchor, constant: 20),
+            infoBox.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 16),
 
             messageLabel.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: content.centerYAnchor),
