@@ -50,6 +50,7 @@ final class Settings {
         static let saveQuality = "saveQuality"
         static let confirmOverwrite = "confirmOverwrite"
         static let prefetchCount = "prefetchCount"
+        static let quickPreview = "quickPreview"
         static let cacheGB = "cacheGB"
     }
 
@@ -79,6 +80,7 @@ final class Settings {
             Key.saveQuality: 0.9,
             Key.confirmOverwrite: true,
             Key.prefetchCount: 3,
+            Key.quickPreview: false,
             Key.cacheGB: Self.defaultCacheGB,
         ])
     }
@@ -187,6 +189,12 @@ final class Settings {
     var prefetchCount: Int {
         get { defaults.integer(forKey: Key.prefetchCount) }
         set { store(newValue, Key.prefetchCount) }
+    }
+
+    /// Show a half-size decode while a full-size one loads: faster first look, brief softness.
+    var quickPreview: Bool {
+        get { defaults.bool(forKey: Key.quickPreview) }
+        set { store(newValue, Key.quickPreview) }
     }
 
     var cacheGB: Double {

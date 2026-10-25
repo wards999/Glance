@@ -6,11 +6,22 @@ import ImageIO
 /// Requests for the same key are coalesced, so if you navigate onto an image that is still
 /// being prefetched you wait for that decode instead of starting a second one.
 final class ImagePipeline {
+    /// How big a decode to make. The image's own size isn't known until its header is read,
+    /// so the opening sizes describe the view and the pipeline works out the pixels.
+    enum DecodeSize: Hashable {
+        /// Enough to show the whole picture in a view this many device pixels across.
+        case fit(width: Int, height: Int)
+        /// Enough to fill a view this size, cropping the overflow.
+        case fill(width: Int, height: Int)
+        /// A fixed long side (a zoom level); more than the full size means full size.
+        case longSide(Int)
+    }
+
     struct Key: Hashable {
         let url: URL
         let page: Int
-        /// Longest side requested, in pixels. The screen-sized decode and each zoom level are separate entries.
-        let maxPixel: Int
+        /// The opening decode and each zoom level are separate entries.
+        let size: DecodeSize
     }
 
     private struct InFlight {
@@ -53,6 +64,20 @@ final class ImagePipeline {
 
     /// Files above this size get their embedded thumbnail shown while the real decode runs.
     private let previewThreshold: Int64 = 12_000_000
+    private var showsQuickPreview = false
+    /// When a full-size decode is needed, show a half-size one first (Settings ▸ Performance).
+    var quickPreview: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return showsQuickPreview
+        }
+        set {
+            lock.lock()
+            showsQuickPreview = newValue
+            lock.unlock()
+        }
+    }
 
     init(costLimit: Int) {
         self.costLimit = costLimit
@@ -173,12 +198,48 @@ final class ImagePipeline {
             DispatchQueue.main.async { preview(thumbnail, info) }
         }
 
-        let maxPixel = min(key.maxPixel, info.fullLongSide)
-        let preferEmbedded = info.isRaw && maxPixel < info.fullLongSide
+        let full = info.fullLongSide
+        let maxPixel = Self.decodeLongSide(for: key.size, info: info)
+        let preferEmbedded = info.isRaw && maxPixel < full
+
+        // Quick preview: a half-size decode costs a fraction of a full one and is nearly sharp,
+        // so show it while the full decode runs. Only when full size is genuinely needed.
+        if let preview, quickPreview, maxPixel == full, full / 2 >= 800, !info.isRaw,
+           let half = ImageDecoder.decode(source: source, page: key.page, maxPixelSize: full / 2) {
+            DispatchQueue.main.async { preview(half, info) }
+        }
+
         guard let image = ImageDecoder.decode(source: source, page: key.page, maxPixelSize: maxPixel, preferEmbedded: preferEmbedded) else {
             return nil
         }
         return DecodedImage(image: image, info: info, page: key.page)
+    }
+
+    /// Picks the decode's long side: the smallest 1/2ⁿ of full size that still covers what the view
+    /// needs. JPEG and HEIF decode those sizes directly, so there's no full-size decode and no
+    /// resampling pass. A 4000×3000 photo shown 1800 px wide decodes at 2000×1500, a quarter of the work.
+    static func decodeLongSide(for size: DecodeSize, info: ImageInfo) -> Int {
+        let full = info.fullLongSide
+        let fullSize = info.fullSize
+        let needed: Int
+        switch size {
+        case .longSide(let pixels):
+            return min(pixels, full)
+        case .fit(let width, let height):
+            let scale = min(CGFloat(width) / fullSize.width, CGFloat(height) / fullSize.height)
+            needed = Int((CGFloat(full) * min(scale, 1)).rounded(.up))
+        case .fill(let width, let height):
+            let scale = max(CGFloat(width) / fullSize.width, CGFloat(height) / fullSize.height)
+            needed = Int((CGFloat(full) * min(scale, 1)).rounded(.up))
+        }
+        return halvingLevel(full: full, atLeast: needed)
+    }
+
+    /// The smallest of full, full/2, full/4, … that is at least `needed`.
+    static func halvingLevel(full: Int, atLeast needed: Int) -> Int {
+        var level = full
+        while level / 2 >= max(needed, 1) { level /= 2 }
+        return level
     }
 
     // The helpers below expect `lock` to be held.

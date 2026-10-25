@@ -27,7 +27,8 @@ to Glance, and click "Change All…".
 
 | Technique | Where |
 |---|---|
-| Decodes at **screen size**, not full size. ImageIO's thumbnail path lets JPEG decode directly at 1/2, 1/4 or 1/8 scale, so a 100 MP photo costs about as much as a 10 MP one. | `ImageDecoder.decode` |
+| Decodes only **what the window shows**, rounded to the nearest 1/2, 1/4 or 1/8 of full size. JPEG and HEIF decode those sizes directly, with no full-size decode and no resampling pass. A 4000×3000 photo shown 1800 px wide decodes at 2000×1500, about a quarter of the work. A bigger window or zooming in fetches a sharper level. | `ImagePipeline.decodeLongSide` |
+| Optional **quick preview** (Settings ▸ Performance): when the full size is needed, a half-size version shows first. | `ImagePipeline.decode` |
 | Decodes **off the main thread and fully up front** (`ShouldCacheImmediately`), so drawing never stalls. | `ImageDecoder`, `ImagePipeline` |
 | **Prefetches** the next 3 images in the direction you're moving, plus 1 behind. Prefetched images appear in the same run-loop turn as the key press. | `ViewerWindowController.prefetchNeighbors` |
 | **Skips stale work**: hold an arrow key and queued decodes for images you've already passed are dropped. | `ImagePipeline.drop`, `wanted` set |

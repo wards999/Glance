@@ -135,6 +135,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         window?.backgroundColor = settings.backgroundColor
 
         pipeline.costLimit = settings.cacheBytes
+        pipeline.quickPreview = settings.quickPreview
         if navigator.current != nil { prefetchNeighbors() }
     }
 
@@ -343,12 +344,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     // MARK: - Showing the current image
 
-    private var screenMaxPixel: Int {
-        let screen = window?.screen ?? NSScreen.main
-        let size = screen?.frame.size ?? CGSize(width: 2560, height: 1600)
-        let scale = screen?.backingScaleFactor ?? 2
-        // Decode for the whole screen, not the window, so resizing or going full screen never needs a new decode.
-        return Int(max(size.width, size.height) * scale)
+    /// What to decode for a newly opened picture: just enough pixels for the view at the opening
+    /// zoom. Rounded up to 256 px so small window resizes still hit prefetched images. If the window
+    /// later grows or you zoom in, the view asks for a sharper level.
+    private var openingDecodeSize: ImagePipeline.DecodeSize {
+        let scale = imageView.backingScale
+        func bucket(_ points: CGFloat) -> Int { max(Int((points * scale / 256).rounded(.up)), 1) * 256 }
+        let width = bucket(imageView.bounds.width)
+        let height = bucket(imageView.bounds.height)
+        switch settings.startZoom {
+        case .fit: return .fit(width: width, height: height)
+        case .fill: return .fill(width: width, height: height)
+        case .actual: return .longSide(Int.max)
+        }
     }
 
     private var displayFullSize: CGSize {
@@ -380,7 +388,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
         updateTitle()
 
-        let key = ImagePipeline.Key(url: url, page: page, maxPixel: screenMaxPixel)
+        let key = ImagePipeline.Key(url: url, page: page, size: openingDecodeSize)
         if let hit = pipeline.cached(key) {
             // Prefetched: on screen in the same run-loop turn as the key press.
             present(hit, resetView: true)
@@ -392,9 +400,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         foregroundKey = key
         var previewShown = false
         pipeline.load(key, preview: { [weak self] thumbnail, info in
+            // Embedded thumbnail and/or half-size quick preview; only the first resets the view.
             guard let self, gen == self.generation else { return }
+            self.imageView.setImage(thumbnail, fullSize: info.fullSize, resetView: !previewShown)
             previewShown = true
-            self.imageView.setImage(thumbnail, fullSize: info.fullSize, resetView: true)
         }, completion: { [weak self] decoded in
             guard let self, gen == self.generation else { return }
             self.foregroundKey = nil
@@ -462,7 +471,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func prefetchNeighbors() {
-        let maxPixel = screenMaxPixel
+        let size = openingDecodeSize
         let ahead = settings.prefetchCount
         guard ahead > 0 else {
             pipeline.prefetch([])
@@ -474,7 +483,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         offsets.insert(-direction, at: min(2, offsets.count))
         for offset in offsets {
             guard let url = navigator.url(at: offset), url != navigator.current else { continue }
-            let key = ImagePipeline.Key(url: url, page: 0, maxPixel: maxPixel)
+            let key = ImagePipeline.Key(url: url, page: 0, size: size)
             if !keys.contains(key) { keys.append(key) }
         }
         pipeline.prefetch(keys)
@@ -503,14 +512,16 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     func imageView(_ view: ImageView, needsLongSide pixels: Int) {
-        guard let current, editedImage == nil, !current.info.isAnimated else { return }
+        // While a preview of a new picture is up, `current` is still the previous picture; its
+        // decode is already on the way at the right size, so there's nothing to ask for.
+        guard let current, current.info.url == navigator.current, current.page == page,
+              editedImage == nil, !current.info.isAnimated else { return }
         // JPEG and HEIF decode fastest at 1/2, 1/4, 1/8 scale, so ask for the smallest such level that's sharp enough.
-        var level = current.info.fullLongSide
-        while level / 2 >= pixels { level /= 2 }
+        let level = ImagePipeline.halvingLevel(full: current.info.fullLongSide, atLeast: pixels)
         guard level > requestedLongSide, level > current.longSide else { return }
         requestedLongSide = level
 
-        let key = ImagePipeline.Key(url: current.info.url, page: current.page, maxPixel: level)
+        let key = ImagePipeline.Key(url: current.info.url, page: current.page, size: .longSide(level))
         let gen = generation
         let upgrade: (DecodedImage) -> Void = { [weak self] decoded in
             guard let self, gen == self.generation, decoded.longSide > (self.current?.longSide ?? 0) else { return }

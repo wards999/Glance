@@ -96,6 +96,8 @@ final class SettingsWindowController: NSWindowController {
             [label("Decode ahead:"), stepper(0...8, { "\($0) images" }, { s.prefetchCount }, { s.prefetchCount = $0 })],
             [label("Memory cache:"), slider(0.5...Settings.maxCacheGB, { String(format: "%.1f GB", $0) }, { s.cacheGB }, { s.cacheGB = $0 })],
             [empty, note("More of both makes flipping through a folder instant, at the cost of RAM.")],
+            [empty, checkbox("Show a quick preview while large images load", { s.quickPreview }, { s.quickPreview = $0 })],
+            [empty, note("Shows a half-size version first when the full size is needed (e.g. full screen on a Retina display). Faster to appear, but slightly soft for a moment.")],
         ]
     }
 

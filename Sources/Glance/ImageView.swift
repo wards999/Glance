@@ -417,6 +417,8 @@ final class ImageView: NSView {
             clampCenter()
         }
         layoutImage()
+        // Decodes are sized to the view, so a bigger window (or full screen) may need more pixels.
+        requestResolutionIfNeeded()
     }
 
     override func viewDidChangeBackingProperties() {
