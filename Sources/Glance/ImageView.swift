@@ -58,6 +58,10 @@ final class ImageView: NSView {
 
     private var lastDragPoint: NSPoint?
     private var selectionAnchor: CGPoint?
+    /// Applied by the next `setImage(…, resetView: true)` instead of the default zoom: keeps the zoom
+    /// and puts that corner of the new picture in view (clamping turns it into an edge-aligned view).
+    var carriedZoom: (zoom: CGFloat, fromRight: Bool, fromBottom: Bool)?
+
     /// Press and hold without moving to magnify; let go to return. The controller turns it on
     /// per picture (PDFs, or everything, per Settings).
     var holdToZoomEnabled = false
@@ -138,6 +142,17 @@ final class ImageView: NSView {
             applyZoomMode()
         } else {
             clampCenter()
+        }
+        if resetView, let carried = carriedZoom {
+            // Turning a page while zoomed in: same zoom, opened at the corner where reading continues.
+            carriedZoom = nil
+            if image != nil {
+                zoom = carried.zoom
+                zoomMode = .custom
+                let size = orientedSize
+                center = CGPoint(x: carried.fromRight ? size.width : 0, y: carried.fromBottom ? size.height : 0)
+                clampCenter()
+            }
         }
         layoutImage()
         delegate?.imageViewDidChangeZoom(self)

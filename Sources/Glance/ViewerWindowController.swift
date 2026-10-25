@@ -714,6 +714,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         direction = delta < 0 ? -1 : 1
         // In a PDF, Space, arrows and the wheel turn its pages before moving to the next file.
         if let pdf = currentPDF, (0..<pdf.info.pageCount).contains(page + delta) {
+            carryZoomForPageTurn(forward: delta > 0)
             page += delta
             showCurrent(keepPage: true)
             return
@@ -749,8 +750,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             NSSound.beep()
             return
         }
+        if currentPDF != nil { carryZoomForPageTurn(forward: delta > 0) }
         page += delta
         showCurrent(keepPage: true)
+    }
+
+    /// Reading a PDF zoomed in: the next page keeps the zoom and opens at its top-left corner
+    /// (top-right for right-to-left); going back opens at the opposite, bottom corner, where
+    /// you left off reading that page.
+    private func carryZoomForPageTurn(forward: Bool) {
+        guard imageView.zoomMode != .fit,
+              imageView.canPanHorizontally || imageView.canPanVertically else { return }
+        let rightToLeft = settings.pdfRightToLeft
+        imageView.carriedZoom = (imageView.zoom, fromRight: forward == rightToLeft, fromBottom: !forward)
     }
 
     @objc func setSortOrder(_ sender: NSMenuItem) {
