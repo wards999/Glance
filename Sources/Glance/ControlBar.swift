@@ -1,0 +1,64 @@
+import AppKit
+
+/// The button strip that fades in when the mouse nears the bottom of the window, like JPEGView's navigation panel.
+final class ControlBar: NSVisualEffectView {
+    init(target: AnyObject) {
+        super.init(frame: .zero)
+        material = .hudWindow
+        blendingMode = .withinWindow
+        state = .active
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        layer?.masksToBounds = true
+
+        typealias C = ViewerWindowController
+        let items: [(symbol: String, title: String, action: Selector)] = [
+            ("chevron.left", "Previous", #selector(C.previousImage(_:))),
+            ("chevron.right", "Next", #selector(C.nextImage(_:))),
+            ("rotate.left", "Rotate Left", #selector(C.rotateLeft(_:))),
+            ("rotate.right", "Rotate Right", #selector(C.rotateRight(_:))),
+            ("minus.magnifyingglass", "Zoom Out", #selector(C.zoomOut(_:))),
+            ("plus.magnifyingglass", "Zoom In", #selector(C.zoomIn(_:))),
+            ("aspectratio", "Fit to Window", #selector(C.zoomToFit(_:))),
+            ("1.magnifyingglass", "Actual Size", #selector(C.zoomActualSize(_:))),
+            ("info.circle", "Info", #selector(C.toggleInfo(_:))),
+            ("slider.horizontal.3", "Adjustments", #selector(C.showAdjustments(_:))),
+            ("play.fill", "Slideshow", #selector(C.toggleSlideshow(_:))),
+            ("arrow.up.left.and.arrow.down.right", "Full Screen", #selector(NSWindow.toggleFullScreen(_:))),
+        ]
+
+        let buttons: [NSButton] = items.map { item in
+            let button: NSButton
+            if let image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: item.title) {
+                button = NSButton(image: image, target: target, action: item.action)
+            } else {
+                button = NSButton(title: item.title, target: target, action: item.action)
+            }
+            // Full screen is handled by the window, further along the responder chain.
+            if item.action == #selector(NSWindow.toggleFullScreen(_:)) { button.target = nil }
+            button.isBordered = false
+            button.contentTintColor = .white
+            button.toolTip = item.title
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 30).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            return button
+        }
+
+        let stack = NSStackView(views: buttons)
+        stack.orientation = .horizontal
+        stack.spacing = 4
+        stack.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+}
