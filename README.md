@@ -118,6 +118,26 @@ and the window always agree.
 | ⇧⌘R | Reveal in Finder |
 | ⌘, | Settings |
 
+## Windows version (early)
+
+`windows/` is a native C++ port: Win32, WIC decoding (with JPEG decoded directly at 1/2, 1/4 or
+1/8 size), Direct2D on the GPU, the same decode-ahead pipeline, and no runtime to install (about
+280 KB). So far it has the core viewer: open, folder navigation, zoom, pan, rotate, a drag
+rectangle to zoom, borderless full screen and a right-click menu. Settings, editing and PDF come
+next.
+
+It builds on GitHub's Windows machines (the **Build Windows** workflow) with MSVC, or locally with
+`windows/build.sh` (MinGW) or CMake.
+
+Measured against JPEGView 1.4 on an i5-14500T with an RTX 4070, both windowed at 1600×1000,
+with 12 and 24 MP JPEGs and 12 MP PNGs (`windows/tools/ui_bench.py`, which watches the screen):
+
+| | Glance | JPEGView |
+|---|---|---|
+| Launch to photo on screen | **~100 ms** | ~225 ms |
+| Next image, normal browsing | **~10 ms** | ~28 ms |
+| Next image, key held down | **~20 ms** | ~130 ms |
+
 ## Layout
 
 ```
