@@ -11,8 +11,8 @@ set(CORE_SOURCES src/Decoder.cpp src/Pipeline.cpp src/Navigator.cpp)
 set(SYSTEM_LIBS windowscodecs ole32 oleaut32 uuid shlwapi user32)
 
 # The viewer: a GUI app with no runtime to install.
-add_executable(Glance WIN32 src/main.cpp src/Viewer.cpp ${CORE_SOURCES} glance.rc)
-target_link_libraries(Glance PRIVATE d2d1 d3d11 dxgi dwmapi comdlg32 shell32 user32 gdi32 ${SYSTEM_LIBS})
+add_executable(Glance WIN32 src/main.cpp src/Viewer.cpp src/Settings.cpp src/SettingsDialog.cpp ${CORE_SOURCES} glance.rc)
+target_link_libraries(Glance PRIVATE d2d1 d3d11 dxgi dwrite dwmapi comdlg32 shell32 user32 gdi32 ${SYSTEM_LIBS})
 
 # Console tools: decode timing, and test images for it.
 add_executable(glance-bench tools/bench.cpp ${CORE_SOURCES})

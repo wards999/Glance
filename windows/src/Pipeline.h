@@ -59,6 +59,9 @@ public:
 
     void setCostLimit(size_t bytes);
 
+    /// Forget everything decoded from `path`, e.g. after it changed on disk.
+    void invalidate(const std::wstring& path);
+
 private:
     struct Job {
         bool foreground = false;

@@ -35,7 +35,10 @@ int wmain(int argc, wchar_t** argv) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     auto list = Decoder::supportedExtensions();
     std::unordered_set<std::wstring> extensions(list.begin(), list.end());
-    auto files = Navigator::scan(folder, extensions);
+    auto entries = Navigator::scan(folder, extensions);
+    Navigator::sortEntries(entries, SortOrder::Name, false);
+    std::vector<std::wstring> files;
+    for (const auto& entry : entries) files.push_back(entry.path);
     std::wprintf(L"%zu images, window %ux%u, median of %d runs\n\n", files.size(), boxWidth, boxHeight, runs);
     std::wprintf(L"%-28ls %12ls %14ls %12ls\n", L"file", L"size", L"fit decode", L"full decode");
 

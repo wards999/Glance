@@ -2,9 +2,11 @@
 
 #include "Navigator.h"
 #include "Pipeline.h"
+#include "Settings.h"
 
 #include <d2d1_1.h>
 #include <d3d11.h>
+#include <dwrite.h>
 #include <dxgi1_2.h>
 
 #include <future>
@@ -53,8 +55,11 @@ private:
     void createTarget();
     void resize();
     void render();
+    void drawOverlay();
+    std::wstring overlayText() const;
     std::shared_ptr<GpuImage> upload(const Decoded& image);
     std::shared_ptr<GpuImage> gpuFor(const DecodeKey& key, const std::shared_ptr<Decoded>& image);
+    void forgetGpu(const std::wstring& path);
 
     // Images
     void showCurrent();
@@ -82,15 +87,27 @@ private:
     D2D1_MATRIX_3X2_F orientation() const;
     D2D1_MATRIX_3X2_F imageTransform() const;
 
-    // Window
+    // Window, menu and commands
     void setFullScreen(bool on);
     void updateTitle();
     void showContextMenu(int x, int y);
     void command(int id);
-    bool onKey(WPARAM key, bool control);
+    bool onKey(WPARAM key, bool control, bool shift);
+    void applySettings();
+    void setSlideshow(bool on);
+    void copyImage();
+    void copyPath();
+    void revealInExplorer();
+    void setAsWallpaper();
+    void moveToRecycleBin();
+    void reload();
+    size_t cacheLimit() const;
 
     HINSTANCE instance_;
     HWND hwnd_ = nullptr;
+    Settings settings_;
+    SortOrder appliedSort_ = SortOrder::Name;
+    bool appliedDescending_ = false;
     /// Creating the Direct3D device loads the GPU driver, which is slow; it starts on another
     /// thread the moment the app does, in parallel with the window and the first decode.
     std::future<ComPtr<ID3D11Device>> pendingDevice_;
@@ -104,7 +121,13 @@ private:
     ComPtr<IDXGISwapChain1> swapChain_;
     ComPtr<ID2D1Bitmap1> target_;
     ComPtr<ID2D1SolidColorBrush> brush_;
+    ComPtr<ID2D1SolidColorBrush> overlayBrush_;
     UINT maxBitmapSize_ = 8192;
+
+    // Text for the info overlay; created the first time it's shown, so launch doesn't pay for it.
+    ComPtr<IDWriteFactory> dwrite_;
+    ComPtr<IDWriteTextFormat> textFormat_;
+    UINT textFormatDpi_ = 0;
 
     // GPU copies of recent and decoded-ahead images, so showing them is only a draw.
     std::unordered_map<DecodeKey, std::shared_ptr<GpuImage>, DecodeKeyHash> gpuCache_;
@@ -135,10 +158,6 @@ private:
     int wheelRemainder_ = 0;
 
     bool fullScreen_ = false;
+    bool slideshow_ = false;
     WINDOWPLACEMENT windowedPlacement_{sizeof(WINDOWPLACEMENT)};
-
-    // Matches your JPEGView setup; becomes Settings later.
-    bool enlargeSmallImages_ = true;
-    bool wheelNavigates_ = true;
-    bool escapeCloses_ = true;
 };

@@ -17,6 +17,14 @@ struct ImageInfo {
     int orientation = 1;  // EXIF 1–8
     UINT frameCount = 1;
 
+    // For the info overlay. Read alongside the pixels; it costs well under a millisecond.
+    unsigned long long fileSize = 0;
+    std::wstring format;    // "JPEG", "PNG", …
+    std::wstring camera;
+    std::wstring lens;
+    std::wstring taken;     // "2024-05-01 10:22"
+    std::wstring exposure;  // "1/250 s   f/2.8   ISO 100   35 mm"
+
     UINT longSide() const { return width > height ? width : height; }
     bool swapsAxes() const { return orientation >= 5 && orientation <= 8; }
     UINT orientedWidth() const { return swapsAxes() ? height : width; }

@@ -1,3 +1,4 @@
+#include "SettingsDialog.h"
 #include "Viewer.h"
 
 #include <shellapi.h>
@@ -34,6 +35,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
         MSG message;
         while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+            if (SettingsDialog::handleMessage(&message)) continue;
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }

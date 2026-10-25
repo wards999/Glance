@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cwchar>
+#include <iterator>
 #include <new>
 
 namespace {
@@ -77,6 +79,116 @@ bool decodeNative(IWICBitmapFrameDecode* frame, UINT width, UINT height, Decoded
     return true;
 }
 
+std::wstring trimmed(std::wstring text) {
+    while (!text.empty() && (text.back() == L' ' || text.back() == L'\0')) text.pop_back();
+    size_t start = text.find_first_not_of(L' ');
+    return start == std::wstring::npos ? std::wstring() : text.substr(start);
+}
+
+std::wstring propertyText(IWICMetadataQueryReader* reader, const wchar_t* name) {
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    std::wstring text;
+    if (SUCCEEDED(reader->GetMetadataByName(name, &value))) {
+        if (value.vt == VT_LPWSTR && value.pwszVal) {
+            text = value.pwszVal;
+        } else if (value.vt == VT_LPSTR && value.pszVal) {
+            int length = MultiByteToWideChar(CP_UTF8, 0, value.pszVal, -1, nullptr, 0);
+            if (length > 1) {
+                text.resize(length - 1);
+                MultiByteToWideChar(CP_UTF8, 0, value.pszVal, -1, text.data(), length);
+            }
+        }
+    }
+    PropVariantClear(&value);
+    return trimmed(text);
+}
+
+bool propertyNumber(IWICMetadataQueryReader* reader, const wchar_t* name, double& number) {
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    bool found = SUCCEEDED(reader->GetMetadataByName(name, &value));
+    if (found) {
+        switch (value.vt) {
+        case VT_R8: number = value.dblVal; break;
+        case VT_R4: number = value.fltVal; break;
+        case VT_UI2: number = value.uiVal; break;
+        case VT_UI4: number = value.ulVal; break;
+        case VT_I4: number = value.lVal; break;
+        default: found = false;
+        }
+    }
+    PropVariantClear(&value);
+    return found;
+}
+
+/// Format name, file size and the EXIF fields the info overlay shows.
+void readDetails(const std::wstring& path, IWICBitmapDecoder* decoder, IWICBitmapFrameDecode* frame, ImageInfo& info) {
+    WIN32_FILE_ATTRIBUTE_DATA attributes;
+    if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes)) {
+        info.fileSize = (ULONGLONG(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
+    }
+    ComPtr<IWICBitmapDecoderInfo> codec;
+    if (SUCCEEDED(decoder->GetDecoderInfo(codec.put())) && codec) {
+        wchar_t name[128] = L"";
+        UINT length = 0;
+        if (SUCCEEDED(codec->GetFriendlyName(static_cast<UINT>(std::size(name)), name, &length))) {
+            info.format = name;
+            const std::wstring suffix = L" Decoder";
+            if (info.format.size() > suffix.size() && info.format.compare(info.format.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                info.format.resize(info.format.size() - suffix.size());
+            }
+        }
+    }
+
+    ComPtr<IWICMetadataQueryReader> reader;
+    if (FAILED(frame->GetMetadataQueryReader(reader.put()))) return;
+
+    const std::wstring make = propertyText(reader.get(), L"System.Photo.CameraManufacturer");
+    const std::wstring model = propertyText(reader.get(), L"System.Photo.CameraModel");
+    // "Canon Canon EOS R5" reads badly; most models already start with the make.
+    info.camera = (!make.empty() && model.rfind(make, 0) == 0) || make.empty() ? model : make + L" " + model;
+    info.lens = propertyText(reader.get(), L"System.Photo.LensModel");
+
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    if (SUCCEEDED(reader->GetMetadataByName(L"System.Photo.DateTaken", &value)) && value.vt == VT_FILETIME) {
+        SYSTEMTIME utc, local;
+        if (FileTimeToSystemTime(&value.filetime, &utc) && SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local)) {
+            wchar_t text[32];
+            swprintf(text, 32, L"%04u-%02u-%02u %02u:%02u", local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute);
+            info.taken = text;
+        }
+    }
+    PropVariantClear(&value);
+
+    std::wstring exposure;
+    auto add = [&exposure](const wchar_t* text) {
+        if (!exposure.empty()) exposure += L"   ";
+        exposure += text;
+    };
+    wchar_t text[48];
+    double number = 0;
+    if (propertyNumber(reader.get(), L"System.Photo.ExposureTime", number) && number > 0) {
+        if (number >= 1) swprintf(text, 48, L"%.1f s", number);
+        else swprintf(text, 48, L"1/%.0f s", 1 / number);
+        add(text);
+    }
+    if (propertyNumber(reader.get(), L"System.Photo.FNumber", number) && number > 0) {
+        swprintf(text, 48, L"f/%.1f", number);
+        add(text);
+    }
+    if (propertyNumber(reader.get(), L"System.Photo.ISOSpeed", number) && number > 0) {
+        swprintf(text, 48, L"ISO %.0f", number);
+        add(text);
+    }
+    if (propertyNumber(reader.get(), L"System.Photo.FocalLength", number) && number > 0) {
+        swprintf(text, 48, L"%.0f mm", number);
+        add(text);
+    }
+    info.exposure = exposure;
+}
+
 int readOrientation(IWICBitmapFrameDecode* frame) {
     ComPtr<IWICMetadataQueryReader> reader;
     if (FAILED(frame->GetMetadataQueryReader(reader.put()))) return 1;
@@ -123,6 +235,7 @@ std::shared_ptr<Decoded> Decoder::decode(const std::wstring& path, UINT frameInd
     if (FAILED(decoder->GetFrame(frameIndex, frame.put()))) return nullptr;
     if (FAILED(frame->GetSize(&info.width, &info.height)) || info.width == 0 || info.height == 0) return nullptr;
     info.orientation = readOrientation(frame.get());
+    readDetails(path, decoder.get(), frame.get(), info);
     result->frame = frameIndex;
 
     // How many pixels does the view need along the long side?

@@ -66,6 +66,20 @@ void Pipeline::setCostLimit(size_t bytes) {
     evict();
 }
 
+void Pipeline::invalidate(const std::wstring& path) {
+    std::lock_guard lock(mutex_);
+    for (auto it = lru_.begin(); it != lru_.end();) {
+        if (samePath(it->path, path)) {
+            auto entry = cache_.find(*it);
+            cost_ -= entry->second.image->bytes();
+            cache_.erase(entry);
+            it = lru_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void Pipeline::work() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     {

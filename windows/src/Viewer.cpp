@@ -1,11 +1,17 @@
 #include "Viewer.h"
 
+#include "SettingsDialog.h"
+
 #include <commdlg.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <shlwapi.h>
 #include <windowsx.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <cwchar>
 #include <iterator>
 #include <thread>
 #include <unordered_set>
@@ -15,29 +21,46 @@ namespace {
 constexpr UINT WM_APP_DECODED = WM_APP + 1;
 constexpr UINT WM_APP_FOLDER = WM_APP + 2;
 constexpr UINT WM_APP_GPU_READY = WM_APP + 3;
+constexpr UINT_PTR kSlideshowTimer = 1;
 constexpr wchar_t kClassName[] = L"GlanceViewer";
 constexpr size_t kGpuBudget = size_t(1) << 30;  // 1 GB of decoded-ahead textures
+constexpr int kSlideshowChoices[] = {1, 2, 3, 5, 10, 30};
 
 enum Command {
     CmdOpen = 1,
+    CmdReload,
+    CmdReveal,
+    CmdWallpaper,
+    CmdCopy,
+    CmdCopyPath,
+    CmdInfo,
+    CmdFilename,
     CmdNext,
     CmdPrevious,
     CmdFirst,
     CmdLast,
+    CmdLoop,
+    CmdDescending,
+    CmdSlideshow,
+    CmdRotateRight,
+    CmdRotateLeft,
     CmdZoomIn,
     CmdZoomOut,
     CmdFit,
     CmdActual,
-    CmdRotateRight,
-    CmdRotateLeft,
+    CmdEnlarge,
     CmdFullScreen,
-    CmdLoop,
+    CmdRecycle,
+    CmdSettings,
+    CmdAbout,
     CmdExit,
+    CmdSortBase = 100,      // + SortOrder
+    CmdIntervalBase = 200,  // + index into kSlideshowChoices
 };
 
 struct FolderResult {
     std::wstring selected;  // empty: a folder was opened, show its first image
-    std::vector<std::wstring> files;
+    std::vector<FileEntry> files;
 };
 
 D2D1_MATRIX_3X2_F matrix(float m11, float m12, float m21, float m22, float dx = 0, float dy = 0) {
@@ -74,6 +97,10 @@ D2D1_MATRIX_3X2_F exifMatrix(int orientation) {
     }
 }
 
+D2D1_COLOR_F colour(COLORREF c, float alpha = 1) {
+    return D2D1_COLOR_F{GetRValue(c) / 255.0f, GetGValue(c) / 255.0f, GetBValue(c) / 255.0f, alpha};
+}
+
 const std::unordered_set<std::wstring>& supportedExtensions() {
     // Asks WIC once; the caller's thread must have COM initialised.
     static const std::unordered_set<std::wstring> extensions = [] {
@@ -81,6 +108,11 @@ const std::unordered_set<std::wstring>& supportedExtensions() {
         return std::unordered_set<std::wstring>(list.begin(), list.end());
     }();
     return extensions;
+}
+
+std::wstring fileName(const std::wstring& path) {
+    size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? path : path.substr(slash + 1);
 }
 
 ComPtr<ID3D11Device> createDevice() {
@@ -98,14 +130,13 @@ ComPtr<ID3D11Device> createDevice() {
     return device;
 }
 
-std::wstring fileName(const std::wstring& path) {
-    size_t slash = path.find_last_of(L"\\/");
-    return slash == std::wstring::npos ? path : path.substr(slash + 1);
-}
-
 }  // namespace
 
-Viewer::Viewer(HINSTANCE instance) : instance_(instance) {}
+Viewer::Viewer(HINSTANCE instance) : instance_(instance), settings_(Settings::load()) {
+    appliedSort_ = settings_.sortOrder;
+    appliedDescending_ = settings_.descending;
+    navigator_.wraps = settings_.loop;
+}
 
 Viewer::~Viewer() {
     pipeline_.reset();
@@ -120,7 +151,7 @@ bool Viewer::create() {
     wc.hInstance = instance_;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    // Black from the very first frame, before Direct2D is ready.
+    // Black from the very first frame, before anything is drawn.
     wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = kClassName;
     RegisterClassExW(&wc);
@@ -134,6 +165,18 @@ bool Viewer::create() {
     hwnd_ = CreateWindowExW(WS_EX_ACCEPTFILES, kClassName, L"Glance", WS_OVERLAPPEDWINDOW, x, y, width, height,
                             nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
+
+    // Where the window was last time, if that's still on a screen.
+    RECT saved = settings_.windowRect;
+    if (saved.right - saved.left >= 320 && saved.bottom - saved.top >= 240 &&
+        MonitorFromRect(&saved, MONITOR_DEFAULTTONULL)) {
+        WINDOWPLACEMENT placement{sizeof(placement)};
+        GetWindowPlacement(hwnd_, &placement);
+        placement.rcNormalPosition = saved;
+        placement.showCmd = SW_HIDE;
+        SetWindowPlacement(hwnd_, &placement);
+    }
+
     // Loading the GPU driver is the slowest part of starting up, so it runs on its own thread
     // and the window hears when it's done; nothing waits for it.
     pendingDevice_ = std::async(std::launch::async, [hwnd = hwnd_] {
@@ -142,17 +185,25 @@ bool Viewer::create() {
         return device;
     });
 
-    MEMORYSTATUSEX memory{sizeof(memory)};
-    GlobalMemoryStatusEx(&memory);
-    size_t costLimit = static_cast<size_t>(std::min<ULONGLONG>(memory.ullTotalPhys / 4, ULONGLONG(4) << 30));
     unsigned threads = std::clamp(std::thread::hardware_concurrency() / 4, 2u, 4u);
-    pipeline_ = std::make_unique<Pipeline>(hwnd_, WM_APP_DECODED, costLimit, threads);
+    pipeline_ = std::make_unique<Pipeline>(hwnd_, WM_APP_DECODED, cacheLimit(), threads);
     trace("window and decoder threads created");
     return true;
 }
 
+size_t Viewer::cacheLimit() const {
+    if (settings_.cacheMB > 0) return size_t(settings_.cacheMB) << 20;
+    MEMORYSTATUSEX memory{sizeof(memory)};
+    GlobalMemoryStatusEx(&memory);
+    return static_cast<size_t>(std::min<ULONGLONG>(memory.ullTotalPhys / 4, ULONGLONG(4) << 30));
+}
+
 void Viewer::show(int showCommand) {
-    ShowWindow(hwnd_, showCommand);
+    if (settings_.startFullScreen) {
+        setFullScreen(true);
+    } else {
+        ShowWindow(hwnd_, settings_.maximized ? SW_MAXIMIZE : showCommand);
+    }
     UpdateWindow(hwnd_);
     trace("window shown");
 }
@@ -160,7 +211,9 @@ void Viewer::show(int showCommand) {
 void Viewer::paintWithGdi(HDC dc) {
     RECT client{};
     GetClientRect(hwnd_, &client);
-    FillRect(dc, &client, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    HBRUSH background = CreateSolidBrush(settings_.background);
+    FillRect(dc, &client, background);
+    DeleteObject(background);
     // GDI can't rotate cheaply; a rotated photo simply waits the extra moment for the GPU.
     if (!current_ || current_->info.orientation != 1 || quarterTurns_ != 0) return;
 
@@ -210,9 +263,25 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             navigator_.setFiles(std::move(result->files), result->selected);
             updateTitle();
             prefetchNeighbors();
+            render();
         }
         return 0;
     }
+
+    case WM_APP_GPU_READY:
+        // Swap to GPU drawing; the picture doesn't move, only the drawing path changes.
+        if (!context_ && initGraphics()) {
+            if (current_) shown_ = gpuFor(currentKey_, current_);
+            render();
+        }
+        return 0;
+
+    case WM_TIMER:
+        if (wParam == kSlideshowTimer) {
+            direction_ = 1;
+            if (navigator_.move(1)) showCurrent(); else setSlideshow(false);
+        }
+        return 0;
 
     case WM_SIZE:
         if (wParam != SIZE_MINIMIZED) {
@@ -232,17 +301,8 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
 
-    case WM_APP_GPU_READY:
-        // Swap to GPU drawing; the picture doesn't move, only the drawing path changes.
-        if (!context_ && initGraphics()) {
-            if (current_) shown_ = gpuFor(currentKey_, current_);
-            render();
-        }
-        return 0;
-
     case WM_ERASEBKGND:
-        if (context_) return 1;  // Direct2D paints everything; avoid a flash of the brush
-        break;
+        return 1;  // everything is painted in WM_PAINT; avoid a flash of the class brush
 
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
@@ -258,7 +318,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_KEYDOWN:
-        if (onKey(wParam, GetKeyState(VK_CONTROL) < 0)) return 0;
+        if (onKey(wParam, GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0)) return 0;
         break;
 
     case WM_SYSKEYDOWN:
@@ -273,7 +333,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         ScreenToClient(hwnd_, &p);
         int delta = GET_WHEEL_DELTA_WPARAM(wParam);
         bool control = GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL;
-        if (wheelNavigates_ && !control) {
+        if (settings_.wheelNavigates && !control) {
             // High-resolution wheels send small steps; act on whole notches.
             wheelRemainder_ += delta;
             while (std::abs(wheelRemainder_) >= WHEEL_DELTA) {
@@ -363,15 +423,23 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
 
-    case WM_DESTROY:
+    case WM_DESTROY: {
+        // Remember the window for next time (the windowed position, even if closed full screen).
+        WINDOWPLACEMENT placement{sizeof(placement)};
+        if (fullScreen_) placement = windowedPlacement_;
+        else GetWindowPlacement(hwnd_, &placement);
+        settings_.windowRect = placement.rcNormalPosition;
+        settings_.maximized = placement.showCmd == SW_SHOWMAXIMIZED;
+        settings_.save();
         pipeline_.reset();  // stop the workers before the window goes away
         PostQuitMessage(0);
         return 0;
     }
+    }
     return DefWindowProcW(hwnd_, message, wParam, lParam);
 }
 
-bool Viewer::onKey(WPARAM key, bool control) {
+bool Viewer::onKey(WPARAM key, bool control, bool shift) {
     double width, height;
     viewSize(width, height);
     const double step = std::max(width, height) * 0.15;
@@ -390,8 +458,16 @@ bool Viewer::onKey(WPARAM key, bool control) {
     case '0': case VK_NUMPAD0: command(CmdFit); break;
     case '1': case VK_NUMPAD1: command(CmdActual); break;
     case 'F': case VK_F11: command(CmdFullScreen); break;
-    case 'R': command(CmdRotateRight); break;
+    case 'R': command(control ? CmdReload : CmdRotateRight); break;
     case 'L': command(CmdRotateLeft); break;
+    case 'S': command(CmdSlideshow); break;
+    case 'W': command(CmdReveal); break;
+    case VK_F2: command(control ? CmdFilename : CmdInfo); break;
+    case VK_DELETE: command(CmdRecycle); break;
+    case 'C':
+        if (!control) return false;
+        command(shift ? CmdCopyPath : CmdCopy);
+        break;
     case 'O':
         if (!control) return false;
         command(CmdOpen);
@@ -400,7 +476,9 @@ bool Viewer::onKey(WPARAM key, bool control) {
         if (dragging_) {
             ReleaseCapture();
             dragging_ = zoomBox_ = false;
-        } else if (escapeCloses_) {
+        } else if (slideshow_) {
+            setSlideshow(false);
+        } else if (settings_.escapeCloses) {
             DestroyWindow(hwnd_);
             return true;
         } else if (fullScreen_) {
@@ -428,6 +506,7 @@ void Viewer::setFullScreen(bool on) {
                      SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
     } else {
         SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        if (windowedPlacement_.showCmd == SW_HIDE) windowedPlacement_.showCmd = SW_SHOWNORMAL;
         SetWindowPlacement(hwnd_, &windowedPlacement_);
         SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
                      SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER);
@@ -454,33 +533,85 @@ void Viewer::updateTitle() {
 }
 
 void Viewer::showContextMenu(int x, int y) {
-    HMENU menu = CreatePopupMenu();
-    auto add = [&](int id, const wchar_t* text, bool enabled = true, bool checked = false) {
+    const bool hasImage = current_ != nullptr;
+    const bool hasFile = navigator_.current() != nullptr;
+    const bool several = navigator_.count() > 1;
+    auto add = [](HMENU menu, int id, const wchar_t* text, bool enabled = true, bool checked = false) {
         AppendMenuW(menu, MF_STRING | (enabled ? 0 : MF_GRAYED) | (checked ? MF_CHECKED : 0), id, text);
     };
-    const bool hasImage = current_ != nullptr;
-    const bool several = navigator_.count() > 1;
-    add(CmdOpen, L"Open image...\tCtrl+O");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    add(CmdNext, L"Next image\tSpace", several);
-    add(CmdPrevious, L"Previous image\tBackspace", several);
-    add(CmdFirst, L"First image\tHome", several);
-    add(CmdLast, L"Last image\tEnd", several);
-    add(CmdLoop, L"Loop through folder", true, navigator_.wraps);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    add(CmdFit, L"Fit to window\t0", hasImage);
-    add(CmdActual, L"Actual size (100%)\t1", hasImage);
-    add(CmdZoomIn, L"Zoom in\t+", hasImage);
-    add(CmdZoomOut, L"Zoom out\t-", hasImage);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    add(CmdRotateRight, L"Rotate right\tR", hasImage);
-    add(CmdRotateLeft, L"Rotate left\tL", hasImage);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    add(CmdFullScreen, L"Full screen\tF11", true, fullScreen_);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    add(CmdExit, escapeCloses_ ? L"Exit\tEsc" : L"Exit");
+    auto separator = [](HMENU menu) { AppendMenuW(menu, MF_SEPARATOR, 0, nullptr); };
+    auto submenu = [](HMENU menu, HMENU child, const wchar_t* text) {
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(child), text);
+    };
+
+    // Laid out like JPEGView's menu.
+    HMENU menu = CreatePopupMenu();
+    add(menu, CmdOpen, L"Open image...\tCtrl+O");
+    add(menu, CmdReload, L"Reload image\tCtrl+R", hasFile);
+    add(menu, CmdReveal, L"Open containing folder in Explorer\tW", hasFile);
+    add(menu, CmdWallpaper, L"Set as desktop wallpaper", hasFile);
+    separator(menu);
+    add(menu, CmdCopy, L"Copy to clipboard\tCtrl+C", hasImage);
+    add(menu, CmdCopyPath, L"Copy file path\tCtrl+Shift+C", hasFile);
+    separator(menu);
+    add(menu, CmdInfo, L"Show picture info (EXIF)\tF2", true, settings_.showInfo);
+    add(menu, CmdFilename, L"Show filename\tCtrl+F2", true, settings_.showFilename);
+    separator(menu);
+    add(menu, CmdNext, L"Next image\tSpace", several);
+    add(menu, CmdPrevious, L"Previous image\tBackspace", several);
+
+    HMENU navigation = CreatePopupMenu();
+    add(navigation, CmdFirst, L"First image\tHome", several);
+    add(navigation, CmdLast, L"Last image\tEnd", several);
+    separator(navigation);
+    add(navigation, CmdLoop, L"Loop through folder", true, settings_.loop);
+    submenu(menu, navigation, L"Navigation");
+
+    HMENU order = CreatePopupMenu();
+    const wchar_t* orders[] = {L"File name", L"Date modified", L"Date created", L"File size", L"Random"};
+    for (int i = 0; i < 5; ++i) {
+        AppendMenuW(order, MF_STRING | (static_cast<int>(settings_.sortOrder) == i ? MF_CHECKED : 0), CmdSortBase + i, orders[i]);
+    }
+    separator(order);
+    add(order, CmdDescending, L"Descending", true, settings_.descending);
+    submenu(menu, order, L"Display order");
+
+    HMENU slideshow = CreatePopupMenu();
+    add(slideshow, CmdSlideshow, slideshow_ ? L"Stop slideshow\tS" : L"Start slideshow\tS", several);
+    separator(slideshow);
+    for (int i = 0; i < static_cast<int>(std::size(kSlideshowChoices)); ++i) {
+        std::wstring text = std::to_wstring(kSlideshowChoices[i]) + (kSlideshowChoices[i] == 1 ? L" second" : L" seconds");
+        add(slideshow, CmdIntervalBase + i, text.c_str(), true, settings_.slideshowSeconds == kSlideshowChoices[i]);
+    }
+    submenu(menu, slideshow, L"Play folder as slideshow");
+    separator(menu);
+
+    HMENU transform = CreatePopupMenu();
+    add(transform, CmdRotateRight, L"Rotate right\tR", hasImage);
+    add(transform, CmdRotateLeft, L"Rotate left\tL", hasImage);
+    submenu(menu, transform, L"Transform image");
+    separator(menu);
+
+    HMENU zoom = CreatePopupMenu();
+    add(zoom, CmdZoomIn, L"Zoom in\t+", hasImage);
+    add(zoom, CmdZoomOut, L"Zoom out\t-", hasImage);
+    add(zoom, CmdFit, L"Fit to window\t0", hasImage);
+    add(zoom, CmdActual, L"Actual size (100%)\t1", hasImage);
+    submenu(menu, zoom, L"Zoom");
+    HMENU autoZoom = CreatePopupMenu();
+    add(autoZoom, CmdEnlarge, L"Enlarge small images to fit", true, settings_.enlargeSmall);
+    submenu(menu, autoZoom, L"Auto zoom mode");
+    add(menu, CmdFullScreen, L"Full screen\tF11", true, fullScreen_);
+    separator(menu);
+    add(menu, CmdRecycle, L"Move to Recycle Bin\tDel", hasFile);
+    separator(menu);
+    add(menu, CmdSettings, L"Settings...");
+    add(menu, CmdAbout, L"About Glance...");
+    separator(menu);
+    add(menu, CmdExit, settings_.escapeCloses ? L"Exit\tEsc" : L"Exit");
+
     int chosen = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, 0, hwnd_, nullptr);
-    DestroyMenu(menu);
+    DestroyMenu(menu);  // destroys the submenus too
     if (chosen) {
         command(chosen);
         render();
@@ -488,8 +619,33 @@ void Viewer::showContextMenu(int x, int y) {
 }
 
 void Viewer::command(int id) {
+    if (id >= CmdSortBase && id < CmdSortBase + 5) {
+        settings_.sortOrder = static_cast<SortOrder>(id - CmdSortBase);
+        settings_.save();
+        applySettings();
+        return;
+    }
+    if (id >= CmdIntervalBase && id < CmdIntervalBase + static_cast<int>(std::size(kSlideshowChoices))) {
+        settings_.slideshowSeconds = kSlideshowChoices[id - CmdIntervalBase];
+        settings_.save();
+        applySettings();
+        return;
+    }
     switch (id) {
     case CmdOpen: openDialog(); break;
+    case CmdReload: reload(); break;
+    case CmdReveal: revealInExplorer(); break;
+    case CmdWallpaper: setAsWallpaper(); break;
+    case CmdCopy: copyImage(); break;
+    case CmdCopyPath: copyPath(); break;
+    case CmdInfo:
+        settings_.showInfo = !settings_.showInfo;
+        settings_.save();
+        break;
+    case CmdFilename:
+        settings_.showFilename = !settings_.showFilename;
+        settings_.save();
+        break;
     case CmdNext: go(1); break;
     case CmdPrevious: go(-1); break;
     case CmdFirst:
@@ -503,15 +659,21 @@ void Viewer::command(int id) {
         showCurrent();
         break;
     case CmdLoop:
-        navigator_.wraps = !navigator_.wraps;
-        prefetchNeighbors();
+        settings_.loop = !settings_.loop;
+        settings_.save();
+        applySettings();
         break;
+    case CmdDescending:
+        settings_.descending = !settings_.descending;
+        settings_.save();
+        applySettings();
+        break;
+    case CmdSlideshow: setSlideshow(!slideshow_); break;
     case CmdZoomIn: zoomBy(1.25); break;
     case CmdZoomOut: zoomBy(0.8); break;
     case CmdFit:
         zoomMode_ = ZoomMode::Fit;
         applyZoomMode();
-        updateTitle();
         break;
     case CmdActual: {
         double width, height;
@@ -519,6 +681,11 @@ void Viewer::command(int id) {
         setZoom(1, width / 2, height / 2);
         break;
     }
+    case CmdEnlarge:
+        settings_.enlargeSmall = !settings_.enlargeSmall;
+        settings_.save();
+        applySettings();
+        break;
     case CmdRotateRight:
     case CmdRotateLeft:
         if (!current_) break;
@@ -528,8 +695,41 @@ void Viewer::command(int id) {
         if (zoomMode_ != ZoomMode::Custom) applyZoomMode(); else clampCenter();
         break;
     case CmdFullScreen: setFullScreen(!fullScreen_); break;
+    case CmdRecycle: moveToRecycleBin(); break;
+    case CmdSettings:
+        SettingsDialog::show(hwnd_, &settings_, [this] { applySettings(); });
+        break;
+    case CmdAbout:
+        MessageBoxW(hwnd_, L"Glance 0.1\nA fast image viewer.\n\nhttps://github.com/wards999/Glance", L"About Glance",
+                    MB_OK | MB_ICONINFORMATION);
+        break;
     case CmdExit: DestroyWindow(hwnd_); break;
     }
+}
+
+/// After the Settings dialog or a menu toggle changed something.
+void Viewer::applySettings() {
+    navigator_.wraps = settings_.loop;
+    if (settings_.sortOrder != appliedSort_ || settings_.descending != appliedDescending_) {
+        appliedSort_ = settings_.sortOrder;
+        appliedDescending_ = settings_.descending;
+        navigator_.sort(settings_.sortOrder, settings_.descending);
+    }
+    if (slideshow_) {
+        SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
+    }
+    if (pipeline_) pipeline_->setCostLimit(cacheLimit());
+    if (zoomMode_ == ZoomMode::Fit) applyZoomMode();
+    updateTitle();
+    if (current_) prefetchNeighbors();
+    render();
+}
+
+void Viewer::setSlideshow(bool on) {
+    if (on && navigator_.count() < 2) return;
+    slideshow_ = on;
+    if (on) SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
+    else KillTimer(hwnd_, kSlideshowTimer);
 }
 
 void Viewer::openDialog() {
@@ -543,6 +743,104 @@ void Viewer::openDialog() {
     if (GetOpenFileNameW(&ofn)) open({buffer});
 }
 
+// MARK: - File commands
+
+void Viewer::reload() {
+    const std::wstring* path = navigator_.current();
+    if (!path) return;
+    const std::wstring file = *path;
+    pipeline_->invalidate(file);
+    forgetGpu(file);
+    showCurrent();
+}
+
+void Viewer::revealInExplorer() {
+    const std::wstring* path = navigator_.current();
+    if (!path) return;
+    if (PIDLIST_ABSOLUTE item = ILCreateFromPathW(path->c_str())) {
+        SHOpenFolderAndSelectItems(item, 0, nullptr, 0);
+        ILFree(item);
+    }
+}
+
+void Viewer::setAsWallpaper() {
+    const std::wstring* path = navigator_.current();
+    if (!path) return;
+    std::wstring file = *path;
+    SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, file.data(), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+}
+
+void Viewer::copyPath() {
+    const std::wstring* path = navigator_.current();
+    if (!path || !OpenClipboard(hwnd_)) return;
+    EmptyClipboard();
+    const size_t bytes = (path->size() + 1) * sizeof(wchar_t);
+    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+        std::memcpy(GlobalLock(memory), path->c_str(), bytes);
+        GlobalUnlock(memory);
+        SetClipboardData(CF_UNICODETEXT, memory);
+    }
+    CloseClipboard();
+}
+
+void Viewer::copyImage() {
+    if (!current_ || !OpenClipboard(hwnd_)) return;
+    // Upright, as on screen: apply EXIF and your rotation to the pixels.
+    const D2D1_MATRIX_3X2_F m = orientation();
+    const int a = static_cast<int>(std::lround(m._11)), b = static_cast<int>(std::lround(m._12));
+    const int c = static_cast<int>(std::lround(m._21)), d = static_cast<int>(std::lround(m._22));
+    const Decoded& source = *current_;
+    const int w = static_cast<int>(source.width), h = static_cast<int>(source.height);
+    const int ow = a == 0 ? h : w, oh = a == 0 ? w : h;
+    const size_t rowBytes = size_t(ow) * 4;
+
+    EmptyClipboard();
+    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + rowBytes * oh)) {
+        auto* header = static_cast<BITMAPINFOHEADER*>(GlobalLock(memory));
+        *header = BITMAPINFOHEADER{};
+        header->biSize = sizeof(BITMAPINFOHEADER);
+        header->biWidth = ow;
+        header->biHeight = oh;  // bottom-up, which every program reading the clipboard handles
+        header->biPlanes = 1;
+        header->biBitCount = 32;
+        header->biCompression = BI_RGB;
+        auto* bits = reinterpret_cast<uint8_t*>(header + 1);
+        for (int dy = 0; dy < oh; ++dy) {
+            uint8_t* row = bits + size_t(oh - 1 - dy) * rowBytes;
+            const int v = 2 * dy + 1 - oh;
+            for (int dx = 0; dx < ow; ++dx) {
+                // The inverse of an orientation (quarter turns and flips) is its transpose.
+                const int u = 2 * dx + 1 - ow;
+                const int sx = (u * a + v * b + w - 1) / 2;
+                const int sy = (u * c + v * d + h - 1) / 2;
+                std::memcpy(row + size_t(dx) * 4, source.pixels.get() + size_t(sy) * source.stride + size_t(sx) * 4, 4);
+            }
+        }
+        GlobalUnlock(memory);
+        SetClipboardData(CF_DIB, memory);
+    }
+    CloseClipboard();
+}
+
+void Viewer::moveToRecycleBin() {
+    const std::wstring* path = navigator_.current();
+    if (!path) return;
+    const std::wstring file = *path;
+    // Recycle Bin, so it's recoverable; the file list must end with two nulls.
+    std::wstring from = file;
+    from.push_back(L'\0');
+    SHFILEOPSTRUCTW operation{};
+    operation.hwnd = hwnd_;
+    operation.wFunc = FO_DELETE;
+    operation.pFrom = from.c_str();
+    operation.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+    if (SHFileOperationW(&operation) != 0 || operation.fAnyOperationsAborted) return;
+    pipeline_->invalidate(file);
+    forgetGpu(file);
+    navigator_.removeCurrent();
+    showCurrent();
+}
+
 // MARK: - Opening and navigation
 
 void Viewer::open(const std::vector<std::wstring>& paths) {
@@ -552,20 +850,26 @@ void Viewer::open(const std::vector<std::wstring>& paths) {
         scanFolder(paths[0], L"");
     } else if (paths.size() == 1) {
         // Show the file first; list its folder in the background.
-        navigator_.setFiles({paths[0]}, paths[0]);
+        navigator_.setFiles({FileEntry{paths[0]}}, paths[0]);
         showCurrent();
         scanFolder(Navigator::folderOf(paths[0]), paths[0]);
     } else {
-        navigator_.setFiles(paths, paths[0]);
+        std::vector<FileEntry> files;
+        for (const auto& path : paths) files.push_back(Navigator::entryFor(path));
+        Navigator::sortEntries(files, settings_.sortOrder, settings_.descending);
+        navigator_.setFiles(std::move(files), paths[0]);
         showCurrent();
     }
 }
 
 void Viewer::scanFolder(const std::wstring& folder, const std::wstring& selected) {
     HWND hwnd = hwnd_;
-    std::thread([hwnd, folder, selected] {
+    const SortOrder order = settings_.sortOrder;
+    const bool descending = settings_.descending;
+    std::thread([hwnd, folder, selected, order, descending] {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         auto files = Navigator::scan(folder, supportedExtensions());
+        Navigator::sortEntries(files, order, descending);
         CoUninitialize();
         PostMessageW(hwnd, WM_APP_FOLDER, 0, reinterpret_cast<LPARAM>(new FolderResult{selected, std::move(files)}));
     }).detach();
@@ -666,11 +970,14 @@ void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
 
 void Viewer::prefetchNeighbors() {
     std::vector<DecodeKey> keys;
-    DecodeRequest request = openingRequest();
+    const DecodeRequest request = openingRequest();
     // Mostly in the direction of travel, plus one behind.
-    for (int offset : {direction_, 2 * direction_, -direction_, 3 * direction_}) {
+    std::vector<int> offsets;
+    for (int i = 1; i <= settings_.prefetchCount; ++i) offsets.push_back(i * direction_);
+    if (!offsets.empty()) offsets.insert(offsets.begin() + std::min<size_t>(2, offsets.size()), -direction_);
+    const std::wstring* now = navigator_.current();
+    for (int offset : offsets) {
         const std::wstring* path = navigator_.at(offset);
-        const std::wstring* now = navigator_.current();
         if (!path || (now && samePath(*path, *now))) continue;
         DecodeKey key{*path, 0, request};
         if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
@@ -722,7 +1029,7 @@ double Viewer::fitZoom() const {
     double width, height;
     viewSize(width, height);
     double fit = std::min(width / orientedWidth(), height / orientedHeight());
-    return enlargeSmallImages_ ? fit : std::min(fit, 1.0);
+    return settings_.enlargeSmall ? fit : std::min(fit, 1.0);
 }
 
 void Viewer::applyZoomMode() {
@@ -870,7 +1177,9 @@ bool Viewer::initGraphics() {
     factory->MakeWindowAssociation(hwnd_, DXGI_MWA_NO_ALT_ENTER);  // we do our own full screen
     createTarget();
     const D2D1_COLOR_F white{1, 1, 1, 0.9f};
+    const D2D1_COLOR_F shade{0, 0, 0, 0.6f};
     context_->CreateSolidColorBrush(&white, nullptr, brush_.put());
+    context_->CreateSolidColorBrush(&shade, nullptr, overlayBrush_.put());
     maxBitmapSize_ = context_->GetMaximumBitmapSize();
     trace("Direct2D ready");
     return true;
@@ -882,6 +1191,7 @@ void Viewer::releaseGraphics() {
     gpuBytes_ = 0;
     shown_.reset();
     brush_.reset();
+    overlayBrush_.reset();
     target_.reset();
     if (context_) context_->SetTarget(nullptr);
     swapChain_.reset();
@@ -954,22 +1264,88 @@ std::shared_ptr<GpuImage> Viewer::gpuFor(const DecodeKey& key, const std::shared
     return gpu;
 }
 
+void Viewer::forgetGpu(const std::wstring& path) {
+    for (auto it = gpuOrder_.begin(); it != gpuOrder_.end();) {
+        if (samePath(it->path, path)) {
+            gpuBytes_ -= gpuCache_[*it]->bytes;
+            gpuCache_.erase(*it);
+            it = gpuOrder_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+std::wstring Viewer::overlayText() const {
+    const std::wstring* path = navigator_.current();
+    if (!path) return {};
+    const std::wstring position = std::to_wstring(navigator_.index() + 1) + L" / " + std::to_wstring(navigator_.count());
+    if (!settings_.showInfo) return fileName(*path) + L"    " + position;
+
+    std::wstring text = fileName(*path) + L"\n" + position;
+    if (!current_ || !samePath(current_->info.path, *path)) return text;
+    const ImageInfo& info = current_->info;
+    wchar_t line[200];
+    swprintf(line, 200, L"\n%u × %u px  (%.1f MP)", info.orientedWidth(), info.orientedHeight(),
+             double(info.width) * info.height / 1e6);
+    text += line;
+    wchar_t size[32] = L"";
+    StrFormatByteSizeW(static_cast<LONGLONG>(info.fileSize), size, static_cast<UINT>(std::size(size)));
+    text += L"\n" + std::wstring(size) + (info.format.empty() ? L"" : L"  ·  " + info.format);
+    if (!info.taken.empty()) text += L"\nTaken   " + info.taken;
+    if (!info.camera.empty()) text += L"\nCamera  " + info.camera;
+    if (!info.lens.empty()) text += L"\nLens    " + info.lens;
+    if (!info.exposure.empty()) text += L"\n" + info.exposure;
+    swprintf(line, 200, L"\nZoom    %d%%", static_cast<int>(std::lround(zoom_ * 100)));
+    text += line;
+    return text;
+}
+
+void Viewer::drawOverlay() {
+    const std::wstring text = overlayText();
+    if (text.empty()) return;
+    if (!dwrite_ && FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                                               reinterpret_cast<IUnknown**>(dwrite_.put())))) {
+        return;
+    }
+    const UINT dpi = GetDpiForWindow(hwnd_);
+    const float scale = dpi / 96.0f;
+    if (!textFormat_ || textFormatDpi_ != dpi) {
+        textFormat_.reset();
+        // Monospaced so the labels line up.
+        dwrite_->CreateTextFormat(L"Consolas", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                                  DWRITE_FONT_STRETCH_NORMAL, 13.0f * scale, L"", textFormat_.put());
+        textFormatDpi_ = dpi;
+    }
+    ComPtr<IDWriteTextLayout> layout;
+    if (!textFormat_ || FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(),
+                                                         640.0f * scale, 2000.0f * scale, layout.put()))) {
+        return;
+    }
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+    const float left = 20 * scale, top = 16 * scale, padX = 14 * scale, padY = 10 * scale;
+    const D2D1_ROUNDED_RECT box{{left, top, left + metrics.width + padX * 2, top + metrics.height + padY * 2}, 8 * scale, 8 * scale};
+    context_->FillRoundedRectangle(&box, overlayBrush_.get());
+    context_->DrawTextLayout(D2D1_POINT_2F{left + padX, top + padY}, layout.get(), brush_.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
 void Viewer::render() {
     if (!context_ || !target_) return;
     context_->BeginDraw();
     const D2D1_MATRIX_3X2_F plain = identity();
-    const D2D1_COLOR_F black{0, 0, 0, 1};
+    const D2D1_COLOR_F background = colour(settings_.background);
     context_->SetTransform(&plain);
-    context_->Clear(&black);
+    context_->Clear(&background);
 
     if (current_ && !shown_) shown_ = gpuFor(currentKey_, current_);
     if (current_ && shown_) {
         const D2D1_MATRIX_3X2_F transform = imageTransform();
         context_->SetTransform(&transform);
-        // Screen pixels per bitmap pixel decides the filter: smooth when shrinking, sharp
-        // pixels when blown right up.
+        // Screen pixels per bitmap pixel decides the filter: smooth when shrinking, real pixels
+        // when blown right up (if Settings asks for that).
         const double scale = std::sqrt(transform._11 * transform._11 + transform._12 * transform._12);
-        const D2D1_INTERPOLATION_MODE mode = scale >= 4 ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+        const D2D1_INTERPOLATION_MODE mode = (scale >= 4 && settings_.pixelatedZoom) ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
                                              : scale < 0.99 ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
                                                             : D2D1_INTERPOLATION_MODE_LINEAR;
         for (const auto& tile : shown_->tiles) {
@@ -982,6 +1358,7 @@ void Viewer::render() {
                         float(std::max(dragStart_.x, dragLast_.x)) + 0.5f, float(std::max(dragStart_.y, dragLast_.y)) + 0.5f};
         context_->DrawRectangle(&box, brush_.get(), 1.0f, nullptr);
     }
+    if (settings_.showInfo || settings_.showFilename) drawOverlay();
 
     HRESULT hr = context_->EndDraw();
     if (SUCCEEDED(hr)) hr = swapChain_->Present(1, 0);
