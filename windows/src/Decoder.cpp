@@ -8,8 +8,74 @@
 
 namespace {
 
-// WICBitmapInterpolationModeHighQualityCubic (Windows 10+); MinGW's header predates it.
-constexpr auto kHighQualityCubic = static_cast<WICBitmapInterpolationMode>(4);
+UINT ceilDiv(UINT value, UINT divisor) { return (value + divisor - 1) / divisor; }
+
+/// Has the codec decode straight to `width`×`height` in a pixel format we can turn into BGRA
+/// ourselves. For JPEG this is DCT scaling, the cheap way to get 1/2, 1/4, 1/8 size; it also
+/// skips WIC's separate resize and format-conversion passes. False if the codec can't.
+bool decodeNative(IWICBitmapFrameDecode* frame, UINT width, UINT height, Decoded& out) {
+    ComPtr<IWICBitmapSourceTransform> transform;
+    if (FAILED(frame->QueryInterface(__uuidof(IWICBitmapSourceTransform), reinterpret_cast<void**>(transform.put())))) {
+        return false;
+    }
+    UINT w = width, h = height;
+    if (FAILED(transform->GetClosestSize(&w, &h)) || w != width || h != height) return false;
+
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGR;
+    if (FAILED(transform->GetClosestPixelFormat(&format))) return false;
+    UINT sourceBytes = 0;
+    if (format == GUID_WICPixelFormat32bppBGR) sourceBytes = 4;
+    else if (format == GUID_WICPixelFormat24bppBGR) sourceBytes = 3;
+    else if (format == GUID_WICPixelFormat8bppGray) sourceBytes = 1;
+    else return false;  // CMYK and friends: let WIC's converter handle them
+
+    const UINT stride = width * 4;
+    const size_t total = size_t(stride) * height;
+    const size_t sourceStride = size_t(width) * sourceBytes;
+    if (total > 0xFFFFFFFFull) return false;  // CopyPixels takes a 32-bit size
+    out.pixels.reset(new (std::nothrow) uint8_t[total]);
+    if (!out.pixels) return false;
+
+    // 32-bit decodes go straight into the output; narrower ones into a scratch buffer first.
+    std::unique_ptr<uint8_t[]> scratch;
+    uint8_t* target = out.pixels.get();
+    if (sourceBytes != 4) {
+        scratch.reset(new (std::nothrow) uint8_t[sourceStride * height]);
+        if (!scratch) return false;
+        target = scratch.get();
+    }
+    if (FAILED(transform->CopyPixels(nullptr, width, height, &format, WICBitmapTransformRotate0,
+                                     static_cast<UINT>(sourceStride), static_cast<UINT>(sourceStride * height), target))) {
+        return false;
+    }
+
+    // To opaque BGRA (alpha 255 is valid premultiplied).
+    uint8_t* dst = out.pixels.get();
+    for (UINT y = 0; y < height; ++y) {
+        uint8_t* row = dst + size_t(y) * stride;
+        if (sourceBytes == 4) {
+            for (UINT x = 0; x < width; ++x) row[x * 4 + 3] = 255;
+        } else if (sourceBytes == 3) {
+            const uint8_t* src = scratch.get() + size_t(y) * sourceStride;
+            for (UINT x = 0; x < width; ++x) {
+                row[x * 4 + 0] = src[x * 3 + 0];
+                row[x * 4 + 1] = src[x * 3 + 1];
+                row[x * 4 + 2] = src[x * 3 + 2];
+                row[x * 4 + 3] = 255;
+            }
+        } else {
+            const uint8_t* src = scratch.get() + size_t(y) * sourceStride;
+            for (UINT x = 0; x < width; ++x) {
+                row[x * 4 + 0] = row[x * 4 + 1] = row[x * 4 + 2] = src[x];
+                row[x * 4 + 3] = 255;
+            }
+        }
+    }
+    out.width = width;
+    out.height = height;
+    out.stride = stride;
+    return true;
+}
 
 int readOrientation(IWICBitmapFrameDecode* frame) {
     ComPtr<IWICMetadataQueryReader> reader;
@@ -24,8 +90,6 @@ int readOrientation(IWICBitmapFrameDecode* frame) {
     PropVariantClear(&value);
     return (orientation >= 1 && orientation <= 8) ? orientation : 1;
 }
-
-UINT ceilDiv(UINT value, UINT divisor) { return (value + divisor - 1) / divisor; }
 
 }  // namespace
 
@@ -72,25 +136,24 @@ std::shared_ptr<Decoded> Decoder::decode(const std::wstring& path, UINT frameInd
         needed = std::min(request.longSide, full);
     }
 
-    // Pick the output size. Powers of two use the codec's own scaled decode exactly, so no
-    // resampling pass follows; beyond 1/8, WIC resamples the rest of the way.
+    // 1. Codecs that can (JPEG) decode straight at 1/2, 1/4 or 1/8 size: the smallest of those
+    //    that still covers the view. Whatever's left over, the GPU scales when drawing.
     UINT factor = 1;
     while (factor < 8 && ceilDiv(full, factor * 2) >= needed) factor *= 2;
-    UINT targetWidth = ceilDiv(info.width, factor);
-    UINT targetHeight = ceilDiv(info.height, factor);
-    if (ceilDiv(full, factor) > needed * 2) {
-        double scale = double(needed) / full;
-        targetWidth = std::max(1u, static_cast<UINT>(std::lround(info.width * scale)));
-        targetHeight = std::max(1u, static_cast<UINT>(std::lround(info.height * scale)));
+    if (decodeNative(frame.get(), ceilDiv(info.width, factor), ceilDiv(info.height, factor), *result)) {
+        return result;
     }
 
+    // 2. Everything else decodes in full. Shrink on the CPU only when it's far bigger than the
+    //    view needs (to keep memory down); otherwise the GPU does the scaling for free.
     IWICBitmapSource* source = frame.get();
     ComPtr<IWICBitmapScaler> scaler;
-    if (targetWidth != info.width || targetHeight != info.height) {
-        // Connected straight to the decoder, the scaler asks codecs that can (JPEG) to decode
-        // at reduced size directly rather than decoding everything and shrinking it.
+    if (full > needed * 4) {
+        const double scale = double(needed) * 2 / full;
+        const UINT targetWidth = std::max(1u, static_cast<UINT>(std::lround(info.width * scale)));
+        const UINT targetHeight = std::max(1u, static_cast<UINT>(std::lround(info.height * scale)));
         if (SUCCEEDED(factory_->CreateBitmapScaler(scaler.put())) &&
-            SUCCEEDED(scaler->Initialize(frame.get(), targetWidth, targetHeight, kHighQualityCubic))) {
+            SUCCEEDED(scaler->Initialize(frame.get(), targetWidth, targetHeight, WICBitmapInterpolationModeFant))) {
             source = scaler.get();
         }
     }
