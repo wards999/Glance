@@ -677,6 +677,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 view.clearSelection()
             } else if slideshowTimer != nil {
                 stopSlideshow()
+            } else if settings.escapeQuits {
+                NSApp.terminate(nil)
             } else if isFullScreen {
                 toggleFullScreenMode(nil)
             }

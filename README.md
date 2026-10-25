@@ -112,7 +112,7 @@ and the window always agree.
 | ⇧⌘C | Copy file path |
 | ⌘V | Paste (opens copied files or a copied image) |
 | S, ⌥⌘P | Slideshow on/off |
-| F, ⌃⌘F | Full screen (instant or macOS style, per Settings). Esc leaves it |
+| F, ⌃⌘F | Full screen (instant or macOS style, per Settings). Esc leaves it, or closes Glance if Settings ▸ General ▸ Escape key says so (JPEGView style) |
 | ⌘S / ⇧⌘S | Save / Save As |
 | ⌘⌫ | Move to Trash |
 | ⇧⌘R | Reveal in Finder |

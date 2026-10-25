@@ -60,6 +60,7 @@ final class SettingsWindowController: NSWindowController {
                 { s.slideshowInterval = Settings.slideshowIntervals[$0] }
             )],
             [empty, checkbox("Keep adjustments when changing images", { s.keepAdjustments }, { s.keepAdjustments = $0 })],
+            [label("Escape key:"), popup(["Leaves full screen", "Closes Glance"], { s.escapeQuits ? 1 : 0 }, { s.escapeQuits = $0 == 1 })],
         ]
     }
 

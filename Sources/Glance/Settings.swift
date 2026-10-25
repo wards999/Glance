@@ -42,6 +42,7 @@ final class Settings {
         static let wheel = "mouseWheel"
         static let slideshowInterval = "slideshowInterval"
         static let keepAdjustments = "keepAdjustments"
+        static let escapeQuits = "escapeQuits"
         static let startZoom = "startZoom"
         static let enlargeSmall = "enlargeSmallImages"
         static let background = "backgroundRGB"
@@ -78,6 +79,7 @@ final class Settings {
             Key.wheel: WheelAction.zoom.rawValue,
             Key.slideshowInterval: 3.0,
             Key.keepAdjustments: false,
+            Key.escapeQuits: false,
             Key.startZoom: StartZoom.fit.rawValue,
             Key.enlargeSmall: false,
             Key.background: [0.0, 0.0, 0.0],
@@ -131,6 +133,12 @@ final class Settings {
     var keepAdjustments: Bool {
         get { defaults.bool(forKey: Key.keepAdjustments) }
         set { store(newValue, Key.keepAdjustments) }
+    }
+
+    /// JPEGView-style: Escape closes the app instead of only leaving full screen.
+    var escapeQuits: Bool {
+        get { defaults.bool(forKey: Key.escapeQuits) }
+        set { store(newValue, Key.escapeQuits) }
     }
 
     // MARK: Display
