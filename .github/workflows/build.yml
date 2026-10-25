@@ -2,16 +2,19 @@ name: Build
 
 on:
   push:
-    # Docs-only changes don't need a Mac build.
+    # Docs-only and Windows-only changes don't need a Mac build.
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
+      - 'windows/**'
+      - '.github/workflows/build-windows.yml'
   pull_request:
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
+      - 'windows/**'
   workflow_dispatch:
 
 # A newer push to the same branch cancels the build it replaces.
