@@ -20,6 +20,13 @@ private final class AnimationToken {
     }
 }
 
+/// A borderless window normally refuses to become key, which would stop keyboard input
+/// in instant full screen.
+private final class ViewerWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, ImageViewDelegate {
     private let imageView = ImageView(frame: .zero)
     private let infoBox = NSView()
@@ -62,10 +69,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// The message stays until the next picture appears ("Loading…", "Can't open …").
     private var messageIsSticky = false
 
+    /// Window state to return to when leaving instant full screen.
+    private var windowedFrame: NSRect?
+    private var windowedStyle: NSWindow.StyleMask = []
+    private static let frameAutosaveName = "GlanceViewer"
+
     init() {
         let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let frame = visible.insetBy(dx: visible.width * 0.1, dy: visible.height * 0.1)
-        let window = NSWindow(
+        let window = ViewerWindow(
             contentRect: frame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -79,7 +91,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
-        window.setFrameAutosaveName("GlanceViewer")
+        window.setFrameAutosaveName(Self.frameAutosaveName)
         buildViews(in: window)
         applySettings()
         settingsObserver = NotificationCenter.default.addObserver(forName: Settings.didChange, object: nil, queue: nil) { [weak self] _ in
@@ -123,6 +135,64 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Shows the window at launch, already full screen if that's the setting. Instant full screen
+    /// is applied before the window first appears, so there's no windowed frame on the way.
+    func showAtLaunch() {
+        let fullScreen = settings.openFullScreen
+        if fullScreen && settings.fullScreenStyle == .instant {
+            enterInstantFullScreen()
+        }
+        showWindow(nil)
+        if fullScreen && settings.fullScreenStyle == .native {
+            window?.toggleFullScreen(nil)
+        }
+    }
+
+    // MARK: - Full screen
+
+    private var isInstantFullScreen: Bool { windowedFrame != nil }
+
+    private var isFullScreen: Bool {
+        isInstantFullScreen || window?.styleMask.contains(.fullScreen) == true
+    }
+
+    @objc func toggleFullScreenMode(_ sender: Any?) {
+        guard let window else { return }
+        if window.styleMask.contains(.fullScreen) {
+            window.toggleFullScreen(nil)
+        } else if isInstantFullScreen {
+            exitInstantFullScreen()
+        } else if settings.fullScreenStyle == .native {
+            window.toggleFullScreen(nil)
+        } else {
+            enterInstantFullScreen()
+        }
+    }
+
+    private func enterInstantFullScreen() {
+        guard let window, !isInstantFullScreen, let screen = window.screen ?? NSScreen.main else { return }
+        windowedFrame = window.frame
+        windowedStyle = window.styleMask
+        // Don't let the screen-sized frame overwrite the saved window position.
+        window.setFrameAutosaveName("")
+        // Menu bar and Dock still slide in if the mouse goes to them.
+        NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+        window.styleMask = [.borderless]
+        window.setFrame(screen.frame, display: true)
+        window.makeFirstResponder(imageView)
+    }
+
+    private func exitInstantFullScreen() {
+        guard let window, let frame = windowedFrame else { return }
+        windowedFrame = nil
+        NSApp.presentationOptions = []
+        window.styleMask = windowedStyle
+        window.titlebarAppearsTransparent = true
+        window.setFrame(frame, display: true)
+        window.setFrameAutosaveName(Self.frameAutosaveName)
+        window.makeFirstResponder(imageView)
     }
 
     private func buildViews(in window: NSWindow) {
@@ -449,7 +519,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             let mouse = self.controlBar.convert(window.mouseLocationOutsideOfEventStream, from: nil)
             if self.controlBar.bounds.contains(mouse) { return }
             self.setControlsVisible(false)
-            if window.styleMask.contains(.fullScreen) && self.settings.hideCursorInFullScreen {
+            if self.isFullScreen && self.settings.hideCursorInFullScreen {
                 NSCursor.setHiddenUntilMouseMoves(true)
             }
         }
@@ -483,8 +553,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 view.clearSelection()
             } else if slideshowTimer != nil {
                 stopSlideshow()
-            } else if window?.styleMask.contains(.fullScreen) == true {
-                window?.toggleFullScreen(nil)
+            } else if isFullScreen {
+                toggleFullScreenMode(nil)
             }
         case 0x0D, 0x03:
             if view.selection != nil { cropToSelection(nil) }
@@ -496,7 +566,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             case "1": view.zoomToActualSize()
             case "2": view.zoomToFill()
             case "z": zoomToSelection(nil)
-            case "f": window?.toggleFullScreen(nil)
+            case "f": toggleFullScreenMode(nil)
             case "i": toggleInfo(nil)
             case "a": toggleAutoCorrect(nil)
             case "e": showAdjustments(nil)
@@ -874,6 +944,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let hasImage = current != nil
         switch item.action {
         case #selector(openDocument(_:)):
+            return true
+        case #selector(toggleFullScreenMode(_:)):
+            item.title = isFullScreen ? "Exit Full Screen" : "Enter Full Screen"
             return true
         case #selector(toggleInfo(_:)):
             item.state = showInfo ? .on : .off

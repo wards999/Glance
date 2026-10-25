@@ -50,7 +50,7 @@ enum MainMenu {
             .separator(),
             item("Show Info", #selector(C.toggleInfo(_:)), "i"),
             .separator(),
-            item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
+            item("Enter Full Screen", #selector(C.toggleFullScreenMode(_:)), "f", [.command, .control]),
         ]))
 
         main.addItem(submenu("Image", [

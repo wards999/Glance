@@ -67,6 +67,12 @@ final class SettingsWindowController: NSWindowController {
         return [
             [label("Open images at:"), popup(["Fit to window", "Fill window", "Actual size (100%)"], { s.startZoom.rawValue }, { s.startZoom = StartZoom(rawValue: $0) ?? .fit })],
             [empty, checkbox("Enlarge small images to fit the window", { s.enlargeSmallImages }, { s.enlargeSmallImages = $0 })],
+            [empty, checkbox("Open in full screen", { s.openFullScreen }, { s.openFullScreen = $0 })],
+            [label("Full screen style:"), popup(
+                ["Instant (covers the screen, no animation)", "macOS full screen (own Space, animated)"],
+                { s.fullScreenStyle.rawValue },
+                { s.fullScreenStyle = FullScreenStyle(rawValue: $0) ?? .instant }
+            )],
             [label("Background:"), colorWell({ s.backgroundColor }, { s.backgroundColor = $0 })],
             [empty, checkbox("Show the info overlay", { s.showInfo }, { s.showInfo = $0 })],
             [empty, checkbox("Show controls when the mouse nears the bottom", { s.showControls }, { s.showControls = $0 })],

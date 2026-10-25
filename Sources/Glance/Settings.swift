@@ -16,6 +16,13 @@ enum StartZoom: Int {
     }
 }
 
+enum FullScreenStyle: Int {
+    /// A borderless window covering the screen: appears immediately, no Space switch.
+    case instant = 0
+    /// macOS full screen: its own Space, with the slide animation.
+    case native
+}
+
 /// User preferences, kept in UserDefaults (what JPEGView puts in its INI file).
 /// Setting any value posts `Settings.didChange`; the viewer and the Settings window both follow it.
 final class Settings {
@@ -34,6 +41,8 @@ final class Settings {
         static let startZoom = "startZoom"
         static let enlargeSmall = "enlargeSmallImages"
         static let background = "backgroundRGB"
+        static let openFullScreen = "openFullScreen"
+        static let fullScreenStyle = "fullScreenStyle"
         static let showInfo = "showInfo"
         static let showControls = "showControls"
         static let hideCursor = "hideCursorInFullScreen"
@@ -61,6 +70,8 @@ final class Settings {
             Key.startZoom: StartZoom.fit.rawValue,
             Key.enlargeSmall: false,
             Key.background: [0.0, 0.0, 0.0],
+            Key.openFullScreen: false,
+            Key.fullScreenStyle: FullScreenStyle.instant.rawValue,
             Key.showInfo: false,
             Key.showControls: true,
             Key.hideCursor: true,
@@ -126,6 +137,16 @@ final class Settings {
             let color = newValue.usingColorSpace(.sRGB) ?? .black
             store([Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent)], Key.background)
         }
+    }
+
+    var openFullScreen: Bool {
+        get { defaults.bool(forKey: Key.openFullScreen) }
+        set { store(newValue, Key.openFullScreen) }
+    }
+
+    var fullScreenStyle: FullScreenStyle {
+        get { FullScreenStyle(rawValue: defaults.integer(forKey: Key.fullScreenStyle)) ?? .instant }
+        set { store(newValue.rawValue, Key.fullScreenStyle) }
     }
 
     var showInfo: Bool {

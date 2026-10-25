@@ -52,7 +52,8 @@ Included:
 - Save (asks before re-encoding the original) and Save As JPEG/PNG/TIFF/HEIC with a quality setting. EXIF, GPS and IPTC metadata are kept
 - Slideshow with 1–30 s intervals
 - EXIF info overlay: camera, lens, exposure, date, GPS
-- Bottom control bar that fades in on hover; full screen with cursor auto-hide
+- Bottom control bar that fades in on hover
+- Full screen with cursor auto-hide, optionally on launch. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
 - Move to Trash, Reveal in Finder, Set as Desktop Picture, Copy, drag and drop, mouse back/forward buttons, trackpad swipe between images
 
 Not included yet:
@@ -71,7 +72,7 @@ and the window always agree.
 | Tab | Options |
 |---|---|
 | General | Sort order and direction, loop at end of folder, mouse wheel zooms or flips images, slideshow interval, keep adjustments between images |
-| Display | Initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, hover controls, hide cursor in full screen, pixel view above 400% |
+| Display | Open in full screen, full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, hover controls, hide cursor in full screen, pixel view above 400% |
 | Saving | JPEG/HEIC quality, ask before re-encoding the original |
 | Performance | How many images to decode ahead (0–8), memory cache size |
 
@@ -98,7 +99,7 @@ and the window always agree.
 | E, ⌥⌘C | Adjustments panel |
 | I, ⌘I | Info overlay |
 | S, ⌥⌘P | Slideshow on/off |
-| F, ⌃⌘F | Full screen. Esc leaves it |
+| F, ⌃⌘F | Full screen (instant or macOS style, per Settings). Esc leaves it |
 | ⌘S / ⇧⌘S | Save / Save As |
 | ⌘⌫ | Move to Trash |
 | ⇧⌘R | Reveal in Finder |

@@ -49,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showViewer() -> ViewerWindowController {
         if let viewer { return viewer }
         let controller = ViewerWindowController()
-        controller.showWindow(nil)
+        controller.showAtLaunch()
         viewer = controller
         return controller
     }

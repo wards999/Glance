@@ -24,7 +24,7 @@ final class ControlBar: NSVisualEffectView {
             ("info.circle", "Info", #selector(C.toggleInfo(_:))),
             ("slider.horizontal.3", "Adjustments", #selector(C.showAdjustments(_:))),
             ("play.fill", "Slideshow", #selector(C.toggleSlideshow(_:))),
-            ("arrow.up.left.and.arrow.down.right", "Full Screen", #selector(NSWindow.toggleFullScreen(_:))),
+            ("arrow.up.left.and.arrow.down.right", "Full Screen", #selector(C.toggleFullScreenMode(_:))),
         ]
 
         let buttons: [NSButton] = items.map { item in
@@ -34,8 +34,6 @@ final class ControlBar: NSVisualEffectView {
             } else {
                 button = NSButton(title: item.title, target: target, action: item.action)
             }
-            // Full screen is handled by the window, further along the responder chain.
-            if item.action == #selector(NSWindow.toggleFullScreen(_:)) { button.target = nil }
             button.isBordered = false
             button.contentTintColor = .white
             button.toolTip = item.title
