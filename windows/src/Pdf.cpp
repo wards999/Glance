@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <future>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -62,9 +63,6 @@ struct OpenDocument {
     std::wstring path;
     PdfDocument document{nullptr};
     std::vector<Size> sizes;  // per page, in DIPs, after the page's own rotation
-    /// Pages of one document render one at a time: the engine isn't documented as safe to
-    /// drive from several threads at once, and a race there could stall a page for good.
-    std::shared_ptr<std::mutex> renderLock = std::make_shared<std::mutex>();
 };
 
 std::mutex g_mutex;
@@ -151,7 +149,16 @@ std::vector<std::vector<int>> group(const std::vector<Size>& sizes, int layout) 
     return screens;
 }
 
+/// Renders one page into columns `left`… of `out`. `wic` may be null: a factory is made for this
+/// thread (pages of a spread render on separate threads).
 bool renderPage(const PdfPage& page, UINT width, UINT height, Decoded& out, UINT left, IWICImagingFactory* wic) {
+    ComPtr<IWICImagingFactory> own;
+    if (!wic) {
+        CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, __uuidof(IWICImagingFactory),
+                         reinterpret_cast<void**>(own.put()));
+        if (!own) return false;
+        wic = own.get();
+    }
     try {
         winrt::Windows::Storage::Streams::InMemoryRandomAccessStream stream;
         PdfPageRenderOptions options;
@@ -256,24 +263,32 @@ std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const Deco
     CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, __uuidof(IWICImagingFactory),
                      reinterpret_cast<void**>(wic.put()));
     if (!wic) return nullptr;
-    {
-        std::lock_guard rendering(*opened.renderLock);
-        const double start = nowMs();
-        UINT left = 0;
-        for (size_t i = 0; i < drawOrder.size(); ++i) {
-            if (!renderPage(document.GetPage(drawOrder[i] - 1), pageWidths[i], outH, *result, left, wic.get())) {
-                char line[96];
-                snprintf(line, sizeof(line), "PDF page %d FAILED to render (%ux%u)", drawOrder[i], pageWidths[i], outH);
-                trace(line);
-                return nullptr;
-            }
-            left += pageWidths[i];
-        }
-        char line[96];
-        snprintf(line, sizeof(line), "PDF pages %d-%d rendered at %ux%u in %.0f ms", pages.front(), pages.back(), outW, outH,
-                 nowMs() - start);
-        trace(line);
+    const double start = nowMs();
+    // The two pages of a spread render at the same time: Windows' engine can spend seconds on
+    // one heavy page, and side by side that's paid once rather than twice. Each page writes its
+    // own columns of the shared bitmap.
+    std::vector<UINT> lefts;
+    for (size_t i = 0, left = 0; i < drawOrder.size(); left += pageWidths[i], ++i) lefts.push_back(static_cast<UINT>(left));
+    std::vector<std::future<bool>> others;
+    for (size_t i = 1; i < drawOrder.size(); ++i) {
+        others.push_back(std::async(std::launch::async, [&, i] {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            const bool ok = renderPage(document.GetPage(drawOrder[i] - 1), pageWidths[i], outH, *result, lefts[i], nullptr);
+            CoUninitialize();
+            return ok;
+        }));
     }
+    bool ok = renderPage(document.GetPage(drawOrder[0] - 1), pageWidths[0], outH, *result, lefts[0], wic.get());
+    for (auto& other : others) ok = other.get() && ok;
+    char line[96];
+    if (!ok) {
+        snprintf(line, sizeof(line), "PDF pages %d-%d FAILED to render", pages.front(), pages.back());
+        trace(line);
+        return nullptr;
+    }
+    snprintf(line, sizeof(line), "PDF pages %d-%d rendered at %ux%u in %.0f ms", pages.front(), pages.back(), outW, outH,
+             nowMs() - start);
+    trace(line);
 
     ImageInfo& info = result->info;
     info.path = path;

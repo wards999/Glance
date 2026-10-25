@@ -62,6 +62,9 @@ private:
     bool applyEffects(ID2D1Image* input, ComPtr<ID2D1Image>& output);
     void drawOverlay();
     std::wstring overlayText() const;
+    bool ensureText();
+    /// Bottom-left note for a page that's taking a while, so it never looks frozen.
+    void drawBusyNote();
     std::shared_ptr<GpuImage> upload(const Decoded& image);
     std::shared_ptr<GpuImage> gpuFor(const DecodeKey& key, const std::shared_ptr<Decoded>& image);
     void forgetGpu(const std::wstring& path);
@@ -171,6 +174,7 @@ private:
     DecodeKey currentKey_;
     DecodeKey wantedKey_;
     bool waiting_ = false;
+    bool busy_ = false;  // waited long enough to say so
     DecodeKey levelKey_;
     UINT requestedLevel_ = 0;
     std::vector<DecodeKey> prefetchKeys_;

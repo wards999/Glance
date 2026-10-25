@@ -31,7 +31,11 @@ constexpr UINT WM_APP_FOLDER = WM_APP + 2;
 constexpr UINT WM_APP_GPU_READY = WM_APP + 3;
 constexpr UINT_PTR kSlideshowTimer = 1;
 constexpr UINT_PTR kHoldTimer = 2;
+constexpr UINT_PTR kBusyTimer = 3;
 constexpr UINT kHoldDelayMs = 200;
+constexpr UINT kBusyDelayMs = 150;
+// PDF pages can take seconds each in Windows' engine, so read further ahead than for photos.
+constexpr int kPdfPrefetch = 6;
 constexpr wchar_t kClassName[] = L"GlanceViewer";
 constexpr size_t kGpuBudget = size_t(1) << 30;  // 1 GB of decoded-ahead textures
 constexpr int kSlideshowChoices[] = {1, 2, 3, 5, 10, 30};
@@ -296,6 +300,12 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             KillTimer(hwnd_, kHoldTimer);
             holdPending_ = false;
             if (dragging_ && !didDrag_) beginMagnify();
+        } else if (wParam == kBusyTimer) {
+            KillTimer(hwnd_, kBusyTimer);
+            if (waiting_) {
+                busy_ = true;
+                render();
+            }
         }
         return 0;
 
@@ -1257,6 +1267,8 @@ void Viewer::showCurrent() {
     if (auto hit = pipeline_->cached(key)) {
         // Decoded ahead: on screen in the same message as the key press.
         waiting_ = false;
+        busy_ = false;
+        KillTimer(hwnd_, kBusyTimer);
         show(key, hit, true);
         prefetchNeighbors();
         return;
@@ -1264,6 +1276,7 @@ void Viewer::showCurrent() {
     // Keep the previous picture up until the new one is ready.
     waiting_ = true;
     pipeline_->load(key);
+    SetTimer(hwnd_, kBusyTimer, kBusyDelayMs, nullptr);
     updateTitle();
 }
 
@@ -1308,6 +1321,8 @@ void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
     if (waiting_ && result->key == wantedKey_) {
         trace("decode delivered");
         waiting_ = false;
+        busy_ = false;
+        KillTimer(hwnd_, kBusyTimer);
         if (result->image) {
             show(result->key, result->image, true);
         } else {
@@ -1335,7 +1350,9 @@ void Viewer::prefetchNeighbors() {
     const DecodeRequest request = openingRequest();
     // Mostly in the direction of travel, plus one behind.
     std::vector<int> offsets;
-    for (int i = 1; i <= settings_.prefetchCount; ++i) offsets.push_back(i * direction_);
+    const int ahead = showingPdf() && settings_.prefetchCount > 0 ? std::max(settings_.prefetchCount, kPdfPrefetch)
+                                                                    : settings_.prefetchCount;
+    for (int i = 1; i <= ahead; ++i) offsets.push_back(i * direction_);
     if (!offsets.empty()) offsets.insert(offsets.begin() + std::min<size_t>(2, offsets.size()), -direction_);
     const std::wstring* now = navigator_.current();
     const bool pdf = showingPdf();
@@ -1810,25 +1827,52 @@ std::wstring Viewer::overlayText() const {
     return text;
 }
 
-void Viewer::drawOverlay() {
-    const std::wstring text = overlayText();
-    if (text.empty()) return;
+bool Viewer::ensureText() {
     if (!dwrite_ && FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                                                reinterpret_cast<IUnknown**>(dwrite_.put())))) {
-        return;
+        return false;
     }
     const UINT dpi = GetDpiForWindow(hwnd_);
-    const float scale = dpi / 96.0f;
     if (!textFormat_ || textFormatDpi_ != dpi) {
         textFormat_.reset();
-        // Monospaced so the labels line up.
+        // Monospaced so the info panel's labels line up.
         dwrite_->CreateTextFormat(L"Consolas", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                                  DWRITE_FONT_STRETCH_NORMAL, 13.0f * scale, L"", textFormat_.put());
+                                  DWRITE_FONT_STRETCH_NORMAL, 13.0f * dpi / 96.0f, L"", textFormat_.put());
         textFormatDpi_ = dpi;
     }
+    return textFormat_ != nullptr;
+}
+
+void Viewer::drawBusyNote() {
+    if (!ensureText()) return;
+    const std::wstring text = showingPdf()
+        ? L"Rendering screen " + std::to_wstring(frame_ + 1) + L" of " + std::to_wstring(pdfScreens_) + L"…   Space skips ahead"
+        : std::wstring(L"Loading…");
+    const float scale = GetDpiForWindow(hwnd_) / 96.0f;
     ComPtr<IDWriteTextLayout> layout;
-    if (!textFormat_ || FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(),
-                                                         640.0f * scale, 2000.0f * scale, layout.put()))) {
+    if (FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(), 800.0f * scale,
+                                         100.0f * scale, layout.put()))) {
+        return;
+    }
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+    double width, height;
+    viewSize(width, height);
+    const float padX = 14 * scale, padY = 8 * scale, left = 20 * scale;
+    const float bottom = static_cast<float>(height) - 20 * scale;
+    const float top = bottom - metrics.height - padY * 2;
+    const D2D1_ROUNDED_RECT box{{left, top, left + metrics.width + padX * 2, bottom}, 8 * scale, 8 * scale};
+    context_->FillRoundedRectangle(&box, overlayBrush_.get());
+    context_->DrawTextLayout(D2D1_POINT_2F{left + padX, top + padY}, layout.get(), brush_.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+void Viewer::drawOverlay() {
+    const std::wstring text = overlayText();
+    if (text.empty() || !ensureText()) return;
+    const float scale = GetDpiForWindow(hwnd_) / 96.0f;
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(), 640.0f * scale,
+                                         2000.0f * scale, layout.put()))) {
         return;
     }
     DWRITE_TEXT_METRICS metrics{};
@@ -1873,6 +1917,7 @@ void Viewer::render() {
         context_->DrawRectangle(&box, brush_.get(), 1.0f, nullptr);
     }
     if (settings_.showInfo || settings_.showFilename) drawOverlay();
+    if (busy_ && waiting_) drawBusyNote();
 
     HRESULT hr = context_->EndDraw();
     if (SUCCEEDED(hr)) hr = swapChain_->Present(1, 0);
