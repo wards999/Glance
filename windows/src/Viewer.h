@@ -46,6 +46,9 @@ private:
 
     // Graphics
     bool initGraphics();
+    /// Until the GPU is ready (about 200 ms after launch, mostly loading the driver), the first
+    /// image is painted with GDI so it appears as soon as it's decoded.
+    void paintWithGdi(HDC dc);
     void releaseGraphics();
     void createTarget();
     void resize();

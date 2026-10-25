@@ -14,6 +14,7 @@ namespace {
 
 constexpr UINT WM_APP_DECODED = WM_APP + 1;
 constexpr UINT WM_APP_FOLDER = WM_APP + 2;
+constexpr UINT WM_APP_GPU_READY = WM_APP + 3;
 constexpr wchar_t kClassName[] = L"GlanceViewer";
 constexpr size_t kGpuBudget = size_t(1) << 30;  // 1 GB of decoded-ahead textures
 
@@ -113,9 +114,8 @@ Viewer::~Viewer() {
 // MARK: - Window
 
 bool Viewer::create() {
-    pendingDevice_ = std::async(std::launch::async, createDevice);
     WNDCLASSEXW wc{sizeof(wc)};
-    wc.style = CS_DBLCLKS;
+    wc.style = CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = windowProc;
     wc.hInstance = instance_;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -134,6 +134,13 @@ bool Viewer::create() {
     hwnd_ = CreateWindowExW(WS_EX_ACCEPTFILES, kClassName, L"Glance", WS_OVERLAPPEDWINDOW, x, y, width, height,
                             nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
+    // Loading the GPU driver is the slowest part of starting up, so it runs on its own thread
+    // and the window hears when it's done; nothing waits for it.
+    pendingDevice_ = std::async(std::launch::async, [hwnd = hwnd_] {
+        auto device = createDevice();
+        PostMessageW(hwnd, WM_APP_GPU_READY, 0, 0);
+        return device;
+    });
 
     MEMORYSTATUSEX memory{sizeof(memory)};
     GlobalMemoryStatusEx(&memory);
@@ -148,12 +155,33 @@ void Viewer::show(int showCommand) {
     ShowWindow(hwnd_, showCommand);
     UpdateWindow(hwnd_);
     trace("window shown");
-    // Finish setting up the GPU while the first image decodes on a worker thread.
-    if (initGraphics() && current_) {
-        shown_ = gpuFor(currentKey_, current_);
-        applyZoomMode();
-        render();
-    }
+}
+
+void Viewer::paintWithGdi(HDC dc) {
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    FillRect(dc, &client, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    // GDI can't rotate cheaply; a rotated photo simply waits the extra moment for the GPU.
+    if (!current_ || current_->info.orientation != 1 || quarterTurns_ != 0) return;
+
+    double width, height;
+    viewSize(width, height);
+    const double left = width / 2 - centerX_ * zoom_;
+    const double top = height / 2 - centerY_ * zoom_;
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = static_cast<LONG>(current_->width);
+    info.bmiHeader.biHeight = -static_cast<LONG>(current_->height);  // top-down rows
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    SetStretchBltMode(dc, HALFTONE);
+    SetBrushOrgEx(dc, 0, 0, nullptr);
+    StretchDIBits(dc, static_cast<int>(std::lround(left)), static_cast<int>(std::lround(top)),
+                  static_cast<int>(std::lround(orientedWidth() * zoom_)), static_cast<int>(std::lround(orientedHeight() * zoom_)),
+                  0, 0, static_cast<int>(current_->width), static_cast<int>(current_->height), current_->pixels.get(), &info,
+                  DIB_RGB_COLORS, SRCCOPY);
+    trace("first image painted with GDI");
 }
 
 LRESULT CALLBACK Viewer::windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -197,11 +225,20 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
 
     case WM_PAINT: {
         PAINTSTRUCT paint;
-        BeginPaint(hwnd_, &paint);
+        HDC dc = BeginPaint(hwnd_, &paint);
+        if (!context_) paintWithGdi(dc);
         EndPaint(hwnd_, &paint);
         render();
         return 0;
     }
+
+    case WM_APP_GPU_READY:
+        // Swap to GPU drawing; the picture doesn't move, only the drawing path changes.
+        if (!context_ && initGraphics()) {
+            if (current_) shown_ = gpuFor(currentKey_, current_);
+            render();
+        }
+        return 0;
 
     case WM_ERASEBKGND:
         if (context_) return 1;  // Direct2D paints everything; avoid a flash of the brush
@@ -591,7 +628,13 @@ void Viewer::show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, b
         clampCenter();
     }
     updateTitle();
-    render();
+    if (context_) {
+        render();
+    } else {
+        // GPU not ready yet: paint with GDI right now rather than waiting for it.
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        UpdateWindow(hwnd_);
+    }
     requestResolutionIfNeeded();
 }
 
