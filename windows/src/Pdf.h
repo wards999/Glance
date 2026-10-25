@@ -6,9 +6,10 @@
 #include <string>
 #include <vector>
 
-/// PDF reading through Windows' built-in PDF renderer (Windows.Data.Pdf), so it adds nothing to
-/// Glance's size and nothing loads until a PDF is opened. Each screen — one page, or a two-page
-/// spread — becomes one bitmap, so the image pipeline caches and decodes ahead pages like photos.
+/// PDF reading through PDFium (Chrome's PDF engine), in pdfium.dll next to Glance.exe. The DLL is
+/// loaded the first time a PDF opens, so it costs nothing at launch or when viewing photos.
+/// Each screen — one page, or a two-page spread — becomes one bitmap, so the image pipeline
+/// caches and decodes ahead pages like photos.
 namespace Pdf {
 
 /// Page layout packed into one number for cache keys: mode × 2 + right-to-left, where mode is
@@ -16,7 +17,7 @@ namespace Pdf {
 int packLayout(int mode, bool rightToLeft);
 
 bool isPdf(const std::wstring& path);
-/// False in builds without the Windows PDF renderer (the MinGW build).
+/// Whether pdfium.dll is there to load (checked without loading it).
 bool available();
 
 /// Renders screen `index` just big enough for `request`. Null if the file can't be read

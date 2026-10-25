@@ -27,8 +27,28 @@ jobs:
           cmake -S windows -B windows/build -A x64
           cmake --build windows/build --config Release
 
+      - name: Add PDFium (pinned build, hash-checked)
+        shell: pwsh
+        run: |
+          # Chrome's PDF engine, prebuilt by bblanchon/pdfium-binaries. Pinned to one build and
+          # checked against its SHA-256, so a changed download fails the build.
+          $url = 'https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8076/pdfium-win-x64.tgz'
+          $expected = '808D36DA9BC5A3104315FB307C80998121F565EE53953633BF33E80D7429E5AC'
+          Invoke-WebRequest $url -OutFile pdfium.tgz
+          $actual = (Get-FileHash pdfium.tgz -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "pdfium.tgz is $actual, expected the pinned $expected" }
+          New-Item -ItemType Directory pdfium | Out-Null
+          tar -xzf pdfium.tgz -C pdfium
+          Copy-Item pdfium/bin/pdfium.dll windows/build/Release/
+          Copy-Item pdfium/LICENSE windows/build/Release/pdfium-LICENSE.txt
+          Copy-Item pdfium/licenses windows/build/Release/pdfium-licenses -Recurse
+
       - uses: actions/upload-artifact@v4
         with:
           name: Glance-windows
-          path: windows/build/Release/*.exe
+          path: |
+            windows/build/Release/*.exe
+            windows/build/Release/pdfium.dll
+            windows/build/Release/pdfium-LICENSE.txt
+            windows/build/Release/pdfium-licenses/
           retention-days: 7

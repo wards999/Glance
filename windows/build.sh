@@ -9,7 +9,8 @@ FLAGS="-std=c++20 -O2 -march=x86-64-v2 -Wall -Wno-unknown-pragmas -Isrc
        -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_WIN32_WINNT=0x0A00"
 # Static runtime: one exe, no MinGW DLLs to ship.
 LINK="-municode -static -static-libgcc -static-libstdc++"
-# PDF reading needs MSVC (C++/WinRT); this build leaves it out.
+# PDF reading needs pdfium.dll next to Glance.exe (from bblanchon/pdfium-binaries, chromium/8076);
+# see .github/workflows/build-windows.yml.
 CORE="src/Decoder.cpp src/Pipeline.cpp src/Navigator.cpp src/Pdf.cpp"
 WIC="-lwindowscodecs -lole32 -loleaut32 -luuid -lshlwapi -luser32"
 

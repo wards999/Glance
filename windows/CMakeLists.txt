@@ -37,12 +37,8 @@ foreach(target Glance glance-bench make-test-images)
     endif()
 endforeach()
 
+# PDF reading loads pdfium.dll from next to Glance.exe at run time; nothing to link here.
 if(MSVC)
-    # PDF reading uses Windows' built-in renderer through C++/WinRT, which comes with MSVC's SDK.
-    foreach(target Glance glance-bench)
-        target_compile_definitions(${target} PRIVATE GLANCE_PDF)
-        target_link_libraries(${target} PRIVATE windowsapp)
-    endforeach()
     # glance.rc already embeds our manifest (per-monitor DPI); don't let the linker add another.
     target_link_options(Glance PRIVATE /MANIFEST:NO)
 endif()
