@@ -3,8 +3,10 @@
 #include "Navigator.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <condition_variable>
 #include <cstring>
 #include <iterator>
 #include <list>
@@ -64,6 +66,49 @@ constexpr size_t kOpenPages = 6;   // open pages keep their decoded images: re-r
 
 /// PDFium isn't safe to call from several threads, so every call goes through this.
 std::mutex g_pdfium;
+/// Some pages take PDFium seconds (DeviceN-coloured photos: a colour formula per pixel). The page
+/// you're waiting for shouldn't queue behind one being drawn ahead, so work is taken one page at
+/// a time and decoding ahead waits while anything urgent is queued.
+std::condition_variable g_turnFree;
+std::atomic<int> g_urgentWaiting{0};
+
+/// Holds g_pdfium for one step of work.
+class Turn {
+public:
+    explicit Turn(bool urgent) : lock_(g_pdfium), urgent_(urgent) {
+        if (urgent_) return;
+        g_turnFree.wait(lock_, [] { return g_urgentWaiting == 0; });
+    }
+    ~Turn() {
+        lock_.unlock();
+        g_turnFree.notify_all();
+    }
+
+private:
+    std::unique_lock<std::mutex> lock_;
+    bool urgent_;
+};
+
+/// Marks an urgent request as queued for as long as it exists, before it takes its turn.
+class UrgentClaim {
+public:
+    // Counted straight away, without waiting for the lock, so work ahead can't slip in first.
+    explicit UrgentClaim(bool urgent) : urgent_(urgent) {
+        if (urgent_) ++g_urgentWaiting;
+    }
+    ~UrgentClaim() {
+        if (!urgent_) return;
+        {
+            // Under the lock, so work ahead that's about to wait can't miss the wake-up.
+            std::lock_guard lock(g_pdfium);
+            --g_urgentWaiting;
+        }
+        g_turnFree.notify_all();
+    }
+
+private:
+    bool urgent_;
+};
 const Api* g_api = nullptr;
 bool g_loadFailed = false;
 
@@ -255,16 +300,23 @@ bool available() {
 }
 
 std::vector<std::vector<int>> spreads(const std::wstring& path, int layout) {
-    std::lock_guard lock(g_pdfium);
+    UrgentClaim claim(true);
+    Turn turn(true);
     OpenDocument* opened = open(path);
     return opened ? group(opened->sizes, layout) : std::vector<std::vector<int>>{};
 }
 
-std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const DecodeRequest& request, int layout) {
-    std::lock_guard lock(g_pdfium);
-    OpenDocument* opened = open(path);
-    if (!opened) return nullptr;
-    const std::vector<SizeF>& sizes = opened->sizes;
+std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const DecodeRequest& request, int layout, bool urgent) {
+    UrgentClaim claim(urgent);
+    std::vector<SizeF> sizes;
+    Document document = nullptr;
+    {
+        Turn turn(urgent);
+        OpenDocument* opened = open(path);
+        if (!opened) return nullptr;
+        sizes = opened->sizes;
+        document = opened->document;
+    }
     const auto screens = group(sizes, layout);
     if (index >= screens.size()) return nullptr;
     const std::vector<int>& pages = screens[index];
@@ -315,7 +367,13 @@ std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const Deco
     const double start = nowMs();
     UINT left = 0;
     for (size_t i = 0; i < drawOrder.size(); ++i) {
-        Page page = pageOf(opened->document, drawOrder[i] - 1);
+        // One turn per page, so urgent work can get in between the two pages of a spread.
+        Turn turn(urgent);
+        // The document may have been closed (evicted) while we waited; reopen if so.
+        OpenDocument* opened = open(path);
+        if (!opened) return nullptr;
+        document = opened->document;
+        Page page = pageOf(document, drawOrder[i] - 1);
         // Drawn straight into Glance's own pixels: no copy, no encode and decode in between.
         Bitmap bitmap = page ? g_api->createBitmap(static_cast<int>(pageWidths[i]), static_cast<int>(outH), kBitmapBGRA,
                                                    result->pixels.get() + size_t(left) * 4, static_cast<int>(result->stride))
@@ -326,8 +384,15 @@ std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const Deco
             trace(line);
             return nullptr;
         }
+        const double pageStart = nowMs();
         g_api->renderPage(bitmap, page, 0, 0, static_cast<int>(pageWidths[i]), static_cast<int>(outH), 0, kRenderAnnotations);
         g_api->destroyBitmap(bitmap);
+        if (nowMs() - pageStart > 300) {
+            char line[96];
+            snprintf(line, sizeof(line), "PDF page %d is slow: %.0f ms (%s)", drawOrder[i], nowMs() - pageStart,
+                     urgent ? "waited for" : "ahead");
+            trace(line);
+        }
         left += pageWidths[i];
     }
     char line[96];

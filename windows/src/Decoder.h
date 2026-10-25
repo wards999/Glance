@@ -67,7 +67,9 @@ public:
 
     /// Null if the file can't be read. For a PDF, `frame` is the screen (page or spread) under
     /// `pdfLayout` (see Pdf::packLayout); for images `pdfLayout` is ignored.
-    std::shared_ptr<Decoded> decode(const std::wstring& path, UINT frame, const DecodeRequest& request, int pdfLayout = -1);
+    /// `urgent`: someone is waiting to see this (as opposed to decoding ahead).
+    std::shared_ptr<Decoded> decode(const std::wstring& path, UINT frame, const DecodeRequest& request, int pdfLayout = -1,
+                                    bool urgent = true);
 
     /// Lower-case extensions (no dot) that the installed WIC codecs can decode, including
     /// Store extensions such as HEIF, WebP, AVIF and RAW when they're installed.

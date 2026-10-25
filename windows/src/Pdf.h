@@ -21,8 +21,10 @@ bool isPdf(const std::wstring& path);
 bool available();
 
 /// Renders screen `index` just big enough for `request`. Null if the file can't be read
-/// (damaged, or password-protected, which isn't supported yet).
-std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const DecodeRequest& request, int layout);
+/// (damaged, or password-protected, which isn't supported yet). `urgent` is for the page
+/// someone is waiting to see: decoding ahead steps aside for it between pages.
+std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const DecodeRequest& request, int layout,
+                                bool urgent = true);
 
 /// The pages (1-based, reading order) on each screen.
 std::vector<std::vector<int>> spreads(const std::wstring& path, int layout);

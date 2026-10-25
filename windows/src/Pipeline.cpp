@@ -87,6 +87,7 @@ void Pipeline::work() {
         for (;;) {
             DecodeKey key;
             bool background = false;
+            bool urgent = false;
             {
                 std::unique_lock lock(mutex_);
                 wake_.wait(lock, [this] {
@@ -109,10 +110,11 @@ void Pipeline::work() {
                     continue;
                 }
                 it->second.started = true;
+                urgent = it->second.foreground;
                 if (background) ++runningBackground_;
             }
 
-            std::shared_ptr<Decoded> image = decoder.decode(key.path, key.frame, key.request, key.layout);
+            std::shared_ptr<Decoded> image = decoder.decode(key.path, key.frame, key.request, key.layout, urgent);
 
             {
                 std::lock_guard lock(mutex_);

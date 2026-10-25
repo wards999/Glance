@@ -34,8 +34,9 @@ constexpr UINT_PTR kHoldTimer = 2;
 constexpr UINT_PTR kBusyTimer = 3;
 constexpr UINT kHoldDelayMs = 200;
 constexpr UINT kBusyDelayMs = 150;
-// PDF pages can take seconds each in Windows' engine, so read further ahead than for photos.
-constexpr int kPdfPrefetch = 6;
+// Some PDF pages take PDFium over a second (DeviceN-coloured photos), so read a long way ahead:
+// by the time you reach a heavy page it's usually done. A screen at window size is ~10 MB.
+constexpr int kPdfPrefetch = 24;
 constexpr wchar_t kClassName[] = L"GlanceViewer";
 constexpr size_t kGpuBudget = size_t(1) << 30;  // 1 GB of decoded-ahead textures
 constexpr int kSlideshowChoices[] = {1, 2, 3, 5, 10, 30};
