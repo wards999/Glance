@@ -2,6 +2,7 @@
 
 #include <oleauto.h>
 #include <propidl.h>
+#include <wincodecsdk.h>
 
 #include <algorithm>
 #include <cmath>
