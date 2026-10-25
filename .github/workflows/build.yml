@@ -2,12 +2,27 @@ name: Build
 
 on:
   push:
+    # Docs-only changes don't need a Mac build.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   workflow_dispatch:
+
+# A newer push to the same branch cancels the build it replaces.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: macos-14
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -29,3 +44,5 @@ jobs:
         with:
           name: Glance-dmg
           path: build/Glance.dmg
+          # Each push makes a new one; old DMGs aren't worth the storage.
+          retention-days: 7
