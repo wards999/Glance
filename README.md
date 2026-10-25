@@ -126,8 +126,11 @@ and the window always agree.
 slideshow, info overlay), a JPEGView-style right-click menu, a Settings dialog, GPU adjustments
 (brightness, contrast, saturation, gamma, sharpen, colour balance, auto correction), crop
 (Ctrl+drag, Enter), Save processed image (Ctrl+S), lossless JPEG rotation, and PDF reading with
-magazine spreads, right to left, hold to zoom and zoom kept across page turns (MSVC builds, using
-Windows' built-in PDF renderer).
+magazine spreads, right to left, hold to zoom and zoom kept across page turns. PDFs are rendered
+by PDFium (Chrome's engine, `pdfium.dll` from bblanchon/pdfium-binaries build 8076, pinned by
+hash), which is loaded only when the first PDF opens. On a 132-page magazine it renders the
+heaviest pages about 3× faster than Windows' built-in PDF engine, and re-renders open pages
+(zoom, hold to zoom) in well under 0.1 s.
 
 It builds on GitHub's Windows machines (the **Build Windows** workflow) with MSVC, or locally with
 `windows/build.sh` (MinGW) or CMake.
