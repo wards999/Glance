@@ -283,7 +283,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
         if (wParam == kSlideshowTimer) {
             direction_ = 1;
-            if (showingPdf() && frame_ + 1 < current_->info.frameCount) {
+            if (showingPdf() && frame_ + 1 < pdfScreens_) {
                 ++frame_;
                 showCurrent();
             } else if (navigator_.move(1)) {
@@ -591,6 +591,10 @@ void Viewer::updateTitle() {
         }
         title += L"  -  " + std::to_wstring(static_cast<int>(std::lround(zoom_ * 100))) + L"%";
         if (edited_ || !adjustments_.isIdentity()) title += L"  -  edited";
+    } else if (!waiting_ && showingPdf()) {
+        // One page failed; the rest of the document is still there.
+        title += L"  -  screen " + std::to_wstring(frame_ + 1) + L" of " + std::to_wstring(pdfScreens_) +
+                 L" couldn't be shown (Space for the next)";
     } else if (!waiting_) {
         title += L"  -  can't open this file";
     }
@@ -601,7 +605,7 @@ void Viewer::updateTitle() {
 void Viewer::showContextMenu(int x, int y) {
     const bool hasImage = current_ != nullptr;
     const bool hasFile = navigator_.current() != nullptr;
-    const bool several = navigator_.count() > 1 || (hasImage && current_->info.frameCount > 1 && current_->info.isPdf);
+    const bool several = navigator_.count() > 1 || (showingPdf() && pdfScreens_ > 1);
     const bool pdf = showingPdf();
     auto add = [](HMENU menu, int id, const wchar_t* text, bool enabled = true, bool checked = false) {
         AppendMenuW(menu, MF_STRING | (enabled ? 0 : MF_GRAYED) | (checked ? MF_CHECKED : 0), id, text);
@@ -845,7 +849,7 @@ void Viewer::applySettings() {
     if (pdfLayout() != appliedPdfLayout_) {
         appliedPdfLayout_ = pdfLayout();
         // Screens count spreads, so find the one that holds the page you were on.
-        if (showingPdf()) {
+        if (showingPdf() && current_) {
             const int page = current_->info.pdfFirstPage;
             const auto spreads = Pdf::spreads(current_->info.path, pdfLayout());
             frame_ = 0;
@@ -1158,7 +1162,7 @@ DecodeKey Viewer::keyFor(const std::wstring& path, UINT frame, const DecodeReque
 
 bool Viewer::showingPdf() const {
     const std::wstring* path = navigator_.current();
-    return current_ && current_->info.isPdf && path && samePath(current_->info.path, *path);
+    return pdfScreens_ > 0 && path && samePath(pdfPath_, *path);
 }
 
 void Viewer::open(const std::vector<std::wstring>& paths) {
@@ -1209,7 +1213,7 @@ void Viewer::go(int delta) {
     // In a PDF, pages turn before moving on to the next file.
     if (showingPdf()) {
         const long long target = static_cast<long long>(frame_) + delta;
-        if (target >= 0 && target < static_cast<long long>(current_->info.frameCount)) {
+        if (target >= 0 && target < static_cast<long long>(pdfScreens_)) {
             carryZoomForPageTurn(delta > 0);
             frame_ = static_cast<UINT>(target);
             showCurrent();
@@ -1239,12 +1243,14 @@ void Viewer::showCurrent() {
     }
     if (!path) {
         waiting_ = false;
+        pdfScreens_ = 0;
         current_.reset();
         shown_.reset();
         updateTitle();
         render();
         return;
     }
+    if (pdfScreens_ && !samePath(*path, pdfPath_)) pdfScreens_ = 0;  // moved on to another file
     DecodeKey key = keyFor(*path, frame_, openingRequest());
     wantedKey_ = key;
     levelKey_ = {};
@@ -1264,6 +1270,10 @@ void Viewer::showCurrent() {
 void Viewer::show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, bool resetView) {
     current_ = image;
     currentKey_ = key;
+    if (image->info.isPdf) {
+        pdfPath_ = image->info.path;
+        pdfScreens_ = image->info.frameCount;
+    }
     shown_ = context_ ? gpuFor(key, image) : nullptr;
     if (resetView) {
         quarterTurns_ = 0;
@@ -1332,7 +1342,7 @@ void Viewer::prefetchNeighbors() {
     for (int offset : offsets) {
         DecodeKey key;
         const long long page = static_cast<long long>(frame_) + offset;
-        if (pdf && page >= 0 && page < static_cast<long long>(current_->info.frameCount)) {
+        if (pdf && page >= 0 && page < static_cast<long long>(pdfScreens_)) {
             key = keyFor(*now, static_cast<UINT>(page), request);  // the PDF's other pages
         } else {
             const std::wstring* path = navigator_.at(offset > 0 ? (pdf ? 1 : offset) : (pdf ? -1 : offset));

@@ -12,9 +12,12 @@
 #include <winrt/Windows.Storage.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <list>
+#include <memory>
 #include <mutex>
 #include <new>
 #endif
@@ -40,41 +43,75 @@ using winrt::Windows::Data::Pdf::PdfPage;
 using winrt::Windows::Data::Pdf::PdfPageRenderOptions;
 using winrt::Windows::Foundation::Size;
 
+// Windows' PDF engine can stall on a damaged or unusual page. Nothing waits on it longer than
+// this: the operation is cancelled and the page reported as failed, so no thread is lost.
+constexpr auto kLoadLimit = std::chrono::seconds(30);
+constexpr auto kRenderLimit = std::chrono::seconds(15);
+
+template <typename Async>
+bool finish(const Async& operation, std::chrono::seconds limit) {
+    if (operation.wait_for(limit) == winrt::Windows::Foundation::AsyncStatus::Completed) return true;
+    try {
+        operation.Cancel();
+    } catch (...) {
+    }
+    return false;
+}
+
 struct OpenDocument {
     std::wstring path;
     PdfDocument document{nullptr};
     std::vector<Size> sizes;  // per page, in DIPs, after the page's own rotation
+    /// Pages of one document render one at a time: the engine isn't documented as safe to
+    /// drive from several threads at once, and a race there could stall a page for good.
+    std::shared_ptr<std::mutex> renderLock = std::make_shared<std::mutex>();
 };
 
 std::mutex g_mutex;
+std::mutex g_loading;            // one document loads at a time; the others wait and reuse it
 std::list<OpenDocument> g_open;  // most recent first
 
-/// Loading parses the file, so the last few PDFs stay open while you turn their pages.
-bool open(const std::wstring& path, PdfDocument& document, std::vector<Size>& sizes) {
-    {
-        std::lock_guard lock(g_mutex);
-        for (auto it = g_open.begin(); it != g_open.end(); ++it) {
-            if (samePath(it->path, path)) {
-                g_open.splice(g_open.begin(), g_open, it);
-                document = it->document;
-                sizes = it->sizes;
-                return true;
-            }
+bool cached(const std::wstring& path, OpenDocument& found) {
+    std::lock_guard lock(g_mutex);
+    for (auto it = g_open.begin(); it != g_open.end(); ++it) {
+        if (samePath(it->path, path)) {
+            g_open.splice(g_open.begin(), g_open, it);
+            found = *it;
+            return true;
         }
     }
+    return false;
+}
+
+/// Loading parses the file, so the last few PDFs stay open while you turn their pages.
+bool open(const std::wstring& path, OpenDocument& document) {
+    if (cached(path, document)) return true;
+    std::lock_guard loading(g_loading);
+    if (cached(path, document)) return true;  // another thread loaded it while we waited
     try {
-        auto file = winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(path).get();
-        auto loaded = PdfDocument::LoadFromFileAsync(file).get();
-        std::vector<Size> pageSizes;
-        for (uint32_t i = 0; i < loaded.PageCount(); ++i) pageSizes.push_back(loaded.GetPage(i).Size());
+        const double start = nowMs();
+        auto fileOperation = winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(path);
+        if (!finish(fileOperation, kLoadLimit)) return false;
+        auto loadOperation = PdfDocument::LoadFromFileAsync(fileOperation.GetResults());
+        if (!finish(loadOperation, kLoadLimit)) {
+            trace("PDF load timed out");
+            return false;
+        }
+        OpenDocument opened;
+        opened.path = path;
+        opened.document = loadOperation.GetResults();
+        for (uint32_t i = 0; i < opened.document.PageCount(); ++i) opened.sizes.push_back(opened.document.GetPage(i).Size());
+        char line[96];
+        snprintf(line, sizeof(line), "PDF loaded: %u pages in %.0f ms", opened.document.PageCount(), nowMs() - start);
+        trace(line);
         std::lock_guard lock(g_mutex);
-        g_open.push_front(OpenDocument{path, loaded, pageSizes});
+        g_open.push_front(opened);
         if (g_open.size() > 4) g_open.pop_back();
-        document = loaded;
-        sizes = std::move(pageSizes);
+        document = opened;
         return true;
     } catch (...) {
-        return false;  // damaged, or needs a password
+        trace("PDF load failed (damaged, or needs a password)");
+        return false;
     }
 }
 
@@ -122,7 +159,9 @@ bool renderPage(const PdfPage& page, UINT width, UINT height, Decoded& out, UINT
         options.DestinationHeight(height);
         // Uncompressed, so there's nothing to decode on the way back.
         options.BitmapEncoderId(winrt::Windows::Graphics::Imaging::BitmapEncoder::BmpEncoderId());
-        page.RenderToStreamAsync(stream, options).get();
+        auto rendering = page.RenderToStreamAsync(stream, options);
+        if (!finish(rendering, kRenderLimit)) return false;
+        rendering.GetResults();  // throws if the render failed
         stream.Seek(0);
 
         ComPtr<IStream> native;
@@ -156,16 +195,16 @@ bool renderPage(const PdfPage& page, UINT width, UINT height, Decoded& out, UINT
 bool available() { return true; }
 
 std::vector<std::vector<int>> spreads(const std::wstring& path, int layout) {
-    PdfDocument document{nullptr};
-    std::vector<Size> sizes;
-    if (!open(path, document, sizes)) return {};
-    return group(sizes, layout);
+    OpenDocument opened;
+    if (!open(path, opened)) return {};
+    return group(opened.sizes, layout);
 }
 
 std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const DecodeRequest& request, int layout) {
-    PdfDocument document{nullptr};
-    std::vector<Size> sizes;
-    if (!open(path, document, sizes)) return nullptr;
+    OpenDocument opened;
+    if (!open(path, opened)) return nullptr;
+    const PdfDocument& document = opened.document;
+    const std::vector<Size>& sizes = opened.sizes;
     const auto screens = group(sizes, layout);
     if (index >= screens.size()) return nullptr;
     const std::vector<int>& pages = screens[index];
@@ -217,13 +256,23 @@ std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const Deco
     CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, __uuidof(IWICImagingFactory),
                      reinterpret_cast<void**>(wic.put()));
     if (!wic) return nullptr;
-    UINT left = 0;
-    for (size_t i = 0; i < drawOrder.size(); ++i) {
-        // Each page is drawn at the spread's height; uneven rounding leaves at most a pixel of white.
-        const float pageHeight = sizes[drawOrder[i] - 1].Height * height / std::max(sizes[drawOrder[i] - 1].Height, 1.0f);
-        const UINT h = std::min(outH, std::max(1u, static_cast<UINT>(std::lround(pageHeight * scale))));
-        if (!renderPage(document.GetPage(drawOrder[i] - 1), pageWidths[i], h, *result, left, wic.get())) return nullptr;
-        left += pageWidths[i];
+    {
+        std::lock_guard rendering(*opened.renderLock);
+        const double start = nowMs();
+        UINT left = 0;
+        for (size_t i = 0; i < drawOrder.size(); ++i) {
+            if (!renderPage(document.GetPage(drawOrder[i] - 1), pageWidths[i], outH, *result, left, wic.get())) {
+                char line[96];
+                snprintf(line, sizeof(line), "PDF page %d FAILED to render (%ux%u)", drawOrder[i], pageWidths[i], outH);
+                trace(line);
+                return nullptr;
+            }
+            left += pageWidths[i];
+        }
+        char line[96];
+        snprintf(line, sizeof(line), "PDF pages %d-%d rendered at %ux%u in %.0f ms", pages.front(), pages.back(), outW, outH,
+                 nowMs() - start);
+        trace(line);
     }
 
     ImageInfo& info = result->info;

@@ -176,6 +176,10 @@ private:
     std::vector<DecodeKey> prefetchKeys_;
     int direction_ = 1;
     UINT frame_ = 0;  // which page or spread of a PDF
+    // The PDF being read, kept apart from the picture so a page that fails to render doesn't
+    // lose your place: you can still turn to the next one.
+    std::wstring pdfPath_;
+    UINT pdfScreens_ = 0;
 
     ZoomMode zoomMode_ = ZoomMode::Fit;
     double zoom_ = 1;      // device pixels per full-resolution pixel
