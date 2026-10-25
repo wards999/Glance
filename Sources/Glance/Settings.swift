@@ -44,6 +44,7 @@ final class Settings {
         static let openFullScreen = "openFullScreen"
         static let fullScreenStyle = "fullScreenStyle"
         static let showInfo = "showInfo"
+        static let showFilename = "showFilename"
         static let showControls = "showControls"
         static let hideCursor = "hideCursorInFullScreen"
         static let pixelatedZoom = "pixelatedZoom"
@@ -74,6 +75,7 @@ final class Settings {
             Key.openFullScreen: false,
             Key.fullScreenStyle: FullScreenStyle.instant.rawValue,
             Key.showInfo: false,
+            Key.showFilename: false,
             Key.showControls: true,
             Key.hideCursor: true,
             Key.pixelatedZoom: true,
@@ -156,6 +158,11 @@ final class Settings {
         set { store(newValue, Key.showInfo) }
     }
 
+    var showFilename: Bool {
+        get { defaults.bool(forKey: Key.showFilename) }
+        set { store(newValue, Key.showFilename) }
+    }
+
     var showControls: Bool {
         get { defaults.bool(forKey: Key.showControls) }
         set { store(newValue, Key.showControls) }
@@ -207,6 +214,29 @@ final class Settings {
     private func store(_ value: Any, _ key: String) {
         defaults.set(value, forKey: key)
         NotificationCenter.default.post(name: Self.didChange, object: self)
+    }
+}
+
+/// Adjustments remembered per file (JPEGView's "Save parameters to DB"), reapplied whenever
+/// that file is opened again.
+enum ParameterStore {
+    private static let key = "savedParameters"
+
+    static func adjustments(for url: URL) -> Adjustments? {
+        guard let data = UserDefaults.standard.dictionary(forKey: key)?[url.path] as? Data else { return nil }
+        return try? JSONDecoder().decode(Adjustments.self, from: data)
+    }
+
+    static func save(_ adjustments: Adjustments, for url: URL) {
+        var all = UserDefaults.standard.dictionary(forKey: key) ?? [:]
+        all[url.path] = try? JSONEncoder().encode(adjustments)
+        UserDefaults.standard.set(all, forKey: key)
+    }
+
+    static func clear(for url: URL) {
+        var all = UserDefaults.standard.dictionary(forKey: key) ?? [:]
+        all[url.path] = nil
+        UserDefaults.standard.set(all, forKey: key)
     }
 }
 

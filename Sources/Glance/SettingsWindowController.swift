@@ -75,6 +75,7 @@ final class SettingsWindowController: NSWindowController {
             )],
             [label("Background:"), colorWell({ s.backgroundColor }, { s.backgroundColor = $0 })],
             [empty, checkbox("Show the info overlay", { s.showInfo }, { s.showInfo = $0 })],
+            [empty, checkbox("Show the file name", { s.showFilename }, { s.showFilename = $0 })],
             [empty, checkbox("Show controls when the mouse nears the bottom", { s.showControls }, { s.showControls = $0 })],
             [empty, checkbox("Hide the cursor in full screen", { s.hideCursorInFullScreen }, { s.hideCursorInFullScreen = $0 })],
             [empty, checkbox("Show individual pixels above 400% zoom", { s.pixelatedZoom }, { s.pixelatedZoom = $0 })],

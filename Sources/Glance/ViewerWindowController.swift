@@ -121,10 +121,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
         keepAdjustments = settings.keepAdjustments
         saveQuality = settings.saveQuality
-        if showInfo != settings.showInfo {
-            showInfo = settings.showInfo
-            updateInfo()
-        }
+        showInfo = settings.showInfo
+        updateInfo()
         if !settings.showControls { setControlsVisible(false) }
 
         imageView.defaultZoomMode = settings.startZoom.zoomMode
@@ -382,7 +380,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let gen = generation
         editedImage = nil
         requestedLongSide = 0
-        if !keepAdjustments && !adjustments.isIdentity {
+        if let saved = ParameterStore.adjustments(for: url) {
+            // Adjustments saved for this file win over carried-over ones.
+            adjustments = saved
+            adjustmentsPanel?.update(adjustments)
+        } else if !keepAdjustments && !adjustments.isIdentity {
             adjustments = Adjustments()
             adjustmentsPanel?.update(adjustments)
         }
@@ -578,6 +580,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             go(1)
         case NSPageUpFunctionKey, 0x7F:
             go(-1)
+        // JPEGView's function keys.
+        case NSF2FunctionKey:
+            toggleInfo(nil)
+        case NSF4FunctionKey:
+            toggleKeepAdjustments(nil)
+        case NSF5FunctionKey:
+            toggleAutoCorrect(nil)
         case NSHomeFunctionKey:
             firstImage(nil)
         case NSEndFunctionKey:
@@ -602,6 +611,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             case "z": zoomToSelection(nil)
             case "f": toggleFullScreenMode(nil)
             case "i": toggleInfo(nil)
+            case "w": revealInFinder(nil)
             case "a": toggleAutoCorrect(nil)
             case "e": showAdjustments(nil)
             case "s": toggleSlideshow(nil)
@@ -972,6 +982,197 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         showCurrent()
     }
 
+    // MARK: - More JPEGView commands
+
+    @objc func reloadImage(_ sender: Any?) {
+        guard let url = navigator.current else { return }
+        pipeline.invalidate(url)
+        showCurrent(keepPage: true)
+    }
+
+    /// Renders the current picture at full resolution with every edit applied, then hands it to
+    /// `body` on the main thread (if the user is still on the same picture).
+    private func withEditedFullImage(_ message: String, _ body: @escaping (CGImage) -> Void) {
+        guard let current else { return }
+        let source = current.info.url
+        let page = current.page
+        let edited = editedImage
+        let adjustments = self.adjustments
+        let orientation = imageView.orientation
+        let gen = generation
+        showMessage(message, duration: nil)
+        renderQueue.async { [weak self] in
+            var image = edited ?? ImageDecoder.decodeFull(source, page: page)
+            if let base = image, !adjustments.isIdentity || orientation != .identity {
+                image = ImageRenderer.shared.renderEdited(base, adjustments: adjustments, orientation: orientation, crop: nil, autoKey: source.path)
+            }
+            DispatchQueue.main.async {
+                guard let self, gen == self.generation else { return }
+                self.hideMessage()
+                guard let image else {
+                    self.showMessage("Couldn't read the image")
+                    return
+                }
+                body(image)
+            }
+        }
+    }
+
+    @objc func printImage(_ sender: Any?) {
+        withEditedFullImage("Preparing to print…") { [weak self] image in
+            guard let window = self?.window else { return }
+            let printInfo = NSPrintInfo.shared
+            printInfo.orientation = image.width > image.height ? .landscape : .portrait
+            printInfo.horizontalPagination = .fit
+            printInfo.verticalPagination = .fit
+            printInfo.isHorizontallyCentered = true
+            printInfo.isVerticallyCentered = true
+            let page = printInfo.imageablePageBounds
+            let view = NSImageView(frame: NSRect(origin: .zero, size: page.size))
+            view.image = NSImage(cgImage: image, size: .zero)
+            view.imageScaling = .scaleProportionallyUpOrDown
+            NSPrintOperation(view: view, printInfo: printInfo)
+                .runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        }
+    }
+
+    @objc func setModificationDateToNow(_ sender: Any?) {
+        setModificationDate(Date())
+    }
+
+    @objc func setModificationDateToDateTaken(_ sender: Any?) {
+        let exif = current?.info.properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        guard let text = exif?[kCGImagePropertyExifDateTimeOriginal] as? String, let date = formatter.date(from: text) else {
+            showMessage("This image has no date taken")
+            return
+        }
+        setModificationDate(date)
+    }
+
+    private func setModificationDate(_ date: Date) {
+        guard let url = navigator.current else { return }
+        do {
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+            showMessage("Modification date set")
+        } catch {
+            presentErrorSheet(error)
+        }
+    }
+
+    @objc func copyOriginalSize(_ sender: Any?) {
+        withEditedFullImage("Copying…") { [weak self] image in
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.writeObjects([NSImage(cgImage: image, size: .zero)])
+            self?.showMessage("Copied \(image.width) × \(image.height) image")
+        }
+    }
+
+    @objc func copyFilePath(_ sender: Any?) {
+        guard let url = navigator.current else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.path, forType: .string)
+        showMessage("Copied file path")
+    }
+
+    /// Opens copied files, or a copied image (saved to a temporary file first, since everything
+    /// here works on files).
+    @objc func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+            open(urls)
+            return
+        }
+        guard let image = NSImage(pasteboard: pasteboard),
+              let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            NSSound.beep()
+            return
+        }
+        // A folder of its own, so navigation doesn't wander into other temporary files.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Glance Pasted \(UUID().uuidString)")
+        let url = folder.appendingPathComponent("Pasted Image.png")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try png.write(to: url)
+            open([url])
+        } catch {
+            presentErrorSheet(error)
+        }
+    }
+
+    @objc func toggleFilename(_ sender: Any?) {
+        settings.showFilename.toggle()
+    }
+
+    @objc func toggleNavigationControls(_ sender: Any?) {
+        settings.showControls.toggle()
+    }
+
+    @objc func setStartZoom(_ sender: NSMenuItem) {
+        settings.startZoom = StartZoom(rawValue: sender.tag) ?? .fit
+        imageView.defaultZoomMode = settings.startZoom.zoomMode
+        switch settings.startZoom {
+        case .fit: imageView.zoomToFit()
+        case .fill: imageView.zoomToFill()
+        case .actual: imageView.zoomToActualSize()
+        }
+    }
+
+    /// Rotates or flips the file itself by rewriting its orientation tag (JPEGView's lossless
+    /// JPEG transformations). Tags: 0 right, 1 left, 2 180°, 3 flip horizontal, 4 flip vertical.
+    @objc func losslessTransform(_ sender: NSMenuItem) {
+        guard let current else { return }
+        guard editedImage == nil, adjustments.isIdentity, imageView.orientation == .identity else {
+            showMessage("Revert other edits first")
+            return
+        }
+        let transform: CGAffineTransform
+        switch sender.tag {
+        case 0: transform = CGAffineTransform(rotationAngle: -.pi / 2)
+        case 1: transform = CGAffineTransform(rotationAngle: .pi / 2)
+        case 2: transform = CGAffineTransform(rotationAngle: .pi)
+        case 3: transform = CGAffineTransform(scaleX: -1, y: 1)
+        default: transform = CGAffineTransform(scaleX: 1, y: -1)
+        }
+        let url = current.info.url
+        renderQueue.async { [weak self] in
+            let result = Result { try ImageSaver.rewriteOrientation(of: url, to: url, applying: transform.roundedLinear) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(true):
+                    self.pipeline.invalidate(url)
+                    if self.navigator.current == url { self.showCurrent(keepPage: true) }
+                    self.showMessage("Saved losslessly")
+                case .success(false):
+                    self.showMessage("This format can't be transformed losslessly")
+                case .failure(let error):
+                    self.presentErrorSheet(error)
+                }
+            }
+        }
+    }
+
+    @objc func saveParameters(_ sender: Any?) {
+        guard let url = navigator.current else { return }
+        if adjustments.isIdentity {
+            ParameterStore.clear(for: url)
+        } else {
+            ParameterStore.save(adjustments, for: url)
+        }
+        showMessage("Adjustments saved for this image")
+    }
+
+    @objc func clearParameters(_ sender: Any?) {
+        guard let url = navigator.current else { return }
+        ParameterStore.clear(for: url)
+        showMessage("Saved adjustments cleared")
+    }
+
     // MARK: - Menu validation
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -985,6 +1186,21 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         case #selector(toggleInfo(_:)):
             item.state = showInfo ? .on : .off
             return true
+        case #selector(toggleFilename(_:)):
+            item.state = settings.showFilename ? .on : .off
+            return true
+        case #selector(toggleNavigationControls(_:)):
+            item.state = settings.showControls ? .on : .off
+            return true
+        case #selector(setStartZoom(_:)):
+            item.state = item.tag == settings.startZoom.rawValue ? .on : .off
+            return true
+        case #selector(paste(_:)):
+            return NSPasteboard.general.canReadObject(forClasses: [NSURL.self, NSImage.self], options: nil)
+        case #selector(clearParameters(_:)):
+            return navigator.current.map { ParameterStore.adjustments(for: $0) != nil } ?? false
+        case #selector(losslessTransform(_:)):
+            return hasImage && !hasEdits
         case #selector(toggleAutoCorrect(_:)):
             item.state = adjustments.autoCorrect ? .on : .off
             return hasImage
@@ -1044,9 +1260,17 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             parts.append("\(Int((imageView.zoom * 100).rounded()))%")
         }
         window.subtitle = parts.joined(separator: "  ·  ")
+        if settings.showFilename && !showInfo { updateInfo() }
     }
 
     private func updateInfo() {
+        let position = "\(navigator.index + 1) / \(navigator.count)"
+        if !showInfo, settings.showFilename, let url = navigator.current {
+            // File name only (JPEGView's "Show filename").
+            infoBox.isHidden = false
+            infoLabel.stringValue = "\(url.lastPathComponent)   \(position)"
+            return
+        }
         guard showInfo, let current else {
             infoBox.isHidden = true
             return
@@ -1054,7 +1278,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         infoBox.isHidden = false
         infoLabel.stringValue = InfoFormatter.text(
             for: current.info,
-            position: "\(navigator.index + 1) / \(navigator.count)",
+            position: position,
             size: displayFullSize,
             zoom: imageView.zoom,
             page: page,

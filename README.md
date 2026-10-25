@@ -56,12 +56,14 @@ Included:
 - Bottom control bar that fades in on hover
 - Full screen with cursor auto-hide, optionally on launch. The menu bar and Dock are hidden completely; every command is on the right-click menu. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
 - Move to Trash, Reveal in Finder, Set as Desktop Picture, Copy, drag and drop, mouse back/forward buttons, trackpad swipe between images
+- A right-click menu laid out like JPEGView's, including Reload, Print, Set Modification Date (now or date taken), Copy Original Size, Copy File Path, Paste, Show Filename, and lossless rotate/flip written straight to the file
+- Adjustments can be saved per image (JPEGView's "Save parameters to DB") and are reapplied whenever that file is opened
 
 Not included yet:
 
 - Side-by-side comparison of two images
 - Perspective correction and JPEGView's "local density correction" (auto correction uses Core Image's auto-adjust instead)
-- Histogram, lossless JPEG *crop* (crops re-encode), batch rename and copy/move to folder
+- Histogram, lossless JPEG *crop* (crops re-encode), batch rename and copy/move to folder, "movie" folder playback
 
 ## Settings
 
@@ -98,9 +100,15 @@ and the window always agree.
 | Z, ⌘3 | Zoom to the crop selection |
 | R / L, ⌘R / ⌘L | Rotate right / left |
 | H / V | Flip horizontal / vertical |
-| A | Auto correction on/off |
-| E, ⌥⌘C | Adjustments panel |
-| I, ⌘I | Info overlay |
+| A, F5 | Auto correction on/off |
+| F4 | Keep adjustments for next images on/off |
+| E, ⌘E | Adjustments panel |
+| I, F2, ⌘I | Info overlay |
+| W | Reveal in Finder (JPEGView's "open containing folder") |
+| ⌘P | Print |
+| ⌘C / ⌥⌘C | Copy the displayed image / copy at original size |
+| ⇧⌘C | Copy file path |
+| ⌘V | Paste (opens copied files or a copied image) |
 | S, ⌥⌘P | Slideshow on/off |
 | F, ⌃⌘F | Full screen (instant or macOS style, per Settings). Esc leaves it |
 | ⌘S / ⇧⌘S | Save / Save As |

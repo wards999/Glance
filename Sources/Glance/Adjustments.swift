@@ -2,7 +2,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 
 /// JPEGView's image processing controls. Zero means "unchanged" for every value.
-struct Adjustments: Equatable {
+struct Adjustments: Equatable, Codable {
     var brightness: Double = 0     // -1...1
     var contrast: Double = 0       // -1...1
     var saturation: Double = 0     // -1...1
