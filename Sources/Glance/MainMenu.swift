@@ -30,7 +30,7 @@ enum MainMenu {
         main.addItem(submenu("View", sections(
             zoomItems(),
             overlayItems(),
-            [submenu("Auto Zoom Mode", autoZoomItems())],
+            [submenu("Auto Zoom Mode", autoZoomItems()), submenu("PDF Pages", pdfItems())],
             [item("Enter Full Screen", #selector(C.toggleFullScreenMode(_:)), "f", [.command, .control])]
         )))
         main.addItem(submenu("Image", sections(
@@ -78,6 +78,7 @@ enum MainMenu {
             [
                 submenu("Zoom", zoomItems()),
                 submenu("Auto Zoom Mode", autoZoomItems()),
+                submenu("PDF Pages", pdfItems()),
                 item("Enter Full Screen", #selector(C.toggleFullScreenMode(_:)), "f", [.command, .control]),
             ],
             [
@@ -223,6 +224,13 @@ enum MainMenu {
             .separator(),
             item("Enlarge Small Images to Fit", #selector(C.toggleEnlargeSmall(_:)), ""),
         ]
+    }
+
+    private static func pdfItems() -> [NSMenuItem] {
+        let modes = PDFPageMode.allCases.map { mode in
+            item(mode.title, #selector(C.setPDFPageMode(_:)), "", tag: mode.rawValue)
+        }
+        return sections(modes, [item("Right to Left", #selector(C.togglePDFRightToLeft(_:)), "")])
     }
 
     private static func item(_ title: String, _ action: Selector?, _ key: String, _ modifiers: NSEvent.ModifierFlags = [.command], tag: Int = 0) -> NSMenuItem {

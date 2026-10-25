@@ -12,7 +12,7 @@ final class SettingsWindowController: NSWindowController {
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 470),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: true
@@ -21,9 +21,10 @@ final class SettingsWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         super.init(window: window)
 
-        let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 520, height: 360))
+        let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 580, height: 470))
         tabs.addTabViewItem(tab("General", generalRows()))
         tabs.addTabViewItem(tab("Display", displayRows()))
+        tabs.addTabViewItem(tab("PDF", pdfRows()))
         tabs.addTabViewItem(tab("Saving", savingRows()))
         tabs.addTabViewItem(tab("Performance", performanceRows()))
         window.contentView = tabs
@@ -79,6 +80,24 @@ final class SettingsWindowController: NSWindowController {
             [empty, checkbox("Show controls when the mouse nears the bottom", { s.showControls }, { s.showControls = $0 })],
             [empty, checkbox("Hide the cursor in full screen", { s.hideCursorInFullScreen }, { s.hideCursorInFullScreen = $0 })],
             [empty, checkbox("Show individual pixels above 400% zoom", { s.pixelatedZoom }, { s.pixelatedZoom = $0 })],
+        ]
+    }
+
+    private func pdfRows() -> [[NSView]] {
+        let s = Settings.shared
+        let factors = Settings.holdZoomFactors
+        return [
+            [label("Page layout:"), popup(PDFPageMode.allCases.map(\.title), { s.pdfPageMode.rawValue }, { s.pdfPageMode = PDFPageMode(rawValue: $0) ?? .automatic })],
+            [empty, note("Automatic shows magazine-like PDFs as a cover followed by two-page spreads, and other PDFs one page at a time.")],
+            [empty, checkbox("Right to left (manga)", { s.pdfRightToLeft }, { s.pdfRightToLeft = $0 })],
+            [empty, checkbox("Include PDFs when browsing folders", { s.includePDFsInFolders }, { s.includePDFsInFolders = $0 })],
+            [label("Hold to zoom:"), popup(["Off", "PDFs only", "PDFs and images"], { s.holdToZoom.rawValue }, { s.holdToZoom = HoldToZoom(rawValue: $0) ?? .pdfsOnly })],
+            [label("Magnification:"), popup(
+                factors.map { String(format: "%g×", $0) },
+                { factors.firstIndex(of: s.holdZoomFactor) ?? 2 },
+                { s.holdZoomFactor = factors[$0] }
+            )],
+            [empty, note("Press and hold on the page to magnify it; move the mouse to look around, let go to return.")],
         ]
     }
 

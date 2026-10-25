@@ -7,6 +7,15 @@ enum InfoFormatter {
     static func text(for info: ImageInfo, position: String, size: CGSize, zoom: CGFloat, page: Int, edited: Bool) -> String {
         var lines = [info.url.lastPathComponent, position]
 
+        if let pdf = info.pdf {
+            lines.append(pdf.pagesText)
+            if let title = pdf.title { lines.append("Title   " + title) }
+            if let author = pdf.author { lines.append("Author  " + author) }
+            lines.append(ByteCountFormatter.string(fromByteCount: info.fileSize, countStyle: .file) + "  ·  PDF document")
+            lines.append("Zoom    \(Int((zoom * 100).rounded()))%" + (edited ? "  ·  edited" : ""))
+            return lines.joined(separator: "\n")
+        }
+
         let megapixels = size.width * size.height / 1_000_000
         lines.append(String(format: "%d × %d px  (%.1f MP)", Int(size.width), Int(size.height), megapixels))
 

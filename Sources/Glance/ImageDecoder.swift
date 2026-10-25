@@ -12,6 +12,8 @@ struct ImageInfo {
     let typeIdentifier: String?
     let fileSize: Int64
     let properties: [CFString: Any]
+    /// Set for PDFs: the document's title and which pages this screen shows.
+    var pdf: PDFDetails? = nil
 
     var isRaw: Bool {
         typeIdentifier.flatMap(UTType.init)?.conforms(to: .rawImage) ?? false
@@ -110,8 +112,12 @@ enum ImageDecoder {
         return CGImageSourceCreateThumbnailAtIndex(source, page, options as CFDictionary)
     }
 
-    /// Full-resolution, EXIF-oriented pixels. Used for crop and save.
-    static func decodeFull(_ url: URL, page: Int) -> CGImage? {
+    /// Full-resolution, EXIF-oriented pixels. Used for crop, save, print and copy.
+    /// For a PDF, `page` is the screen (page or spread) index under `layout`.
+    static func decodeFull(_ url: URL, page: Int, layout: PDFLayout = PDFLayout(), password: String? = nil) -> CGImage? {
+        if PDFRenderer.isPDF(url) {
+            return PDFRenderer.decode(url, index: page, size: .longSide(Int.max), layout: layout, password: password)?.image
+        }
         guard let source = makeSource(url), let info = info(for: url, source: source, page: page) else { return nil }
         return decode(source: source, page: page, maxPixelSize: info.fullLongSide)
     }

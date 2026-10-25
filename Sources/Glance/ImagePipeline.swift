@@ -22,6 +22,8 @@ final class ImagePipeline {
         let page: Int
         /// The opening decode and each zoom level are separate entries.
         let size: DecodeSize
+        /// PDFs only: `page` counts screens under this layout. Images leave the default.
+        var layout = PDFLayout()
     }
 
     private struct InFlight {
@@ -64,6 +66,21 @@ final class ImagePipeline {
 
     /// Files above this size get their embedded thumbnail shown while the real decode runs.
     private let previewThreshold: Int64 = 12_000_000
+    private var pdfPasswords: [URL: String] = [:]
+
+    /// Remembered for the session only, never written to disk.
+    func setPassword(_ password: String, for url: URL) {
+        lock.lock()
+        pdfPasswords[url] = password
+        lock.unlock()
+    }
+
+    func password(for url: URL) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return pdfPasswords[url]
+    }
+
     private var showsQuickPreview = false
     /// When a full-size decode is needed, show a half-size one first (Settings ▸ Performance).
     var quickPreview: Bool {
@@ -187,6 +204,10 @@ final class ImagePipeline {
     }
 
     private func decode(_ key: Key, preview: ((CGImage, ImageInfo) -> Void)?) -> DecodedImage? {
+        // The only cost PDF support adds to images: this extension check.
+        if PDFRenderer.isPDF(key.url) {
+            return PDFRenderer.decode(key.url, index: key.page, size: key.size, layout: key.layout, password: password(for: key.url))
+        }
         guard let source = ImageDecoder.makeSource(key.url),
               let info = ImageDecoder.info(for: key.url, source: source, page: key.page) else {
             return nil
@@ -219,20 +240,26 @@ final class ImagePipeline {
     /// needs. JPEG and HEIF decode those sizes directly, so there's no full-size decode and no
     /// resampling pass. A 4000×3000 photo shown 1800 px wide decodes at 2000×1500, a quarter of the work.
     static func decodeLongSide(for size: DecodeSize, info: ImageInfo) -> Int {
+        if case .longSide(let pixels) = size {
+            return min(pixels, info.fullLongSide)
+        }
+        return halvingLevel(full: info.fullLongSide, atLeast: neededLongSide(for: size, info: info))
+    }
+
+    /// The long side the view actually needs, never more than full size.
+    static func neededLongSide(for size: DecodeSize, info: ImageInfo) -> Int {
         let full = info.fullLongSide
         let fullSize = info.fullSize
-        let needed: Int
         switch size {
         case .longSide(let pixels):
             return min(pixels, full)
         case .fit(let width, let height):
             let scale = min(CGFloat(width) / fullSize.width, CGFloat(height) / fullSize.height)
-            needed = Int((CGFloat(full) * min(scale, 1)).rounded(.up))
+            return Int((CGFloat(full) * min(scale, 1)).rounded(.up))
         case .fill(let width, let height):
             let scale = max(CGFloat(width) / fullSize.width, CGFloat(height) / fullSize.height)
-            needed = Int((CGFloat(full) * min(scale, 1)).rounded(.up))
+            return Int((CGFloat(full) * min(scale, 1)).rounded(.up))
         }
-        return halvingLevel(full: full, atLeast: needed)
     }
 
     /// The smallest of full, full/2, full/4, … that is at least `needed`.

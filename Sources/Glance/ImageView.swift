@@ -58,6 +58,16 @@ final class ImageView: NSView {
 
     private var lastDragPoint: NSPoint?
     private var selectionAnchor: CGPoint?
+    /// Press and hold without moving to magnify; let go to return. The controller turns it on
+    /// per picture (PDFs, or everything, per Settings).
+    var holdToZoomEnabled = false
+    var holdZoomFactor: CGFloat = 2.5
+    private static let holdDelay: TimeInterval = 0.2
+    private var holdWork: DispatchWorkItem?
+    private var holdStart: NSPoint?
+    /// The view to return to when the mouse is released.
+    private var magnifyState: (zoom: CGFloat, center: CGPoint, mode: ZoomMode)?
+
     /// Option-drag: the rectangle to zoom into, in oriented image pixels, while it's being drawn.
     private var zoomBoxAnchor: CGPoint?
     private var zoomBox: CGRect?
@@ -119,6 +129,9 @@ final class ImageView: NSView {
             orientation = .identity
             selection = nil
             zoomMode = defaultZoomMode
+            // A different picture: any hold or magnifier belonged to the old one.
+            cancelHold()
+            magnifyState = nil
         }
         rebuildTiles()
         if resetView || zoomMode != .custom {
@@ -460,10 +473,28 @@ final class ImageView: NSView {
                 pushedCursor = true
             }
         }
+
+        // Hold still for a moment and the page magnifies under the mouse.
+        if holdToZoomEnabled, image != nil, event.clickCount == 1,
+           event.modifierFlags.intersection([.shift, .option, .command]).isEmpty {
+            holdStart = point
+            let work = DispatchWorkItem { [weak self] in self?.beginMagnify() }
+            holdWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDelay, execute: work)
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if magnifyState != nil {
+            followMagnifier(to: point)
+            return
+        }
+        if let start = holdStart {
+            // Small jitters don't count; a real move cancels the hold and becomes a drag.
+            if hypot(point.x - start.x, point.y - start.y) < 4 { return }
+            cancelHold()
+        }
         guard let last = lastDragPoint else { return }
         didDrag = true
         if let anchor = zoomBoxAnchor {
@@ -497,6 +528,14 @@ final class ImageView: NSView {
             NSCursor.pop()
             pushedCursor = false
         }
+        cancelHold()
+        if magnifyState != nil {
+            endMagnify()
+            lastDragPoint = nil
+            zoomBoxAnchor = nil
+            selectionAnchor = nil
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
         if zoomBoxAnchor != nil {
             let box = zoomBox
@@ -526,6 +565,62 @@ final class ImageView: NSView {
         }
         lastDragPoint = nil
         selectionAnchor = nil
+    }
+
+    // MARK: - Hold to zoom
+
+    private func cancelHold() {
+        holdWork?.cancel()
+        holdWork = nil
+        holdStart = nil
+    }
+
+    private func beginMagnify() {
+        holdWork = nil
+        holdStart = nil
+        guard image != nil, magnifyState == nil else { return }
+        // The press becomes a magnifier, not a drag.
+        zoomBoxAnchor = nil
+        zoomBox = nil
+        selectionAnchor = nil
+        updateSelectionLayer()
+
+        magnifyState = (zoom, center, zoomMode)
+        zoom = min(zoom * holdZoomFactor, Self.maxZoom)
+        zoomMode = .custom
+        let mouse = window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) } ?? NSPoint(x: bounds.midX, y: bounds.midY)
+        followMagnifier(to: mouse)
+        delegate?.imageViewDidChangeZoom(self)
+        // Ask for sharp pixels for the magnified view; they replace the stretched ones when ready.
+        requestResolutionIfNeeded()
+    }
+
+    /// Moving across the window moves across the whole page: the point that was under the mouse
+    /// before magnifying stays under it.
+    private func followMagnifier(to point: NSPoint) {
+        guard let saved = magnifyState else { return }
+        let savedScale = saved.zoom / backingScale
+        let target = CGPoint(
+            x: saved.center.x + (point.x - bounds.midX) / savedScale,
+            y: saved.center.y - (point.y - bounds.midY) / savedScale
+        )
+        center = CGPoint(
+            x: target.x - (point.x - bounds.midX) / pointsPerPixel,
+            y: target.y + (point.y - bounds.midY) / pointsPerPixel
+        )
+        clampCenter()
+        layoutImage()
+    }
+
+    private func endMagnify() {
+        guard let saved = magnifyState else { return }
+        magnifyState = nil
+        zoom = saved.zoom
+        center = saved.center
+        zoomMode = saved.mode
+        if zoomMode != .custom { applyZoomMode() } else { clampCenter() }
+        layoutImage()
+        delegate?.imageViewDidChangeZoom(self)
     }
 
     override func scrollWheel(with event: NSEvent) {

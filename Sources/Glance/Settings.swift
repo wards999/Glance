@@ -23,6 +23,10 @@ enum FullScreenStyle: Int {
     case native
 }
 
+enum HoldToZoom: Int {
+    case off = 0, pdfsOnly, everything
+}
+
 /// User preferences, kept in UserDefaults (what JPEGView puts in its INI file).
 /// Setting any value posts `Settings.didChange`; the viewer and the Settings window both follow it.
 final class Settings {
@@ -52,6 +56,11 @@ final class Settings {
         static let confirmOverwrite = "confirmOverwrite"
         static let prefetchCount = "prefetchCount"
         static let quickPreview = "quickPreview"
+        static let pdfPageMode = "pdfPageMode"
+        static let pdfRightToLeft = "pdfRightToLeft"
+        static let includePDFs = "includePDFsInFolders"
+        static let holdToZoom = "holdToZoom"
+        static let holdZoomFactor = "holdZoomFactor"
         static let cacheGB = "cacheGB"
     }
 
@@ -83,6 +92,11 @@ final class Settings {
             Key.confirmOverwrite: true,
             Key.prefetchCount: 3,
             Key.quickPreview: false,
+            Key.pdfPageMode: PDFPageMode.automatic.rawValue,
+            Key.pdfRightToLeft: false,
+            Key.includePDFs: false,
+            Key.holdToZoom: HoldToZoom.pdfsOnly.rawValue,
+            Key.holdZoomFactor: 2.5,
             Key.cacheGB: Self.defaultCacheGB,
         ])
     }
@@ -210,6 +224,38 @@ final class Settings {
     }
 
     var cacheBytes: Int { Int(cacheGB * 1_073_741_824) }
+
+    // MARK: PDF
+
+    static let holdZoomFactors: [Double] = [1.5, 2, 2.5, 3, 4]
+
+    var pdfPageMode: PDFPageMode {
+        get { PDFPageMode(rawValue: defaults.integer(forKey: Key.pdfPageMode)) ?? .automatic }
+        set { store(newValue.rawValue, Key.pdfPageMode) }
+    }
+
+    var pdfRightToLeft: Bool {
+        get { defaults.bool(forKey: Key.pdfRightToLeft) }
+        set { store(newValue, Key.pdfRightToLeft) }
+    }
+
+    var pdfLayout: PDFLayout { PDFLayout(mode: pdfPageMode, rightToLeft: pdfRightToLeft) }
+
+    /// Off by default so flipping through a photo folder never stops to render a PDF.
+    var includePDFsInFolders: Bool {
+        get { defaults.bool(forKey: Key.includePDFs) }
+        set { store(newValue, Key.includePDFs) }
+    }
+
+    var holdToZoom: HoldToZoom {
+        get { HoldToZoom(rawValue: defaults.integer(forKey: Key.holdToZoom)) ?? .pdfsOnly }
+        set { store(newValue.rawValue, Key.holdToZoom) }
+    }
+
+    var holdZoomFactor: Double {
+        get { defaults.double(forKey: Key.holdZoomFactor) }
+        set { store(newValue, Key.holdZoomFactor) }
+    }
 
     private func store(_ value: Any, _ key: String) {
         defaults.set(value, forKey: key)

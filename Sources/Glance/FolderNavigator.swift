@@ -26,12 +26,12 @@ final class FolderNavigator {
     var count: Int { files.count }
 
     /// Lists every decodable image in `folder`. Call off the main thread: big folders on network volumes are slow.
-    static func scan(folder: URL, order: SortOrder, descending: Bool) -> [URL] {
+    static func scan(folder: URL, order: SortOrder, descending: Bool, includePDFs: Bool) -> [URL] {
         let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey, .creationDateKey, .fileSizeKey]
         guard let items = try? FileManager.default.contentsOfDirectory(
             at: folder, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
         ) else { return [] }
-        let images = items.filter(ImageDecoder.isSupported)
+        let images = items.filter { ImageDecoder.isSupported($0) || (includePDFs && PDFRenderer.isPDF($0)) }
         return sort(images, by: order, descending: descending)
     }
 

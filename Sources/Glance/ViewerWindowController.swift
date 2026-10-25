@@ -40,6 +40,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let settings = Settings.shared
     private var settingsObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
+    private var appliedPDFLayout = PDFLayout()
     /// Core Image work (adjustments, crop, save) runs here, one job at a time.
     private let renderQueue = DispatchQueue(label: "glance.render", qos: .userInitiated)
 
@@ -134,7 +135,39 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
         pipeline.costLimit = settings.cacheBytes
         pipeline.quickPreview = settings.quickPreview
+        imageView.holdZoomFactor = CGFloat(settings.holdZoomFactor)
+        updateHoldToZoom()
+
+        let layout = settings.pdfLayout
+        if layout != appliedPDFLayout {
+            appliedPDFLayout = layout
+            // Page indexes count spreads, so find the screen that holds the page you were on.
+            if let pdf = currentPDF, let firstPage = pdf.info.pdf?.pages.first {
+                let url = pdf.info.url
+                let spreads = PDFRenderer.spreads(for: url, layout: layout, password: pipeline.password(for: url))
+                page = spreads.firstIndex { $0.contains(firstPage) } ?? 0
+                showCurrent(keepPage: true)
+                return
+            }
+        }
         if navigator.current != nil { prefetchNeighbors() }
+    }
+
+    private func updateHoldToZoom() {
+        let isPDF = current?.info.pdf != nil
+        switch settings.holdToZoom {
+        case .off: imageView.holdToZoomEnabled = false
+        case .pdfsOnly: imageView.holdToZoomEnabled = isPDF
+        case .everything: imageView.holdToZoomEnabled = true
+        }
+    }
+
+    @objc func setPDFPageMode(_ sender: NSMenuItem) {
+        settings.pdfPageMode = PDFPageMode(rawValue: sender.tag) ?? .automatic
+    }
+
+    @objc func togglePDFRightToLeft(_ sender: Any?) {
+        settings.pdfRightToLeft.toggle()
     }
 
     required init?(coder: NSCoder) {
@@ -289,7 +322,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             showCurrent()
             scanFolder(first.deletingLastPathComponent(), keeping: first)
         } else {
-            let images = FolderNavigator.sort(urls.filter(ImageDecoder.isSupported), by: navigator.sortOrder, descending: navigator.descending)
+            let openable = urls.filter { ImageDecoder.isSupported($0) || PDFRenderer.isPDF($0) }
+            let images = FolderNavigator.sort(openable, by: navigator.sortOrder, descending: navigator.descending)
             navigator.setFiles(images, current: images.first)
             showCurrent()
         }
@@ -298,8 +332,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func scanFolder(_ folder: URL, keeping selected: URL?) {
         let order = navigator.sortOrder
         let descending = navigator.descending
+        // Opening a PDF directly means you're reading PDFs, so its neighbours count too.
+        let includePDFs = settings.includePDFsInFolders || (selected.map(PDFRenderer.isPDF) ?? false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let files = FolderNavigator.scan(folder: folder, order: order, descending: descending)
+            let files = FolderNavigator.scan(folder: folder, order: order, descending: descending, includePDFs: includePDFs)
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let selected {
@@ -323,7 +359,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = [.image, .pdf]
         let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard response == .OK else {
                 if self?.navigator.current == nil {
@@ -355,6 +391,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         case .fill: return .fill(width: width, height: height)
         case .actual: return .longSide(Int.max)
         }
+    }
+
+    /// PDF keys carry the page layout, since `page` counts spreads under it.
+    private func pipelineKey(_ url: URL, page: Int, size: ImagePipeline.DecodeSize) -> ImagePipeline.Key {
+        var key = ImagePipeline.Key(url: url, page: page, size: size)
+        if PDFRenderer.isPDF(url) { key.layout = settings.pdfLayout }
+        return key
+    }
+
+    /// The PDF currently on screen, if it's the file the navigator is on.
+    private var currentPDF: DecodedImage? {
+        guard let current, current.info.pdf != nil, current.info.url == navigator.current else { return nil }
+        return current
     }
 
     private var displayFullSize: CGSize {
@@ -390,7 +439,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
         updateTitle()
 
-        let key = ImagePipeline.Key(url: url, page: page, size: openingDecodeSize)
+        let key = pipelineKey(url, page: page, size: openingDecodeSize)
         if let hit = pipeline.cached(key) {
             // Prefetched: on screen in the same run-loop turn as the key press.
             present(hit, resetView: true)
@@ -411,6 +460,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             self.foregroundKey = nil
             if let decoded {
                 self.present(decoded, resetView: !previewShown)
+            } else if PDFRenderer.isPDF(url), PDFRenderer.needsPassword(url, password: self.pipeline.password(for: url)) {
+                self.current = nil
+                self.imageView.setImage(nil, fullSize: .zero, resetView: true)
+                self.askForPassword(url)
             } else {
                 self.current = nil
                 self.imageView.setImage(nil, fullSize: .zero, resetView: true)
@@ -420,8 +473,30 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         })
     }
 
+    private func askForPassword(_ url: URL) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "“\(url.lastPathComponent)” is password protected"
+        alert.informativeText = "Enter its password to open it. It's remembered until Glance quits."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard response == .alertFirstButtonReturn else {
+                self.showMessage("“\(url.lastPathComponent)” is locked", duration: nil)
+                return
+            }
+            self.pipeline.setPassword(field.stringValue, for: url)
+            if self.navigator.current == url { self.showCurrent(keepPage: true) }
+        }
+    }
+
     private func present(_ decoded: DecodedImage, resetView: Bool) {
         current = decoded
+        updateHoldToZoom()
         if messageIsSticky { hideMessage() }
         display(decoded.image, resetView: resetView)
         if decoded.info.isAnimated && decoded.page == 0 {
@@ -484,8 +559,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         var offsets = (1...ahead).map { $0 * direction }
         offsets.insert(-direction, at: min(2, offsets.count))
         for offset in offsets {
+            // Inside a PDF the neighbours are its other pages; past either end, the next files.
+            if let pdf = currentPDF, (0..<pdf.info.pageCount).contains(page + offset) {
+                let key = pipelineKey(pdf.info.url, page: page + offset, size: size)
+                if !keys.contains(key) { keys.append(key) }
+                continue
+            }
             guard let url = navigator.url(at: offset), url != navigator.current else { continue }
-            let key = ImagePipeline.Key(url: url, page: 0, size: size)
+            let key = pipelineKey(url, page: 0, size: size)
             if !keys.contains(key) { keys.append(key) }
         }
         pipeline.prefetch(keys)
@@ -523,7 +604,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         guard level > requestedLongSide, level > current.longSide else { return }
         requestedLongSide = level
 
-        let key = ImagePipeline.Key(url: current.info.url, page: current.page, size: .longSide(level))
+        let key = pipelineKey(current.info.url, page: current.page, size: .longSide(level))
         let gen = generation
         let upgrade: (DecodedImage) -> Void = { [weak self] decoded in
             guard let self, gen == self.generation, decoded.longSide > (self.current?.longSide ?? 0) else { return }
@@ -631,6 +712,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func go(_ delta: Int) {
         direction = delta < 0 ? -1 : 1
+        // In a PDF, Space, arrows and the wheel turn its pages before moving to the next file.
+        if let pdf = currentPDF, (0..<pdf.info.pageCount).contains(page + delta) {
+            page += delta
+            showCurrent(keepPage: true)
+            return
+        }
         guard navigator.move(by: delta) else {
             NSSound.beep()
             return
@@ -792,11 +879,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let adjustments = self.adjustments
         let base = editedImage
         let gen = generation
+        let layout = settings.pdfLayout
+        let password = pipeline.password(for: url)
         showMessage("Cropping…", duration: nil)
 
         renderQueue.async { [weak self] in
             // Crops always work on full-resolution pixels, whatever is on screen.
-            let full = base ?? ImageDecoder.decodeFull(url, page: page)
+            let full = base ?? ImageDecoder.decodeFull(url, page: page, layout: layout, password: password)
             let output = full.flatMap {
                 ImageRenderer.shared.renderEdited($0, adjustments: adjustments, orientation: orientation, crop: selection, autoKey: url.path)
             }
@@ -830,7 +919,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return
         }
         let url = current.info.url
-        guard let type = current.info.typeIdentifier.flatMap(UTType.init), ImageSaver.canWrite(type) else {
+        // Never write over a PDF: it would become a single flattened page. Export instead.
+        guard current.info.pdf == nil,
+              let type = current.info.typeIdentifier.flatMap(UTType.init), ImageSaver.canWrite(type) else {
             saveImageAs(sender)
             return
         }
@@ -899,6 +990,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let edited = editedImage
         let sourceType = current.info.typeIdentifier.flatMap(UTType.init)
         let canRewriteTag = edited == nil && adjustments.isIdentity && sourceType == type && page == 0
+        let layout = settings.pdfLayout
+        let password = pipeline.password(for: source)
         showMessage("Saving…", duration: nil)
 
         renderQueue.async { [weak self] in
@@ -906,7 +999,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 if canRewriteTag, try ImageSaver.rewriteOrientation(of: source, to: destination, applying: orientation) {
                     return
                 }
-                guard let base = edited ?? ImageDecoder.decodeFull(source, page: page) else {
+                guard let base = edited ?? ImageDecoder.decodeFull(source, page: page, layout: layout, password: password) else {
                     throw ImageSaver.SaveError.cannotRead
                 }
                 let needsRender = !adjustments.isIdentity || orientation != .identity
@@ -1000,9 +1093,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let adjustments = self.adjustments
         let orientation = imageView.orientation
         let gen = generation
+        let layout = settings.pdfLayout
+        let password = pipeline.password(for: source)
         showMessage(message, duration: nil)
         renderQueue.async { [weak self] in
-            var image = edited ?? ImageDecoder.decodeFull(source, page: page)
+            var image = edited ?? ImageDecoder.decodeFull(source, page: page, layout: layout, password: password)
             if let base = image, !adjustments.isIdentity || orientation != .identity {
                 image = ImageRenderer.shared.renderEdited(base, adjustments: adjustments, orientation: orientation, crop: nil, autoKey: source.path)
             }
@@ -1199,8 +1294,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return NSPasteboard.general.canReadObject(forClasses: [NSURL.self, NSImage.self], options: nil)
         case #selector(clearParameters(_:)):
             return navigator.current.map { ParameterStore.adjustments(for: $0) != nil } ?? false
-        case #selector(losslessTransform(_:)):
-            return hasImage && !hasEdits
+        case #selector(losslessTransform(_:)), #selector(setAsDesktopPicture(_:)):
+            return hasImage && current?.info.pdf == nil && (item.action != #selector(losslessTransform(_:)) || !hasEdits)
+        case #selector(setPDFPageMode(_:)):
+            item.state = item.tag == settings.pdfPageMode.rawValue ? .on : .off
+            return true
+        case #selector(togglePDFRightToLeft(_:)):
+            item.state = settings.pdfRightToLeft ? .on : .off
+            return true
         case #selector(toggleAutoCorrect(_:)):
             item.state = adjustments.autoCorrect ? .on : .off
             return hasImage
@@ -1227,6 +1328,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return navigator.count > 1
         case #selector(cropToSelection(_:)), #selector(zoomToSelection(_:)):
             return imageView.selection != nil
+        case #selector(saveImageAs(_:)):
+            return hasImage
         case #selector(nextPage(_:)), #selector(previousPage(_:)):
             return (current?.info.pageCount ?? 0) > 1 && current?.info.isAnimated == false
         case #selector(saveImage(_:)), #selector(resetEdits(_:)):
@@ -1254,7 +1357,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if let info = current?.info, info.url == url {
             let size = displayFullSize
             parts.append("\(Int(size.width)) × \(Int(size.height))")
-            if info.pageCount > 1 && !info.isAnimated {
+            if let pdf = info.pdf {
+                parts.append(pdf.pagesText.lowercased())
+            } else if info.pageCount > 1 && !info.isAnimated {
                 parts.append("page \(page + 1)/\(info.pageCount)")
             }
             parts.append("\(Int((imageView.zoom * 100).rounded()))%")
