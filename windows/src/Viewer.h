@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Adjustments.h"
 #include "Navigator.h"
 #include "Pipeline.h"
 #include "Settings.h"
@@ -30,7 +31,8 @@ struct GpuImage {
 enum class ZoomMode { Fit, Actual, Custom };
 
 /// The viewer window. Drawing is Direct2D on a flip-model swap chain: an image is uploaded
-/// once and every zoom, pan or rotation afterwards only changes a transform.
+/// once and every zoom, pan, rotation or adjustment afterwards only changes what the GPU does
+/// with it.
 class Viewer {
 public:
     explicit Viewer(HINSTANCE instance);
@@ -55,6 +57,9 @@ private:
     void createTarget();
     void resize();
     void render();
+    void drawImage(D2D1_INTERPOLATION_MODE mode);
+    /// Runs `input` through the active adjustments. False when there are none.
+    bool applyEffects(ID2D1Image* input, ComPtr<ID2D1Image>& output);
     void drawOverlay();
     std::wstring overlayText() const;
     std::shared_ptr<GpuImage> upload(const Decoded& image);
@@ -62,6 +67,9 @@ private:
     void forgetGpu(const std::wstring& path);
 
     // Images
+    DecodeKey keyFor(const std::wstring& path, UINT frame, const DecodeRequest& request) const;
+    int pdfLayout() const;
+    bool showingPdf() const;
     void showCurrent();
     void show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, bool resetView);
     void onDecoded(std::unique_ptr<DecodeResult> result);
@@ -70,6 +78,7 @@ private:
     DecodeRequest openingRequest() const;
     void scanFolder(const std::wstring& folder, const std::wstring& selected);
     void go(int delta);
+    void goToFile(int delta);
 
     // View geometry (all in device pixels; "image" coordinates are oriented full-resolution pixels)
     void viewSize(double& width, double& height) const;
@@ -84,8 +93,26 @@ private:
     void scrollBy(double dx, double dy);
     bool canPanX() const;
     bool canPanY() const;
+    D2D1_POINT_2F toImage(double x, double y) const;
+    D2D1_POINT_2F toView(double x, double y) const;
     D2D1_MATRIX_3X2_F orientation() const;
     D2D1_MATRIX_3X2_F imageTransform() const;
+
+    // Hold to zoom, and keeping the zoom when turning PDF pages
+    bool holdToZoomEnabled() const;
+    void beginMagnify();
+    void followMagnifier(POINT point);
+    void endMagnify();
+    void carryZoomForPageTurn(bool forward);
+
+    // Editing
+    void setAdjustments(const Adjustments& adjustments);
+    std::shared_ptr<Decoded> fullResolutionUpright();
+    std::shared_ptr<Decoded> applyAdjustmentsForSaving(const Decoded& upright);
+    void cropToSelection();
+    void saveAs();
+    void losslessTransform(int which);
+    void revertEdits();
 
     // Window, menu and commands
     void setFullScreen(bool on);
@@ -108,6 +135,7 @@ private:
     Settings settings_;
     SortOrder appliedSort_ = SortOrder::Name;
     bool appliedDescending_ = false;
+    int appliedPdfLayout_ = 0;
     /// Creating the Direct3D device loads the GPU driver, which is slow; it starts on another
     /// thread the moment the app does, in parallel with the window and the first decode.
     std::future<ComPtr<ID3D11Device>> pendingDevice_;
@@ -122,6 +150,10 @@ private:
     ComPtr<ID2D1Bitmap1> target_;
     ComPtr<ID2D1SolidColorBrush> brush_;
     ComPtr<ID2D1SolidColorBrush> overlayBrush_;
+    ComPtr<ID2D1SolidColorBrush> darkBrush_;
+    ComPtr<ID2D1Effect> colorEffect_;
+    ComPtr<ID2D1Effect> gammaEffect_;
+    ComPtr<ID2D1Effect> sharpenEffect_;
     UINT maxBitmapSize_ = 8192;
 
     // Text for the info overlay; created the first time it's shown, so launch doesn't pay for it.
@@ -143,6 +175,7 @@ private:
     UINT requestedLevel_ = 0;
     std::vector<DecodeKey> prefetchKeys_;
     int direction_ = 1;
+    UINT frame_ = 0;  // which page or spread of a PDF
 
     ZoomMode zoomMode_ = ZoomMode::Fit;
     double zoom_ = 1;      // device pixels per full-resolution pixel
@@ -153,9 +186,30 @@ private:
     bool dragging_ = false;
     bool didDrag_ = false;
     bool zoomBox_ = false;
+    bool selecting_ = false;  // Ctrl+drag: crop selection, as in JPEGView
     POINT dragStart_{};
     POINT dragLast_{};
     int wheelRemainder_ = 0;
+
+    bool hasSelection_ = false;
+    D2D1_RECT_F selection_{};  // image coordinates
+
+    bool holdPending_ = false;
+    bool magnifying_ = false;
+    double savedZoom_ = 1;
+    double savedCenterX_ = 0;
+    double savedCenterY_ = 0;
+    ZoomMode savedMode_ = ZoomMode::Fit;
+
+    bool carryZoom_ = false;
+    double carriedZoom_ = 1;
+    bool carryRight_ = false;
+    bool carryBottom_ = false;
+
+    Adjustments adjustments_;
+    Levels levels_;
+    std::wstring levelsFor_;
+    std::shared_ptr<Decoded> edited_;  // after a crop: upright, full-resolution pixels
 
     bool fullScreen_ = false;
     bool slideshow_ = false;

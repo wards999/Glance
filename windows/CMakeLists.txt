@@ -7,18 +7,21 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(CORE_SOURCES src/Decoder.cpp src/Pipeline.cpp src/Navigator.cpp)
-set(SYSTEM_LIBS windowscodecs ole32 oleaut32 uuid shlwapi user32)
+set(CORE_SOURCES src/Decoder.cpp src/Pipeline.cpp src/Navigator.cpp src/Pdf.cpp)
+set(SYSTEM_LIBS windowscodecs ole32 oleaut32 uuid shlwapi user32 shcore)
 
 # The viewer: a GUI app with no runtime to install.
-add_executable(Glance WIN32 src/main.cpp src/Viewer.cpp src/Settings.cpp src/SettingsDialog.cpp ${CORE_SOURCES} glance.rc)
-target_link_libraries(Glance PRIVATE d2d1 d3d11 dxgi dwrite dwmapi comdlg32 shell32 user32 gdi32 ${SYSTEM_LIBS})
+add_executable(Glance WIN32
+    src/main.cpp src/Viewer.cpp src/Settings.cpp src/SettingsDialog.cpp
+    src/Adjustments.cpp src/AdjustmentsDialog.cpp src/Editing.cpp
+    ${CORE_SOURCES} glance.rc)
+target_link_libraries(Glance PRIVATE d2d1 d3d11 dxgi dxguid dwrite dwmapi comdlg32 comctl32 shell32 gdi32 ${SYSTEM_LIBS})
 
 # Console tools: decode timing, and test images for it.
 add_executable(glance-bench tools/bench.cpp ${CORE_SOURCES})
 target_link_libraries(glance-bench PRIVATE ${SYSTEM_LIBS})
 add_executable(make-test-images tools/make_test_images.cpp)
-target_link_libraries(make-test-images PRIVATE windowscodecs ole32 uuid)
+target_link_libraries(make-test-images PRIVATE windowscodecs ole32 oleaut32 uuid)
 
 foreach(target Glance glance-bench make-test-images)
     target_include_directories(${target} PRIVATE src)
@@ -28,13 +31,18 @@ foreach(target Glance glance-bench make-test-images)
         # Static runtime: a single exe, no MinGW DLLs to ship.
         target_link_options(${target} PRIVATE -municode -static -static-libgcc -static-libstdc++)
     elseif(MSVC)
-        target_compile_options(${target} PRIVATE /utf-8 /W3 /permissive-)
+        target_compile_options(${target} PRIVATE /utf-8 /W3 /permissive- /bigobj)
         # Static runtime: no Visual C++ redistributable to install.
         set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
 endforeach()
 
 if(MSVC)
+    # PDF reading uses Windows' built-in renderer through C++/WinRT, which comes with MSVC's SDK.
+    foreach(target Glance glance-bench)
+        target_compile_definitions(${target} PRIVATE GLANCE_PDF)
+        target_link_libraries(${target} PRIVATE windowsapp)
+    endforeach()
     # glance.rc already embeds our manifest (per-monitor DPI); don't let the linker add another.
     target_link_options(Glance PRIVATE /MANIFEST:NO)
 endif()

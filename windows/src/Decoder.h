@@ -25,6 +25,11 @@ struct ImageInfo {
     std::wstring taken;     // "2024-05-01 10:22"
     std::wstring exposure;  // "1/250 s   f/2.8   ISO 100   35 mm"
 
+    // PDFs: frameCount counts screens (pages or spreads); this says which pages are showing.
+    bool isPdf = false;
+    int pdfFirstPage = 0;
+    std::wstring pdfPages;  // "Pages 4–5 of 120"
+
     UINT longSide() const { return width > height ? width : height; }
     bool swapsAxes() const { return orientation >= 5 && orientation <= 8; }
     UINT orientedWidth() const { return swapsAxes() ? height : width; }
@@ -60,8 +65,9 @@ class Decoder {
 public:
     Decoder();
 
-    /// Null if the file can't be read.
-    std::shared_ptr<Decoded> decode(const std::wstring& path, UINT frame, const DecodeRequest& request);
+    /// Null if the file can't be read. For a PDF, `frame` is the screen (page or spread) under
+    /// `pdfLayout` (see Pdf::packLayout); for images `pdfLayout` is ignored.
+    std::shared_ptr<Decoded> decode(const std::wstring& path, UINT frame, const DecodeRequest& request, int pdfLayout = -1);
 
     /// Lower-case extensions (no dot) that the installed WIC codecs can decode, including
     /// Store extensions such as HEIF, WebP, AVIF and RAW when they're installed.

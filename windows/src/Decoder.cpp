@@ -1,5 +1,7 @@
 #include "Decoder.h"
 
+#include "Pdf.h"
+
 #include <propidl.h>
 
 #include <algorithm>
@@ -217,7 +219,9 @@ UINT Decoder::halvingLevel(UINT full, UINT needed) {
     return level;
 }
 
-std::shared_ptr<Decoded> Decoder::decode(const std::wstring& path, UINT frameIndex, const DecodeRequest& request) {
+std::shared_ptr<Decoded> Decoder::decode(const std::wstring& path, UINT frameIndex, const DecodeRequest& request, int pdfLayout) {
+    // The only cost PDF support adds to images: this check.
+    if (pdfLayout >= 0 && Pdf::isPdf(path)) return Pdf::decode(path, frameIndex, request, pdfLayout);
     if (!factory_) return nullptr;
 
     ComPtr<IWICBitmapDecoder> decoder;

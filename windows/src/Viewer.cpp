@@ -1,8 +1,16 @@
 #include "Viewer.h"
 
+#include "AdjustmentsDialog.h"
+#include "Editing.h"
+#include "Pdf.h"
 #include "SettingsDialog.h"
 
 #include <commdlg.h>
+#include <d2d1effects.h>
+#if __has_include(<d2d1effects_2.h>)
+#include <d2d1effects_2.h>
+#define GLANCE_HAS_SHARPEN 1
+#endif
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -22,12 +30,16 @@ constexpr UINT WM_APP_DECODED = WM_APP + 1;
 constexpr UINT WM_APP_FOLDER = WM_APP + 2;
 constexpr UINT WM_APP_GPU_READY = WM_APP + 3;
 constexpr UINT_PTR kSlideshowTimer = 1;
+constexpr UINT_PTR kHoldTimer = 2;
+constexpr UINT kHoldDelayMs = 200;
 constexpr wchar_t kClassName[] = L"GlanceViewer";
 constexpr size_t kGpuBudget = size_t(1) << 30;  // 1 GB of decoded-ahead textures
 constexpr int kSlideshowChoices[] = {1, 2, 3, 5, 10, 30};
+constexpr UINT kEditedMarker = 0xFFFFFFFF;  // DecodeRequest::longSide of a cropped picture's cache key
 
 enum Command {
     CmdOpen = 1,
+    CmdSaveAs,
     CmdReload,
     CmdReveal,
     CmdWallpaper,
@@ -44,18 +56,26 @@ enum Command {
     CmdSlideshow,
     CmdRotateRight,
     CmdRotateLeft,
+    CmdCrop,
+    CmdRevert,
+    CmdAutoCorrect,
+    CmdAdjustments,
+    CmdKeepAdjustments,
     CmdZoomIn,
     CmdZoomOut,
     CmdFit,
     CmdActual,
     CmdEnlarge,
     CmdFullScreen,
+    CmdRightToLeft,
     CmdRecycle,
     CmdSettings,
     CmdAbout,
     CmdExit,
     CmdSortBase = 100,      // + SortOrder
     CmdIntervalBase = 200,  // + index into kSlideshowChoices
+    CmdLosslessBase = 300,  // + 0 right, 1 left, 2 180°, 3 flip horizontal, 4 flip vertical
+    CmdPdfLayoutBase = 400, // + Settings::pdfLayout
 };
 
 struct FolderResult {
@@ -74,39 +94,21 @@ D2D1_MATRIX_3X2_F matrix(float m11, float m12, float m21, float m22, float dx = 
     return m;
 }
 
-/// `a` then `b` (Direct2D's row-vector convention).
-D2D1_MATRIX_3X2_F multiply(const D2D1_MATRIX_3X2_F& a, const D2D1_MATRIX_3X2_F& b) {
-    return matrix(a._11 * b._11 + a._12 * b._21, a._11 * b._12 + a._12 * b._22,
-                  a._21 * b._11 + a._22 * b._21, a._21 * b._12 + a._22 * b._22,
-                  a._31 * b._11 + a._32 * b._21 + b._31, a._31 * b._12 + a._32 * b._22 + b._32);
-}
-
 D2D1_MATRIX_3X2_F identity() { return matrix(1, 0, 0, 1); }
-
-/// EXIF orientation as the transform that shows stored pixels upright (y points down).
-D2D1_MATRIX_3X2_F exifMatrix(int orientation) {
-    switch (orientation) {
-    case 2: return matrix(-1, 0, 0, 1);   // mirrored
-    case 3: return matrix(-1, 0, 0, -1);  // 180°
-    case 4: return matrix(1, 0, 0, -1);   // flipped vertically
-    case 5: return matrix(0, 1, 1, 0);    // transposed
-    case 6: return matrix(0, 1, -1, 0);   // 90° clockwise
-    case 7: return matrix(0, -1, -1, 0);  // transversed
-    case 8: return matrix(0, -1, 1, 0);   // 90° counter-clockwise
-    default: return identity();
-    }
-}
 
 D2D1_COLOR_F colour(COLORREF c, float alpha = 1) {
     return D2D1_COLOR_F{GetRValue(c) / 255.0f, GetGValue(c) / 255.0f, GetBValue(c) / 255.0f, alpha};
 }
 
-const std::unordered_set<std::wstring>& supportedExtensions() {
-    // Asks WIC once; the caller's thread must have COM initialised.
-    static const std::unordered_set<std::wstring> extensions = [] {
+/// Everything WIC can decode, plus PDF when asked for and available. Asks WIC once; the
+/// caller's thread must have COM initialised.
+std::unordered_set<std::wstring> supportedExtensions(bool withPdf) {
+    static const std::unordered_set<std::wstring> images = [] {
         auto list = Decoder::supportedExtensions();
         return std::unordered_set<std::wstring>(list.begin(), list.end());
     }();
+    auto extensions = images;
+    if (withPdf && Pdf::available()) extensions.insert(L"pdf");
     return extensions;
 }
 
@@ -135,6 +137,7 @@ ComPtr<ID3D11Device> createDevice() {
 Viewer::Viewer(HINSTANCE instance) : instance_(instance), settings_(Settings::load()) {
     appliedSort_ = settings_.sortOrder;
     appliedDescending_ = settings_.descending;
+    appliedPdfLayout_ = pdfLayout();
     navigator_.wraps = settings_.loop;
 }
 
@@ -257,6 +260,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         std::unique_ptr<FolderResult> result(reinterpret_cast<FolderResult*>(lParam));
         if (result->selected.empty()) {
             navigator_.setFiles(std::move(result->files), L"");
+            frame_ = 0;
             showCurrent();
         } else if (const std::wstring* now = navigator_.current(); now && samePath(*now, result->selected)) {
             // Only if you haven't opened something else meanwhile.
@@ -279,7 +283,19 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
         if (wParam == kSlideshowTimer) {
             direction_ = 1;
-            if (navigator_.move(1)) showCurrent(); else setSlideshow(false);
+            if (showingPdf() && frame_ + 1 < current_->info.frameCount) {
+                ++frame_;
+                showCurrent();
+            } else if (navigator_.move(1)) {
+                frame_ = 0;
+                showCurrent();
+            } else {
+                setSlideshow(false);
+            }
+        } else if (wParam == kHoldTimer) {
+            KillTimer(hwnd_, kHoldTimer);
+            holdPending_ = false;
+            if (dragging_ && !didDrag_) beginMagnify();
         }
         return 0;
 
@@ -352,15 +368,39 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         dragging_ = true;
         didDrag_ = false;
         dragStart_ = dragLast_ = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        selecting_ = (wParam & MK_CONTROL) != 0;  // Ctrl+drag selects an area to crop, as in JPEGView
         // Drag pans a zoomed-in image; when it all fits, drag draws a rectangle to zoom into.
-        zoomBox_ = !(canPanX() || canPanY());
+        zoomBox_ = !selecting_ && !(canPanX() || canPanY());
+        if (!selecting_ && holdToZoomEnabled()) {
+            holdPending_ = true;
+            SetTimer(hwnd_, kHoldTimer, kHoldDelayMs, nullptr);
+        }
         return 0;
 
     case WM_MOUSEMOVE:
         if (dragging_) {
             POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-            if (std::abs(p.x - dragStart_.x) + std::abs(p.y - dragStart_.y) > 3) didDrag_ = true;
-            if (!zoomBox_) scrollBy(dragLast_.x - p.x, dragLast_.y - p.y);
+            if (magnifying_) {
+                followMagnifier(p);
+                render();
+                return 0;
+            }
+            const bool moved = std::abs(p.x - dragStart_.x) + std::abs(p.y - dragStart_.y) > 4;
+            if (holdPending_) {
+                if (!moved) return 0;  // still might be a hold
+                KillTimer(hwnd_, kHoldTimer);
+                holdPending_ = false;
+            }
+            if (moved) didDrag_ = true;
+            if (selecting_) {
+                const D2D1_POINT_2F a = toImage(dragStart_.x, dragStart_.y), b = toImage(p.x, p.y);
+                const float w = static_cast<float>(orientedWidth()), h = static_cast<float>(orientedHeight());
+                selection_ = D2D1_RECT_F{std::clamp(std::min(a.x, b.x), 0.0f, w), std::clamp(std::min(a.y, b.y), 0.0f, h),
+                                         std::clamp(std::max(a.x, b.x), 0.0f, w), std::clamp(std::max(a.y, b.y), 0.0f, h)};
+                hasSelection_ = didDrag_;
+            } else if (!zoomBox_) {
+                scrollBy(dragLast_.x - p.x, dragLast_.y - p.y);
+            }
             dragLast_ = p;
             render();
         }
@@ -369,11 +409,20 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONUP:
         if (dragging_) {
             ReleaseCapture();
+            KillTimer(hwnd_, kHoldTimer);
+            holdPending_ = false;
             dragging_ = false;
-            if (zoomBox_ && didDrag_ && std::abs(dragLast_.x - dragStart_.x) >= 8 && std::abs(dragLast_.y - dragStart_.y) >= 8) {
+            if (magnifying_) {
+                endMagnify();
+            } else if (zoomBox_ && didDrag_ && std::abs(dragLast_.x - dragStart_.x) >= 8 && std::abs(dragLast_.y - dragStart_.y) >= 8) {
                 zoomToRect(dragStart_.x, dragStart_.y, dragLast_.x, dragLast_.y);
+            } else if (selecting_ && (selection_.right - selection_.left < 4 || selection_.bottom - selection_.top < 4)) {
+                hasSelection_ = false;
+            } else if (!selecting_ && !didDrag_) {
+                hasSelection_ = false;  // a plain click clears the selection
             }
             zoomBox_ = false;
+            selecting_ = false;
             render();
         }
         return 0;
@@ -460,10 +509,19 @@ bool Viewer::onKey(WPARAM key, bool control, bool shift) {
     case 'F': case VK_F11: command(CmdFullScreen); break;
     case 'R': command(control ? CmdReload : CmdRotateRight); break;
     case 'L': command(CmdRotateLeft); break;
-    case 'S': command(CmdSlideshow); break;
+    case 'E': command(CmdAdjustments); break;
     case 'W': command(CmdReveal); break;
     case VK_F2: command(control ? CmdFilename : CmdInfo); break;
+    case VK_F4: command(CmdKeepAdjustments); break;
+    case VK_F5: command(CmdAutoCorrect); break;
     case VK_DELETE: command(CmdRecycle); break;
+    case VK_RETURN:
+        if (!hasSelection_) return false;
+        command(CmdCrop);
+        break;
+    case 'S':
+        command(control ? CmdSaveAs : CmdSlideshow);
+        break;
     case 'C':
         if (!control) return false;
         command(shift ? CmdCopyPath : CmdCopy);
@@ -475,7 +533,10 @@ bool Viewer::onKey(WPARAM key, bool control, bool shift) {
     case VK_ESCAPE:
         if (dragging_) {
             ReleaseCapture();
-            dragging_ = zoomBox_ = false;
+            dragging_ = zoomBox_ = selecting_ = false;
+            if (magnifying_) endMagnify();
+        } else if (hasSelection_) {
+            hasSelection_ = false;
         } else if (slideshow_) {
             setSlideshow(false);
         } else if (settings_.escapeCloses) {
@@ -522,9 +583,14 @@ void Viewer::updateTitle() {
     std::wstring title = fileName(*path) + L"  -  " + std::to_wstring(navigator_.index() + 1) + L" / " +
                          std::to_wstring(navigator_.count());
     if (current_ && samePath(current_->info.path, *path)) {
-        title += L"  -  " + std::to_wstring(current_->info.orientedWidth()) + L" x " +
-                 std::to_wstring(current_->info.orientedHeight()) + L"  -  " +
-                 std::to_wstring(static_cast<int>(std::lround(zoom_ * 100))) + L"%";
+        if (current_->info.isPdf) {
+            title += L"  -  " + current_->info.pdfPages;
+        } else {
+            title += L"  -  " + std::to_wstring(current_->info.orientedWidth()) + L" x " +
+                     std::to_wstring(current_->info.orientedHeight());
+        }
+        title += L"  -  " + std::to_wstring(static_cast<int>(std::lround(zoom_ * 100))) + L"%";
+        if (edited_ || !adjustments_.isIdentity()) title += L"  -  edited";
     } else if (!waiting_) {
         title += L"  -  can't open this file";
     }
@@ -535,7 +601,8 @@ void Viewer::updateTitle() {
 void Viewer::showContextMenu(int x, int y) {
     const bool hasImage = current_ != nullptr;
     const bool hasFile = navigator_.current() != nullptr;
-    const bool several = navigator_.count() > 1;
+    const bool several = navigator_.count() > 1 || (hasImage && current_->info.frameCount > 1 && current_->info.isPdf);
+    const bool pdf = showingPdf();
     auto add = [](HMENU menu, int id, const wchar_t* text, bool enabled = true, bool checked = false) {
         AppendMenuW(menu, MF_STRING | (enabled ? 0 : MF_GRAYED) | (checked ? MF_CHECKED : 0), id, text);
     };
@@ -547,9 +614,10 @@ void Viewer::showContextMenu(int x, int y) {
     // Laid out like JPEGView's menu.
     HMENU menu = CreatePopupMenu();
     add(menu, CmdOpen, L"Open image...\tCtrl+O");
+    add(menu, CmdSaveAs, L"Save processed image...\tCtrl+S", hasImage);
     add(menu, CmdReload, L"Reload image\tCtrl+R", hasFile);
     add(menu, CmdReveal, L"Open containing folder in Explorer\tW", hasFile);
-    add(menu, CmdWallpaper, L"Set as desktop wallpaper", hasFile);
+    add(menu, CmdWallpaper, L"Set as desktop wallpaper", hasFile && !pdf);
     separator(menu);
     add(menu, CmdCopy, L"Copy to clipboard\tCtrl+C", hasImage);
     add(menu, CmdCopyPath, L"Copy file path\tCtrl+Shift+C", hasFile);
@@ -561,8 +629,8 @@ void Viewer::showContextMenu(int x, int y) {
     add(menu, CmdPrevious, L"Previous image\tBackspace", several);
 
     HMENU navigation = CreatePopupMenu();
-    add(navigation, CmdFirst, L"First image\tHome", several);
-    add(navigation, CmdLast, L"Last image\tEnd", several);
+    add(navigation, CmdFirst, L"First image\tHome", navigator_.count() > 1);
+    add(navigation, CmdLast, L"Last image\tEnd", navigator_.count() > 1);
     separator(navigation);
     add(navigation, CmdLoop, L"Loop through folder", true, settings_.loop);
     submenu(menu, navigation, L"Navigation");
@@ -589,7 +657,22 @@ void Viewer::showContextMenu(int x, int y) {
     HMENU transform = CreatePopupMenu();
     add(transform, CmdRotateRight, L"Rotate right\tR", hasImage);
     add(transform, CmdRotateLeft, L"Rotate left\tL", hasImage);
+    separator(transform);
+    add(transform, CmdCrop, L"Crop to selection\tEnter", hasSelection_);
+    add(transform, CmdRevert, L"Revert all edits", edited_ || !adjustments_.isIdentity() || quarterTurns_ != 0);
     submenu(menu, transform, L"Transform image");
+
+    HMENU lossless = CreatePopupMenu();
+    const bool canLossless = hasImage && !pdf && !edited_;
+    add(lossless, CmdLosslessBase + 0, L"Rotate 90 degrees clockwise", canLossless);
+    add(lossless, CmdLosslessBase + 1, L"Rotate 90 degrees counter-clockwise", canLossless);
+    add(lossless, CmdLosslessBase + 2, L"Rotate 180 degrees", canLossless);
+    add(lossless, CmdLosslessBase + 3, L"Mirror horizontally", canLossless);
+    add(lossless, CmdLosslessBase + 4, L"Mirror vertically", canLossless);
+    submenu(menu, lossless, L"Lossless JPEG transformations");
+    add(menu, CmdAutoCorrect, L"Auto correction\tF5", hasImage, adjustments_.autoCorrect);
+    add(menu, CmdAdjustments, L"Adjustments...\tE", hasImage);
+    add(menu, CmdKeepAdjustments, L"Keep parameters\tF4", true, settings_.keepAdjustments);
     separator(menu);
 
     HMENU zoom = CreatePopupMenu();
@@ -601,6 +684,14 @@ void Viewer::showContextMenu(int x, int y) {
     HMENU autoZoom = CreatePopupMenu();
     add(autoZoom, CmdEnlarge, L"Enlarge small images to fit", true, settings_.enlargeSmall);
     submenu(menu, autoZoom, L"Auto zoom mode");
+    if (Pdf::available()) {
+        HMENU pages = CreatePopupMenu();
+        const wchar_t* layouts[] = {L"Automatic", L"Single page", L"Two pages", L"Two pages with cover"};
+        for (int i = 0; i < 4; ++i) add(pages, CmdPdfLayoutBase + i, layouts[i], true, settings_.pdfLayout == i);
+        separator(pages);
+        add(pages, CmdRightToLeft, L"Right to left", true, settings_.pdfRightToLeft);
+        submenu(menu, pages, L"PDF pages");
+    }
     add(menu, CmdFullScreen, L"Full screen\tF11", true, fullScreen_);
     separator(menu);
     add(menu, CmdRecycle, L"Move to Recycle Bin\tDel", hasFile);
@@ -631,8 +722,19 @@ void Viewer::command(int id) {
         applySettings();
         return;
     }
+    if (id >= CmdLosslessBase && id < CmdLosslessBase + 5) {
+        losslessTransform(id - CmdLosslessBase);
+        return;
+    }
+    if (id >= CmdPdfLayoutBase && id < CmdPdfLayoutBase + 4) {
+        settings_.pdfLayout = id - CmdPdfLayoutBase;
+        settings_.save();
+        applySettings();
+        return;
+    }
     switch (id) {
     case CmdOpen: openDialog(); break;
+    case CmdSaveAs: saveAs(); break;
     case CmdReload: reload(); break;
     case CmdReveal: revealInExplorer(); break;
     case CmdWallpaper: setAsWallpaper(); break;
@@ -651,11 +753,13 @@ void Viewer::command(int id) {
     case CmdFirst:
         direction_ = 1;
         navigator_.first();
+        frame_ = 0;
         showCurrent();
         break;
     case CmdLast:
         direction_ = -1;
         navigator_.last();
+        frame_ = 0;
         showCurrent();
         break;
     case CmdLoop:
@@ -690,9 +794,32 @@ void Viewer::command(int id) {
     case CmdRotateLeft:
         if (!current_) break;
         quarterTurns_ = (quarterTurns_ + (id == CmdRotateRight ? 1 : 3)) % 4;
+        hasSelection_ = false;
         centerX_ = orientedWidth() / 2;
         centerY_ = orientedHeight() / 2;
         if (zoomMode_ != ZoomMode::Custom) applyZoomMode(); else clampCenter();
+        updateTitle();
+        break;
+    case CmdCrop: cropToSelection(); break;
+    case CmdRevert: revertEdits(); break;
+    case CmdAutoCorrect: {
+        Adjustments changed = adjustments_;
+        changed.autoCorrect = !changed.autoCorrect;
+        setAdjustments(changed);
+        AdjustmentsDialog::update(adjustments_);
+        break;
+    }
+    case CmdAdjustments:
+        if (current_) AdjustmentsDialog::show(hwnd_, adjustments_, [this](const Adjustments& a) { setAdjustments(a); });
+        break;
+    case CmdKeepAdjustments:
+        settings_.keepAdjustments = !settings_.keepAdjustments;
+        settings_.save();
+        break;
+    case CmdRightToLeft:
+        settings_.pdfRightToLeft = !settings_.pdfRightToLeft;
+        settings_.save();
+        applySettings();
         break;
     case CmdFullScreen: setFullScreen(!fullScreen_); break;
     case CmdRecycle: moveToRecycleBin(); break;
@@ -715,9 +842,20 @@ void Viewer::applySettings() {
         appliedDescending_ = settings_.descending;
         navigator_.sort(settings_.sortOrder, settings_.descending);
     }
-    if (slideshow_) {
-        SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
+    if (pdfLayout() != appliedPdfLayout_) {
+        appliedPdfLayout_ = pdfLayout();
+        // Screens count spreads, so find the one that holds the page you were on.
+        if (showingPdf()) {
+            const int page = current_->info.pdfFirstPage;
+            const auto spreads = Pdf::spreads(current_->info.path, pdfLayout());
+            frame_ = 0;
+            for (size_t i = 0; i < spreads.size(); ++i) {
+                if (std::find(spreads[i].begin(), spreads[i].end(), page) != spreads[i].end()) frame_ = static_cast<UINT>(i);
+            }
+            showCurrent();
+        }
     }
+    if (slideshow_) SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
     if (pipeline_) pipeline_->setCostLimit(cacheLimit());
     if (zoomMode_ == ZoomMode::Fit) applyZoomMode();
     updateTitle();
@@ -726,7 +864,7 @@ void Viewer::applySettings() {
 }
 
 void Viewer::setSlideshow(bool on) {
-    if (on && navigator_.count() < 2) return;
+    if (on && navigator_.count() < 2 && !showingPdf()) return;
     slideshow_ = on;
     if (on) SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
     else KillTimer(hwnd_, kSlideshowTimer);
@@ -736,7 +874,9 @@ void Viewer::openDialog() {
     wchar_t buffer[32768] = L"";
     OPENFILENAMEW ofn{sizeof(ofn)};
     ofn.hwndOwner = hwnd_;
-    ofn.lpstrFilter = L"Images\0*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.jxr;*.ico;*.dng;*.cr2;*.cr3;*.nef;*.arw;*.orf;*.rw2\0All files\0*.*\0";
+    ofn.lpstrFilter = Pdf::available()
+        ? L"Images and PDFs\0*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.jxr;*.ico;*.dng;*.cr2;*.cr3;*.nef;*.arw;*.orf;*.rw2;*.pdf\0All files\0*.*\0"
+        : L"Images\0*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.jxr;*.ico;*.dng;*.cr2;*.cr3;*.nef;*.arw;*.orf;*.rw2\0All files\0*.*\0";
     ofn.lpstrFile = buffer;
     ofn.nMaxFile = static_cast<DWORD>(std::size(buffer));
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
@@ -784,37 +924,28 @@ void Viewer::copyPath() {
 }
 
 void Viewer::copyImage() {
-    if (!current_ || !OpenClipboard(hwnd_)) return;
-    // Upright, as on screen: apply EXIF and your rotation to the pixels.
-    const D2D1_MATRIX_3X2_F m = orientation();
-    const int a = static_cast<int>(std::lround(m._11)), b = static_cast<int>(std::lround(m._12));
-    const int c = static_cast<int>(std::lround(m._21)), d = static_cast<int>(std::lround(m._22));
-    const Decoded& source = *current_;
-    const int w = static_cast<int>(source.width), h = static_cast<int>(source.height);
-    const int ow = a == 0 ? h : w, oh = a == 0 ? w : h;
-    const size_t rowBytes = size_t(ow) * 4;
-
+    if (!current_) return;
+    // Upright, as on screen, with adjustments applied.
+    auto upright = Editing::orient(*current_, orientation());
+    if (!upright) return;
+    if (!adjustments_.isIdentity()) {
+        if (auto adjusted = applyAdjustmentsForSaving(*upright)) upright = adjusted;
+    }
+    if (!OpenClipboard(hwnd_)) return;
     EmptyClipboard();
-    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + rowBytes * oh)) {
+    const size_t rowBytes = size_t(upright->width) * 4;
+    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + rowBytes * upright->height)) {
         auto* header = static_cast<BITMAPINFOHEADER*>(GlobalLock(memory));
         *header = BITMAPINFOHEADER{};
         header->biSize = sizeof(BITMAPINFOHEADER);
-        header->biWidth = ow;
-        header->biHeight = oh;  // bottom-up, which every program reading the clipboard handles
+        header->biWidth = static_cast<LONG>(upright->width);
+        header->biHeight = static_cast<LONG>(upright->height);  // bottom-up, which every program handles
         header->biPlanes = 1;
         header->biBitCount = 32;
         header->biCompression = BI_RGB;
         auto* bits = reinterpret_cast<uint8_t*>(header + 1);
-        for (int dy = 0; dy < oh; ++dy) {
-            uint8_t* row = bits + size_t(oh - 1 - dy) * rowBytes;
-            const int v = 2 * dy + 1 - oh;
-            for (int dx = 0; dx < ow; ++dx) {
-                // The inverse of an orientation (quarter turns and flips) is its transpose.
-                const int u = 2 * dx + 1 - ow;
-                const int sx = (u * a + v * b + w - 1) / 2;
-                const int sy = (u * c + v * d + h - 1) / 2;
-                std::memcpy(row + size_t(dx) * 4, source.pixels.get() + size_t(sy) * source.stride + size_t(sx) * 4, 4);
-            }
+        for (UINT y = 0; y < upright->height; ++y) {
+            std::memcpy(bits + size_t(upright->height - 1 - y) * rowBytes, upright->pixels.get() + size_t(y) * upright->stride, rowBytes);
         }
         GlobalUnlock(memory);
         SetClipboardData(CF_DIB, memory);
@@ -838,13 +969,201 @@ void Viewer::moveToRecycleBin() {
     pipeline_->invalidate(file);
     forgetGpu(file);
     navigator_.removeCurrent();
+    frame_ = 0;
     showCurrent();
+}
+
+// MARK: - Editing
+
+void Viewer::setAdjustments(const Adjustments& adjustments) {
+    adjustments_ = adjustments;
+    updateTitle();
+    render();
+}
+
+std::shared_ptr<Decoded> Viewer::fullResolutionUpright() {
+    // A cropped picture is already upright; only a rotation since then still needs applying.
+    if (edited_) return quarterTurns_ ? Editing::orient(*edited_, orientation()) : edited_;
+    if (!current_) return nullptr;
+    Decoder decoder;
+    auto full = decoder.decode(current_->info.path, current_->frame, DecodeRequest{}, currentKey_.layout);
+    return full ? Editing::orient(*full, orientation()) : nullptr;
+}
+
+std::shared_ptr<Decoded> Viewer::applyAdjustmentsForSaving(const Decoded& upright) {
+    if (!context_ || std::max(upright.width, upright.height) > maxBitmapSize_) return nullptr;
+    D2D1_BITMAP_PROPERTIES1 sourceProperties{};
+    sourceProperties.pixelFormat = {DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED};
+    sourceProperties.dpiX = sourceProperties.dpiY = 96;
+    D2D1_BITMAP_PROPERTIES1 targetProperties = sourceProperties;
+    targetProperties.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
+    D2D1_BITMAP_PROPERTIES1 readProperties = sourceProperties;
+    readProperties.bitmapOptions = static_cast<D2D1_BITMAP_OPTIONS>(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW);
+    const D2D1_SIZE_U size{upright.width, upright.height};
+    ComPtr<ID2D1Bitmap1> source, target, readback;
+    if (FAILED(context_->CreateBitmap(size, upright.pixels.get(), upright.stride, &sourceProperties, source.put())) ||
+        FAILED(context_->CreateBitmap(size, nullptr, 0, &targetProperties, target.put())) ||
+        FAILED(context_->CreateBitmap(size, nullptr, 0, &readProperties, readback.put()))) {
+        return nullptr;
+    }
+    // Draw through the same effects as the screen, into an off-screen bitmap of full size.
+    ComPtr<ID2D1Image> output;
+    if (!applyEffects(source.get(), output)) return nullptr;
+    ComPtr<ID2D1Image> screen;
+    context_->GetTarget(screen.put());
+    context_->SetTarget(target.get());
+    context_->BeginDraw();
+    const D2D1_MATRIX_3X2_F plain = identity();
+    context_->SetTransform(&plain);
+    context_->DrawImage(output.get(), nullptr, nullptr, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_COMPOSITE_MODE_SOURCE_COPY);
+    HRESULT hr = context_->EndDraw();
+    context_->SetTarget(screen.get());
+    if (FAILED(hr) || FAILED(readback->CopyFromBitmap(nullptr, target.get(), nullptr))) return nullptr;
+
+    D2D1_MAPPED_RECT mapped{};
+    if (FAILED(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return nullptr;
+    auto result = std::make_shared<Decoded>();
+    result->info = upright.info;
+    result->frame = upright.frame;
+    result->width = upright.width;
+    result->height = upright.height;
+    result->stride = upright.width * 4;
+    result->pixels.reset(new (std::nothrow) uint8_t[result->bytes()]);
+    if (result->pixels) {
+        for (UINT y = 0; y < upright.height; ++y) {
+            std::memcpy(result->pixels.get() + size_t(y) * result->stride, mapped.bits + size_t(y) * mapped.pitch, result->stride);
+        }
+    }
+    readback->Unmap();
+    return result->pixels ? result : nullptr;
+}
+
+void Viewer::cropToSelection() {
+    if (!hasSelection_ || !current_) return;
+    SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    // Crops work on full-resolution pixels, whatever is on screen.
+    auto upright = fullResolutionUpright();
+    if (!upright) return;
+    const double scale = double(upright->width) / orientedWidth();
+    RECT area{static_cast<LONG>(std::floor(selection_.left * scale)), static_cast<LONG>(std::floor(selection_.top * scale)),
+              static_cast<LONG>(std::ceil(selection_.right * scale)), static_cast<LONG>(std::ceil(selection_.bottom * scale))};
+    auto cropped = Editing::crop(*upright, area);
+    if (!cropped) return;
+    edited_ = cropped;
+    hasSelection_ = false;
+    DecodeKey key = keyFor(current_->info.path, current_->frame, DecodeRequest{0, 0, kEditedMarker});
+    forgetGpu(current_->info.path);
+    show(key, edited_, true);
+}
+
+void Viewer::revertEdits() {
+    edited_.reset();
+    hasSelection_ = false;
+    quarterTurns_ = 0;
+    setAdjustments(Adjustments{});
+    AdjustmentsDialog::update(adjustments_);
+    showCurrent();
+}
+
+void Viewer::saveAs() {
+    const std::wstring* path = navigator_.current();
+    if (!path || !current_) return;
+    const std::wstring source = *path;
+    const bool pdf = current_->info.isPdf;
+
+    std::wstring name = fileName(source);
+    const size_t dot = name.find_last_of(L'.');
+    if (dot != std::wstring::npos) name.resize(dot);
+    if (pdf) name += L" - page " + std::to_wstring(current_->info.pdfFirstPage);
+    wchar_t file[MAX_PATH * 4] = L"";
+    wcsncpy_s(file, name.c_str(), _TRUNCATE);
+
+    const std::wstring extension = Navigator::extensionOf(source);
+    const DWORD filter = extension == L"png" ? 2 : (extension == L"tif" || extension == L"tiff") ? 3 : extension == L"bmp" ? 4 : 1;
+    const wchar_t* extensions[] = {L"jpg", L"png", L"tif", L"bmp"};
+    const GUID containers[] = {GUID_ContainerFormatJpeg, GUID_ContainerFormatPng, GUID_ContainerFormatTiff, GUID_ContainerFormatBmp};
+    const std::wstring folder = Navigator::folderOf(source);
+
+    OPENFILENAMEW ofn{sizeof(ofn)};
+    ofn.hwndOwner = hwnd_;
+    ofn.lpstrFilter = L"JPEG\0*.jpg;*.jpeg\0PNG\0*.png\0TIFF\0*.tif;*.tiff\0BMP\0*.bmp\0";
+    ofn.nFilterIndex = filter;
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = static_cast<DWORD>(std::size(file));
+    ofn.lpstrInitialDir = folder.c_str();
+    ofn.lpstrDefExt = extensions[filter - 1];
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+    if (!GetSaveFileNameW(&ofn)) return;
+    const std::wstring target = file;
+    const int format = static_cast<int>(std::clamp<DWORD>(ofn.nFilterIndex, 1, 4)) - 1;
+
+    SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    auto upright = fullResolutionUpright();
+    if (upright && !adjustments_.isIdentity()) {
+        auto adjusted = applyAdjustmentsForSaving(*upright);
+        if (!adjusted) {
+            MessageBoxW(hwnd_, L"This image is too large to save with adjustments applied.", L"Glance", MB_OK | MB_ICONWARNING);
+            return;
+        }
+        upright = adjusted;
+    }
+    if (!upright || !Editing::save(*upright, target, containers[format], settings_.saveQuality, pdf ? std::wstring() : source)) {
+        MessageBoxW(hwnd_, L"The image couldn't be saved there.", L"Glance", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (samePath(target, source)) {
+        // The edits are in the file now; show it fresh.
+        edited_.reset();
+        setAdjustments(Adjustments{});
+        AdjustmentsDialog::update(adjustments_);
+        reload();
+    } else if (samePath(Navigator::folderOf(target), folder)) {
+        scanFolder(folder, source);  // so the new file is in the folder listing
+    }
+}
+
+void Viewer::losslessTransform(int which) {
+    if (!current_ || current_->info.isPdf || edited_) return;
+    const D2D1_MATRIX_3X2_F transforms[] = {
+        matrix(0, 1, -1, 0),   // 90° clockwise
+        matrix(0, -1, 1, 0),   // 90° counter-clockwise
+        matrix(-1, 0, 0, -1),  // 180°
+        matrix(-1, 0, 0, 1),   // mirror horizontally
+        matrix(1, 0, 0, -1),   // mirror vertically
+    };
+    const std::wstring file = current_->info.path;
+    const int orientation = Editing::composeOrientation(current_->info.orientation, transforms[which]);
+    if (!Editing::rewriteOrientation(file, orientation)) {
+        MessageBoxW(hwnd_,
+                    L"This file has no orientation tag that can be changed in place, so it can't be turned "
+                    L"losslessly.\n\nUse Rotate (R / L) and then Save processed image instead.",
+                    L"Glance", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    quarterTurns_ = 0;
+    reload();
 }
 
 // MARK: - Opening and navigation
 
+int Viewer::pdfLayout() const {
+    return Pdf::packLayout(settings_.pdfLayout, settings_.pdfRightToLeft);
+}
+
+DecodeKey Viewer::keyFor(const std::wstring& path, UINT frame, const DecodeRequest& request) const {
+    DecodeKey key{path, frame, request};
+    if (Pdf::isPdf(path)) key.layout = pdfLayout();
+    return key;
+}
+
+bool Viewer::showingPdf() const {
+    const std::wstring* path = navigator_.current();
+    return current_ && current_->info.isPdf && path && samePath(current_->info.path, *path);
+}
+
 void Viewer::open(const std::vector<std::wstring>& paths) {
     if (paths.empty()) return;
+    frame_ = 0;
     DWORD attributes = GetFileAttributesW(paths[0].c_str());
     if (paths.size() == 1 && attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
         scanFolder(paths[0], L"");
@@ -866,9 +1185,11 @@ void Viewer::scanFolder(const std::wstring& folder, const std::wstring& selected
     HWND hwnd = hwnd_;
     const SortOrder order = settings_.sortOrder;
     const bool descending = settings_.descending;
-    std::thread([hwnd, folder, selected, order, descending] {
+    // Opening a PDF directly means you're reading PDFs, so its neighbours count too.
+    const bool withPdf = settings_.includePdfs || Pdf::isPdf(selected);
+    std::thread([hwnd, folder, selected, order, descending, withPdf] {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        auto files = Navigator::scan(folder, supportedExtensions());
+        auto files = Navigator::scan(folder, supportedExtensions(withPdf));
         Navigator::sortEntries(files, order, descending);
         CoUninitialize();
         PostMessageW(hwnd, WM_APP_FOLDER, 0, reinterpret_cast<LPARAM>(new FolderResult{selected, std::move(files)}));
@@ -885,16 +1206,37 @@ DecodeRequest Viewer::openingRequest() const {
 
 void Viewer::go(int delta) {
     direction_ = delta < 0 ? -1 : 1;
+    // In a PDF, pages turn before moving on to the next file.
+    if (showingPdf()) {
+        const long long target = static_cast<long long>(frame_) + delta;
+        if (target >= 0 && target < static_cast<long long>(current_->info.frameCount)) {
+            carryZoomForPageTurn(delta > 0);
+            frame_ = static_cast<UINT>(target);
+            showCurrent();
+            return;
+        }
+    }
+    goToFile(delta);
+}
+
+void Viewer::goToFile(int delta) {
     if (!navigator_.move(delta)) {
         MessageBeep(MB_OK);
         return;
     }
+    frame_ = 0;
     showCurrent();
 }
 
 void Viewer::showCurrent() {
     const std::wstring* path = navigator_.current();
     if (waiting_) pipeline_->drop(wantedKey_);
+    edited_.reset();
+    hasSelection_ = false;
+    if (!settings_.keepAdjustments && !adjustments_.isIdentity()) {
+        adjustments_ = Adjustments{};
+        AdjustmentsDialog::update(adjustments_);
+    }
     if (!path) {
         waiting_ = false;
         current_.reset();
@@ -903,7 +1245,7 @@ void Viewer::showCurrent() {
         render();
         return;
     }
-    DecodeKey key{*path, 0, openingRequest()};
+    DecodeKey key = keyFor(*path, frame_, openingRequest());
     wantedKey_ = key;
     levelKey_ = {};
     if (auto hit = pipeline_->cached(key)) {
@@ -927,7 +1269,17 @@ void Viewer::show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, b
         quarterTurns_ = 0;
         zoomMode_ = ZoomMode::Fit;
         requestedLevel_ = 0;
+        magnifying_ = false;
         applyZoomMode();
+        if (carryZoom_) {
+            // Turning a page while zoomed in: same zoom, opened at the corner where reading continues.
+            carryZoom_ = false;
+            zoom_ = carriedZoom_;
+            zoomMode_ = ZoomMode::Custom;
+            centerX_ = carryRight_ ? orientedWidth() : 0;
+            centerY_ = carryBottom_ ? orientedHeight() : 0;
+            clampCenter();
+        }
     } else {
         clampCenter();
     }
@@ -958,7 +1310,7 @@ void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
         return;
     }
     if (!result->image) return;
-    if (current_ && result->key == levelKey_ && result->image->longSide() > current_->longSide()) {
+    if (current_ && !edited_ && result->key == levelKey_ && result->image->longSide() > current_->longSide()) {
         show(result->key, result->image, false);  // sharper pixels for the zoomed view
         return;
     }
@@ -976,10 +1328,17 @@ void Viewer::prefetchNeighbors() {
     for (int i = 1; i <= settings_.prefetchCount; ++i) offsets.push_back(i * direction_);
     if (!offsets.empty()) offsets.insert(offsets.begin() + std::min<size_t>(2, offsets.size()), -direction_);
     const std::wstring* now = navigator_.current();
+    const bool pdf = showingPdf();
     for (int offset : offsets) {
-        const std::wstring* path = navigator_.at(offset);
-        if (!path || (now && samePath(*path, *now))) continue;
-        DecodeKey key{*path, 0, request};
+        DecodeKey key;
+        const long long page = static_cast<long long>(frame_) + offset;
+        if (pdf && page >= 0 && page < static_cast<long long>(current_->info.frameCount)) {
+            key = keyFor(*now, static_cast<UINT>(page), request);  // the PDF's other pages
+        } else {
+            const std::wstring* path = navigator_.at(offset > 0 ? (pdf ? 1 : offset) : (pdf ? -1 : offset));
+            if (!path || (now && samePath(*path, *now))) continue;
+            key = keyFor(*path, 0, request);
+        }
         if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
     }
     prefetchKeys_ = keys;
@@ -987,7 +1346,7 @@ void Viewer::prefetchNeighbors() {
 }
 
 void Viewer::requestResolutionIfNeeded() {
-    if (!current_) return;
+    if (!current_ || edited_) return;
     const UINT full = current_->info.longSide();
     const UINT have = current_->longSide();
     if (have >= full) return;
@@ -996,8 +1355,65 @@ void Viewer::requestResolutionIfNeeded() {
     UINT level = Decoder::halvingLevel(full, static_cast<UINT>(std::ceil(needed)));
     if (level <= requestedLevel_ || level <= have) return;
     requestedLevel_ = level;
-    levelKey_ = DecodeKey{current_->info.path, current_->frame, DecodeRequest{0, 0, level}};
+    levelKey_ = keyFor(current_->info.path, current_->frame, DecodeRequest{0, 0, level});
     pipeline_->load(levelKey_);
+}
+
+// MARK: - Hold to zoom
+
+bool Viewer::holdToZoomEnabled() const {
+    return current_ && (settings_.holdToZoom == 2 || (settings_.holdToZoom == 1 && current_->info.isPdf));
+}
+
+void Viewer::beginMagnify() {
+    if (!current_ || magnifying_) return;
+    magnifying_ = true;
+    zoomBox_ = false;
+    savedZoom_ = zoom_;
+    savedCenterX_ = centerX_;
+    savedCenterY_ = centerY_;
+    savedMode_ = zoomMode_;
+    zoom_ = std::min(zoom_ * settings_.holdZoomPercent / 100.0, 32.0);
+    zoomMode_ = ZoomMode::Custom;
+    POINT mouse;
+    GetCursorPos(&mouse);
+    ScreenToClient(hwnd_, &mouse);
+    followMagnifier(mouse);
+    updateTitle();
+    render();
+    // Sharp pixels for the magnified view replace the stretched ones when they're ready.
+    requestResolutionIfNeeded();
+}
+
+void Viewer::followMagnifier(POINT point) {
+    // Moving across the window moves across the whole page: the point that was under the
+    // mouse before magnifying stays under it.
+    double width, height;
+    viewSize(width, height);
+    const double imageX = savedCenterX_ + (point.x - width / 2) / savedZoom_;
+    const double imageY = savedCenterY_ + (point.y - height / 2) / savedZoom_;
+    centerX_ = imageX - (point.x - width / 2) / zoom_;
+    centerY_ = imageY - (point.y - height / 2) / zoom_;
+    clampCenter();
+}
+
+void Viewer::endMagnify() {
+    magnifying_ = false;
+    zoom_ = savedZoom_;
+    centerX_ = savedCenterX_;
+    centerY_ = savedCenterY_;
+    zoomMode_ = savedMode_;
+    if (zoomMode_ != ZoomMode::Custom) applyZoomMode(); else clampCenter();
+    updateTitle();
+}
+
+void Viewer::carryZoomForPageTurn(bool forward) {
+    if (zoomMode_ == ZoomMode::Fit || !(canPanX() || canPanY())) return;
+    carryZoom_ = true;
+    carriedZoom_ = zoom_;
+    // Forward opens at the top-left (top-right for right to left); back opens where that page ends.
+    carryRight_ = forward == settings_.pdfRightToLeft;
+    carryBottom_ = !forward;
 }
 
 // MARK: - Geometry
@@ -1010,8 +1426,8 @@ void Viewer::viewSize(double& width, double& height) const {
 }
 
 D2D1_MATRIX_3X2_F Viewer::orientation() const {
-    D2D1_MATRIX_3X2_F m = exifMatrix(current_ ? current_->info.orientation : 1);
-    for (int i = 0; i < quarterTurns_; ++i) m = multiply(m, matrix(0, 1, -1, 0));
+    D2D1_MATRIX_3X2_F m = Editing::exifMatrix(current_ ? current_->info.orientation : 1);
+    for (int i = 0; i < quarterTurns_; ++i) m = Editing::multiply(m, matrix(0, 1, -1, 0));
     return m;
 }
 
@@ -1065,6 +1481,18 @@ bool Viewer::canPanY() const {
     return current_ && orientedHeight() * zoom_ > height + 0.5;
 }
 
+D2D1_POINT_2F Viewer::toImage(double x, double y) const {
+    double width, height;
+    viewSize(width, height);
+    return D2D1_POINT_2F{static_cast<float>(centerX_ + (x - width / 2) / zoom_), static_cast<float>(centerY_ + (y - height / 2) / zoom_)};
+}
+
+D2D1_POINT_2F Viewer::toView(double x, double y) const {
+    double width, height;
+    viewSize(width, height);
+    return D2D1_POINT_2F{static_cast<float>(width / 2 + (x - centerX_) * zoom_), static_cast<float>(height / 2 + (y - centerY_) * zoom_)};
+}
+
 void Viewer::setZoom(double zoom, double anchorX, double anchorY) {
     if (!current_) return;
     double width, height;
@@ -1101,14 +1529,12 @@ void Viewer::zoomBy(double factor) {
 void Viewer::zoomToRect(double x0, double y0, double x1, double y1) {
     double width, height;
     viewSize(width, height);
-    auto toImageX = [&](double x) { return centerX_ + (x - width / 2) / zoom_; };
-    auto toImageY = [&](double y) { return centerY_ + (y - height / 2) / zoom_; };
-    const double left = toImageX(std::min(x0, x1)), right = toImageX(std::max(x0, x1));
-    const double top = toImageY(std::min(y0, y1)), bottom = toImageY(std::max(y0, y1));
-    zoom_ = std::clamp(std::min(width / (right - left), height / (bottom - top)), 0.01, 32.0);
+    const D2D1_POINT_2F a = toImage(std::min(x0, x1), std::min(y0, y1));
+    const D2D1_POINT_2F b = toImage(std::max(x0, x1), std::max(y0, y1));
+    zoom_ = std::clamp(std::min(width / (b.x - a.x), height / (b.y - a.y)), 0.01, 32.0);
     zoomMode_ = ZoomMode::Custom;
-    centerX_ = (left + right) / 2;
-    centerY_ = (top + bottom) / 2;
+    centerX_ = (a.x + b.x) / 2;
+    centerY_ = (a.y + b.y) / 2;
     clampCenter();
     updateTitle();
     requestResolutionIfNeeded();
@@ -1136,9 +1562,9 @@ D2D1_MATRIX_3X2_F Viewer::imageTransform() const {
     cy += std::round(top) - top;
 
     D2D1_MATRIX_3X2_F m = matrix(1, 0, 0, 1, float(-bitmapW / 2), float(-bitmapH / 2));
-    m = multiply(m, matrix(float(scale), 0, 0, float(scale)));
-    m = multiply(m, orientation());
-    return multiply(m, matrix(1, 0, 0, 1, float(cx), float(cy)));
+    m = Editing::multiply(m, matrix(float(scale), 0, 0, float(scale)));
+    m = Editing::multiply(m, orientation());
+    return Editing::multiply(m, matrix(1, 0, 0, 1, float(cx), float(cy)));
 }
 
 // MARK: - Graphics
@@ -1178,8 +1604,10 @@ bool Viewer::initGraphics() {
     createTarget();
     const D2D1_COLOR_F white{1, 1, 1, 0.9f};
     const D2D1_COLOR_F shade{0, 0, 0, 0.6f};
+    const D2D1_COLOR_F dark{0, 0, 0, 0.9f};
     context_->CreateSolidColorBrush(&white, nullptr, brush_.put());
     context_->CreateSolidColorBrush(&shade, nullptr, overlayBrush_.put());
+    context_->CreateSolidColorBrush(&dark, nullptr, darkBrush_.put());
     maxBitmapSize_ = context_->GetMaximumBitmapSize();
     trace("Direct2D ready");
     return true;
@@ -1192,6 +1620,10 @@ void Viewer::releaseGraphics() {
     shown_.reset();
     brush_.reset();
     overlayBrush_.reset();
+    darkBrush_.reset();
+    colorEffect_.reset();
+    gammaEffect_.reset();
+    sharpenEffect_.reset();
     target_.reset();
     if (context_) context_->SetTarget(nullptr);
     swapChain_.reset();
@@ -1276,28 +1708,95 @@ void Viewer::forgetGpu(const std::wstring& path) {
     }
 }
 
+bool Viewer::applyEffects(ID2D1Image* input, ComPtr<ID2D1Image>& output) {
+    if (adjustments_.isIdentity() || !context_) return false;
+    ComPtr<ID2D1Image> image(input);
+    if (adjustments_.needsColorMatrix()) {
+        if (!colorEffect_) context_->CreateEffect(CLSID_D2D1ColorMatrix, colorEffect_.put());
+        if (colorEffect_) {
+            // Auto correction measures each picture once.
+            const std::wstring identity = current_ ? current_->info.path + L"#" + std::to_wstring(current_->frame) : L"";
+            if (adjustments_.autoCorrect && current_ && levelsFor_ != identity) {
+                levels_ = measureLevels(*current_);
+                levelsFor_ = identity;
+            }
+            colorEffect_->SetInput(0, image.get());
+            colorEffect_->SetValue(D2D1_COLORMATRIX_PROP_COLOR_MATRIX, colorMatrix(adjustments_, levels_));
+            colorEffect_->SetValue(D2D1_COLORMATRIX_PROP_CLAMP_OUTPUT, TRUE);
+            colorEffect_->GetOutput(image.put());
+        }
+    }
+    if (adjustments_.gamma != 0) {
+        if (!gammaEffect_) context_->CreateEffect(CLSID_D2D1GammaTransfer, gammaEffect_.put());
+        if (gammaEffect_) {
+            const float exponent = std::pow(2.0f, -adjustments_.gamma);
+            gammaEffect_->SetInput(0, image.get());
+            gammaEffect_->SetValue(D2D1_GAMMATRANSFER_PROP_RED_EXPONENT, exponent);
+            gammaEffect_->SetValue(D2D1_GAMMATRANSFER_PROP_GREEN_EXPONENT, exponent);
+            gammaEffect_->SetValue(D2D1_GAMMATRANSFER_PROP_BLUE_EXPONENT, exponent);
+            gammaEffect_->SetValue(D2D1_GAMMATRANSFER_PROP_ALPHA_DISABLE, TRUE);
+            gammaEffect_->GetOutput(image.put());
+        }
+    }
+#ifdef GLANCE_HAS_SHARPEN
+    if (adjustments_.sharpen > 0) {
+        if (!sharpenEffect_) context_->CreateEffect(CLSID_D2D1Sharpen, sharpenEffect_.put());
+        if (sharpenEffect_) {
+            sharpenEffect_->SetInput(0, image.get());
+            sharpenEffect_->SetValue(D2D1_SHARPEN_PROP_SHARPNESS, adjustments_.sharpen * 5.0f);
+            sharpenEffect_->SetValue(D2D1_SHARPEN_PROP_THRESHOLD, 0.0f);
+            sharpenEffect_->GetOutput(image.put());
+        }
+    }
+#endif
+    output = image;
+    return true;
+}
+
+void Viewer::drawImage(D2D1_INTERPOLATION_MODE mode) {
+    for (const auto& tile : shown_->tiles) {
+        ComPtr<ID2D1Image> adjusted;
+        if (applyEffects(tile.bitmap.get(), adjusted)) {
+            const D2D1_POINT_2F offset{tile.rect.left, tile.rect.top};
+            context_->DrawImage(adjusted.get(), &offset, nullptr, mode, D2D1_COMPOSITE_MODE_SOURCE_OVER);
+            // The effects are reused for the next tile, so this one must be drawn first.
+            if (shown_->tiles.size() > 1) context_->Flush();
+        } else {
+            context_->DrawBitmap(tile.bitmap.get(), &tile.rect, 1.0f, mode, nullptr, nullptr);
+        }
+    }
+}
+
 std::wstring Viewer::overlayText() const {
     const std::wstring* path = navigator_.current();
     if (!path) return {};
     const std::wstring position = std::to_wstring(navigator_.index() + 1) + L" / " + std::to_wstring(navigator_.count());
-    if (!settings_.showInfo) return fileName(*path) + L"    " + position;
+    const bool ready = current_ && samePath(current_->info.path, *path);
+    if (!settings_.showInfo) {
+        return fileName(*path) + L"    " + position + (ready && current_->info.isPdf ? L"    " + current_->info.pdfPages : L"");
+    }
 
     std::wstring text = fileName(*path) + L"\n" + position;
-    if (!current_ || !samePath(current_->info.path, *path)) return text;
+    if (!ready) return text;
     const ImageInfo& info = current_->info;
     wchar_t line[200];
-    swprintf(line, 200, L"\n%u × %u px  (%.1f MP)", info.orientedWidth(), info.orientedHeight(),
-             double(info.width) * info.height / 1e6);
-    text += line;
     wchar_t size[32] = L"";
     StrFormatByteSizeW(static_cast<LONGLONG>(info.fileSize), size, static_cast<UINT>(std::size(size)));
-    text += L"\n" + std::wstring(size) + (info.format.empty() ? L"" : L"  ·  " + info.format);
-    if (!info.taken.empty()) text += L"\nTaken   " + info.taken;
-    if (!info.camera.empty()) text += L"\nCamera  " + info.camera;
-    if (!info.lens.empty()) text += L"\nLens    " + info.lens;
-    if (!info.exposure.empty()) text += L"\n" + info.exposure;
+    if (info.isPdf) {
+        text += L"\n" + info.pdfPages + L"\n" + std::wstring(size) + L"  ·  PDF document";
+    } else {
+        swprintf(line, 200, L"\n%u × %u px  (%.1f MP)", info.orientedWidth(), info.orientedHeight(),
+                 double(info.width) * info.height / 1e6);
+        text += line;
+        text += L"\n" + std::wstring(size) + (info.format.empty() ? L"" : L"  ·  " + info.format);
+        if (!info.taken.empty()) text += L"\nTaken   " + info.taken;
+        if (!info.camera.empty()) text += L"\nCamera  " + info.camera;
+        if (!info.lens.empty()) text += L"\nLens    " + info.lens;
+        if (!info.exposure.empty()) text += L"\n" + info.exposure;
+    }
     swprintf(line, 200, L"\nZoom    %d%%", static_cast<int>(std::lround(zoom_ * 100)));
     text += line;
+    if (edited_ || !adjustments_.isIdentity()) text += L"  ·  edited";
     return text;
 }
 
@@ -1348,14 +1847,19 @@ void Viewer::render() {
         const D2D1_INTERPOLATION_MODE mode = (scale >= 4 && settings_.pixelatedZoom) ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
                                              : scale < 0.99 ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
                                                             : D2D1_INTERPOLATION_MODE_LINEAR;
-        for (const auto& tile : shown_->tiles) {
-            context_->DrawBitmap(tile.bitmap.get(), &tile.rect, 1.0f, mode, nullptr, nullptr);
-        }
+        drawImage(mode);
         context_->SetTransform(&plain);
     }
     if (dragging_ && zoomBox_ && didDrag_ && brush_) {
         D2D1_RECT_F box{float(std::min(dragStart_.x, dragLast_.x)) + 0.5f, float(std::min(dragStart_.y, dragLast_.y)) + 0.5f,
                         float(std::max(dragStart_.x, dragLast_.x)) + 0.5f, float(std::max(dragStart_.y, dragLast_.y)) + 0.5f};
+        context_->DrawRectangle(&box, brush_.get(), 1.0f, nullptr);
+    }
+    if (hasSelection_ && brush_ && darkBrush_) {
+        // Crop selection: a light line over a dark one, visible on any picture.
+        const D2D1_POINT_2F a = toView(selection_.left, selection_.top), b = toView(selection_.right, selection_.bottom);
+        const D2D1_RECT_F box{std::round(a.x) + 0.5f, std::round(a.y) + 0.5f, std::round(b.x) - 0.5f, std::round(b.y) - 0.5f};
+        context_->DrawRectangle(&box, darkBrush_.get(), 3.0f, nullptr);
         context_->DrawRectangle(&box, brush_.get(), 1.0f, nullptr);
     }
     if (settings_.showInfo || settings_.showFilename) drawOverlay();

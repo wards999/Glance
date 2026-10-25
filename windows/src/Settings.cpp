@@ -59,6 +59,13 @@ Settings Settings::load() {
     s.pixelatedZoom = flag(L"PixelatedZoom", s.pixelatedZoom);
     s.prefetchCount = std::clamp(number(L"PrefetchCount", s.prefetchCount), 0, 8);
     s.cacheMB = std::clamp(number(L"CacheMB", s.cacheMB), 0, 65536);
+    s.saveQuality = std::clamp(number(L"SaveQuality", s.saveQuality), 30, 100);
+    s.keepAdjustments = flag(L"KeepAdjustments", s.keepAdjustments);
+    s.pdfLayout = std::clamp(number(L"PdfLayout", s.pdfLayout), 0, 3);
+    s.pdfRightToLeft = flag(L"PdfRightToLeft", s.pdfRightToLeft);
+    s.includePdfs = flag(L"IncludePdfs", s.includePdfs);
+    s.holdToZoom = std::clamp(number(L"HoldToZoom", s.holdToZoom), 0, 2);
+    s.holdZoomPercent = std::clamp(number(L"HoldZoomPercent", s.holdZoomPercent), 150, 400);
     s.windowRect = {number(L"WindowLeft", 0), number(L"WindowTop", 0), number(L"WindowRight", 0), number(L"WindowBottom", 0)};
     s.maximized = flag(L"Maximized", false);
     return s;
@@ -88,6 +95,13 @@ void Settings::save() const {
     put(L"PixelatedZoom", pixelatedZoom);
     put(L"PrefetchCount", prefetchCount);
     put(L"CacheMB", cacheMB);
+    put(L"SaveQuality", saveQuality);
+    put(L"KeepAdjustments", keepAdjustments);
+    put(L"PdfLayout", pdfLayout);
+    put(L"PdfRightToLeft", pdfRightToLeft);
+    put(L"IncludePdfs", includePdfs);
+    put(L"HoldToZoom", holdToZoom);
+    put(L"HoldZoomPercent", holdZoomPercent);
     put(L"WindowLeft", windowRect.left);
     put(L"WindowTop", windowRect.top);
     put(L"WindowRight", windowRect.right);

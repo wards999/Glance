@@ -112,7 +112,7 @@ void Pipeline::work() {
                 if (background) ++runningBackground_;
             }
 
-            std::shared_ptr<Decoded> image = decoder.decode(key.path, key.frame, key.request);
+            std::shared_ptr<Decoded> image = decoder.decode(key.path, key.frame, key.request, key.layout);
 
             {
                 std::lock_guard lock(mutex_);

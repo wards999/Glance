@@ -16,6 +16,7 @@ struct DecodeKey {
     std::wstring path;
     UINT frame = 0;
     DecodeRequest request;
+    int layout = -1;  // PDFs: Pdf::packLayout, since `frame` counts screens under it
 
     bool operator==(const DecodeKey&) const = default;
 };
@@ -28,6 +29,7 @@ struct DecodeKeyHash {
         mix(key.request.boxWidth);
         mix(key.request.boxHeight);
         mix(key.request.longSide);
+        mix(static_cast<size_t>(key.layout + 1));
         return h;
     }
 };

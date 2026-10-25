@@ -29,6 +29,17 @@ struct Settings {
     int prefetchCount = 3;
     int cacheMB = 0;  // 0: automatic, a quarter of RAM up to 4 GB
 
+    // Editing
+    int saveQuality = 90;         // JPEG quality, percent
+    bool keepAdjustments = false; // carry brightness etc. on to the next image (JPEGView's F4)
+
+    // PDF
+    int pdfLayout = 0;            // 0 automatic, 1 single page, 2 two pages, 3 two pages with cover
+    bool pdfRightToLeft = false;
+    bool includePdfs = false;     // when browsing folders; opening a PDF always includes its neighbours
+    int holdToZoom = 1;           // 0 off, 1 PDFs only, 2 PDFs and images
+    int holdZoomPercent = 250;
+
     // Window position, remembered between runs (empty: centred, 80% of the screen)
     RECT windowRect{};
     bool maximized = false;
