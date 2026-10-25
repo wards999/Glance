@@ -58,6 +58,9 @@ final class ImageView: NSView {
 
     private var lastDragPoint: NSPoint?
     private var selectionAnchor: CGPoint?
+    /// Option-drag: the rectangle to zoom into, in oriented image pixels, while it's being drawn.
+    private var zoomBoxAnchor: CGPoint?
+    private var zoomBox: CGRect?
     private var didDrag = false
     private var pushedCursor = false
     private var swipeDistance: CGFloat = 0
@@ -148,6 +151,28 @@ final class ImageView: NSView {
     func zoomToActualSize() { setZoom(1, around: nil) }
     func zoomIn() { step(by: 1.25) }
     func zoomOut() { step(by: 0.8) }
+
+    /// Zooms so `rect` (oriented image pixels) fills the window.
+    func zoom(to rect: CGRect) {
+        guard image != nil, rect.width >= 1, rect.height >= 1, bounds.width > 0, bounds.height > 0 else { return }
+        let lowest = min(fitZoom(), 1) / 8
+        let target = min(bounds.width / rect.width, bounds.height / rect.height) * backingScale
+        zoom = min(max(target, lowest), Self.maxZoom)
+        zoomMode = .custom
+        center = CGPoint(x: rect.midX, y: rect.midY)
+        clampCenter()
+        layoutImage()
+        delegate?.imageViewDidChangeZoom(self)
+        requestResolutionIfNeeded()
+    }
+
+    /// Returns false when there's no selection to zoom to.
+    @discardableResult
+    func zoomToSelection() -> Bool {
+        guard let selection else { return false }
+        zoom(to: selection)
+        return true
+    }
 
     func setZoom(_ newZoom: CGFloat, around viewPoint: NSPoint?) {
         guard image != nil else { return }
@@ -368,12 +393,15 @@ final class ImageView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        guard let selection, image != nil else {
+        // A zoom box being drawn takes the place of the crop selection until the mouse is released.
+        guard let box = zoomBox ?? selection, image != nil else {
             selectionLayer.isHidden = true
             return
         }
-        let a = viewPoint(fromImage: CGPoint(x: selection.minX, y: selection.minY))
-        let b = viewPoint(fromImage: CGPoint(x: selection.maxX, y: selection.maxY))
+        selectionLayer.fillColor = zoomBox == nil ? NSColor.white.withAlphaComponent(0.08).cgColor : nil
+        selectionLayer.lineDashPattern = zoomBox == nil ? [5, 4] : nil
+        let a = viewPoint(fromImage: CGPoint(x: box.minX, y: box.minY))
+        let b = viewPoint(fromImage: CGPoint(x: box.maxX, y: box.maxY))
         let rect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
         selectionLayer.frame = hostLayer.bounds
         selectionLayer.path = CGPath(rect: rect, transform: nil)
@@ -406,7 +434,13 @@ final class ImageView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         lastDragPoint = point
         didDrag = false
-        if event.modifierFlags.contains(.shift), image != nil {
+        zoomBoxAnchor = nil
+        if event.modifierFlags.contains(.option), image != nil {
+            zoomBoxAnchor = clampToImage(imagePoint(fromView: point))
+            selectionAnchor = nil
+            NSCursor.crosshair.push()
+            pushedCursor = true
+        } else if event.modifierFlags.contains(.shift), image != nil {
             selectionAnchor = clampToImage(imagePoint(fromView: point))
         } else {
             selectionAnchor = nil
@@ -421,7 +455,14 @@ final class ImageView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard let last = lastDragPoint else { return }
         didDrag = true
-        if let anchor = selectionAnchor {
+        if let anchor = zoomBoxAnchor {
+            let other = clampToImage(imagePoint(fromView: point))
+            zoomBox = CGRect(
+                x: min(anchor.x, other.x), y: min(anchor.y, other.y),
+                width: abs(anchor.x - other.x), height: abs(anchor.y - other.y)
+            )
+            updateSelectionLayer()
+        } else if let anchor = selectionAnchor {
             let other = clampToImage(imagePoint(fromView: point))
             selection = CGRect(
                 x: min(anchor.x, other.x), y: min(anchor.y, other.y),
@@ -441,6 +482,19 @@ final class ImageView: NSView {
             pushedCursor = false
         }
         let point = convert(event.locationInWindow, from: nil)
+        if zoomBoxAnchor != nil {
+            let box = zoomBox
+            zoomBox = nil
+            zoomBoxAnchor = nil
+            lastDragPoint = nil
+            // Ignore an accidental click-sized box; just redraw whatever selection was there.
+            if let box, box.width * pointsPerPixel >= 8, box.height * pointsPerPixel >= 8 {
+                zoom(to: box)
+            } else {
+                updateSelectionLayer()
+            }
+            return
+        }
         if let selection, selection.width < 4 || selection.height < 4 {
             clearSelection()
         }

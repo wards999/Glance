@@ -45,7 +45,7 @@ Included:
 - Every format ImageIO supports: JPEG, PNG, GIF, BMP, TIFF, WebP, HEIC/HEIF, AVIF (macOS 13+), JPEG XL (macOS 14+), PSD, camera RAW, and more
 - Animated GIF/WebP/APNG playback; page navigation for multi-page TIFF
 - Folder navigation sorted by name (Finder order), date modified, date created, size or random, with ascending/descending and loop options
-- Zoom to fit, fill or 100%; zoom around the cursor with the mouse wheel or pinch; drag to pan; double-click to toggle fit/100%
+- Zoom to fit, fill or 100%; Option-drag a rectangle to zoom into it; zoom around the cursor with the mouse wheel or pinch; drag to pan; double-click to toggle fit/100%
 - Rotate and flip. **Lossless** when saved: only the EXIF orientation tag is rewritten (JPEG, and other formats ImageIO can retag)
 - Brightness, contrast, saturation, gamma, sharpen, and cyan/red, magenta/green, yellow/blue color balance, plus auto correction. All run on the GPU, can be kept across images, and are written out when you save
 - Crop: shift-drag to select, then Return or ⌘K
@@ -89,7 +89,9 @@ and the window always agree.
 | Double-click | Toggle fit / 100% at the cursor |
 | Mouse wheel, pinch | Zoom around the cursor |
 | Drag, two-finger scroll | Pan |
+| Option-drag | Draw a rectangle to zoom into |
 | Shift-drag | Select a crop area. Return crops, Esc clears |
+| Z, ⌘3 | Zoom to the crop selection |
 | R / L, ⌘R / ⌘L | Rotate right / left |
 | H / V | Flip horizontal / vertical |
 | A | Auto correction on/off |

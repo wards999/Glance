@@ -45,6 +45,7 @@ enum MainMenu {
             item("Fit to Window", #selector(C.zoomToFit(_:)), "0"),
             item("Actual Size", #selector(C.zoomActualSize(_:)), "1"),
             item("Fill Window", #selector(C.zoomToFill(_:)), "2"),
+            item("Zoom to Selection", #selector(C.zoomToSelection(_:)), "3"),
             item("Enlarge Small Images to Fit", #selector(C.toggleEnlargeSmall(_:)), ""),
             .separator(),
             item("Show Info", #selector(C.toggleInfo(_:)), "i"),

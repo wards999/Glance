@@ -495,6 +495,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             case "0": view.zoomToFit()
             case "1": view.zoomToActualSize()
             case "2": view.zoomToFill()
+            case "z": zoomToSelection(nil)
             case "f": window?.toggleFullScreen(nil)
             case "i": toggleInfo(nil)
             case "a": toggleAutoCorrect(nil)
@@ -604,6 +605,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     @objc func zoomToFit(_ sender: Any?) { imageView.zoomToFit() }
     @objc func zoomActualSize(_ sender: Any?) { imageView.zoomToActualSize() }
     @objc func zoomToFill(_ sender: Any?) { imageView.zoomToFill() }
+
+    @objc func zoomToSelection(_ sender: Any?) {
+        if !imageView.zoomToSelection() { NSSound.beep() }
+    }
 
     @objc func toggleEnlargeSmall(_ sender: Any?) {
         settings.enlargeSmallImages.toggle()
@@ -897,7 +902,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         case #selector(toggleSlideshow(_:)):
             item.title = slideshowTimer == nil ? "Start Slideshow" : "Stop Slideshow"
             return navigator.count > 1
-        case #selector(cropToSelection(_:)):
+        case #selector(cropToSelection(_:)), #selector(zoomToSelection(_:)):
             return imageView.selection != nil
         case #selector(nextPage(_:)), #selector(previousPage(_:)):
             return (current?.info.pageCount ?? 0) > 1 && current?.info.isAnimated == false
