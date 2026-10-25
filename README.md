@@ -53,7 +53,7 @@ Included:
 - Slideshow with 1–30 s intervals
 - EXIF info overlay: camera, lens, exposure, date, GPS
 - Bottom control bar that fades in on hover
-- Full screen with cursor auto-hide, optionally on launch. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
+- Full screen with cursor auto-hide, optionally on launch. The menu bar and Dock are hidden completely; every command is on the right-click menu. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
 - Move to Trash, Reveal in Finder, Set as Desktop Picture, Copy, drag and drop, mouse back/forward buttons, trackpad swipe between images
 
 Not included yet:
@@ -89,8 +89,10 @@ and the window always agree.
 | 0, 1, 2 | Fit, 100%, fill |
 | Double-click | Toggle fit / 100% at the cursor |
 | Mouse wheel, pinch | Zoom around the cursor |
-| Drag, two-finger scroll | Pan |
-| Option-drag | Draw a rectangle to zoom into |
+| Drag (zoomed in), two-finger scroll | Pan |
+| Right-click, Control-click | Menu with every command (the only menu in full screen) |
+| Drag (image fits the window) | Draw a rectangle to zoom into |
+| Option-drag (any zoom) | Draw a rectangle to zoom into |
 | Shift-drag | Select a crop area. Return crops, Esc clears |
 | Z, ⌘3 | Zoom to the crop selection |
 | R / L, ⌘R / ⌘L | Rotate right / left |

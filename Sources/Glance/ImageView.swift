@@ -432,19 +432,28 @@ final class ImageView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        lastDragPoint = point
         didDrag = false
         zoomBoxAnchor = nil
-        if event.modifierFlags.contains(.option), image != nil {
+        if event.modifierFlags.contains(.control), let menu {
+            // Control-click is the one-button way to get the right-click menu.
+            lastDragPoint = nil
+            selectionAnchor = nil
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+            return
+        }
+        lastDragPoint = point
+        let canPan = canPanHorizontally || canPanVertically
+        let shift = event.modifierFlags.contains(.shift)
+        // Dragging draws a zoom rectangle when there's nothing to pan; once zoomed in, drag pans
+        // and Option-drag draws the rectangle.
+        if image != nil && (event.modifierFlags.contains(.option) || (!canPan && !shift)) {
             zoomBoxAnchor = clampToImage(imagePoint(fromView: point))
             selectionAnchor = nil
-            NSCursor.crosshair.push()
-            pushedCursor = true
-        } else if event.modifierFlags.contains(.shift), image != nil {
+        } else if shift, image != nil {
             selectionAnchor = clampToImage(imagePoint(fromView: point))
         } else {
             selectionAnchor = nil
-            if canPanHorizontally || canPanVertically {
+            if canPan {
                 NSCursor.closedHand.push()
                 pushedCursor = true
             }
@@ -456,6 +465,11 @@ final class ImageView: NSView {
         guard let last = lastDragPoint else { return }
         didDrag = true
         if let anchor = zoomBoxAnchor {
+            // Crosshair only once it's really a drag, so plain clicks don't flicker the cursor.
+            if !pushedCursor {
+                NSCursor.crosshair.push()
+                pushedCursor = true
+            }
             let other = clampToImage(imagePoint(fromView: point))
             zoomBox = CGRect(
                 x: min(anchor.x, other.x), y: min(anchor.y, other.y),
@@ -486,14 +500,17 @@ final class ImageView: NSView {
             let box = zoomBox
             zoomBox = nil
             zoomBoxAnchor = nil
-            lastDragPoint = nil
-            // Ignore an accidental click-sized box; just redraw whatever selection was there.
-            if let box, box.width * pointsPerPixel >= 8, box.height * pointsPerPixel >= 8 {
-                zoom(to: box)
-            } else {
-                updateSelectionLayer()
+            if didDrag {
+                lastDragPoint = nil
+                // Ignore an accidental click-sized box; just redraw whatever selection was there.
+                if let box, box.width * pointsPerPixel >= 8, box.height * pointsPerPixel >= 8 {
+                    zoom(to: box)
+                } else {
+                    updateSelectionLayer()
+                }
+                return
             }
-            return
+            // A plain click: fall through to double-click zoom and click-to-clear.
         }
         if let selection, selection.width < 4 || selection.height < 4 {
             clearSelection()

@@ -39,6 +39,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let pipeline = ImagePipeline(costLimit: Settings.shared.cacheBytes)
     private let settings = Settings.shared
     private var settingsObserver: NSObjectProtocol?
+    private var activationObserver: NSObjectProtocol?
     /// Core Image work (adjustments, crop, save) runs here, one job at a time.
     private let renderQueue = DispatchQueue(label: "glance.render", qos: .userInitiated)
 
@@ -96,6 +97,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         applySettings()
         settingsObserver = NotificationCenter.default.addObserver(forName: Settings.didChange, object: nil, queue: nil) { [weak self] _ in
             self?.applySettings()
+        }
+        activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: nil) { [weak self] _ in
+            guard let self, self.isInstantFullScreen else { return }
+            self.applyFullScreenPresentation()
         }
         updateTitle()
     }
@@ -177,11 +182,26 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         windowedStyle = window.styleMask
         // Don't let the screen-sized frame overwrite the saved window position.
         window.setFrameAutosaveName("")
-        // Menu bar and Dock still slide in if the mouse goes to them.
-        NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+        applyFullScreenPresentation()
         window.styleMask = [.borderless]
         window.setFrame(screen.frame, display: true)
         window.makeFirstResponder(imageView)
+    }
+
+    /// Menu bar and Dock fully hidden: nothing but the picture. Everything is on the right-click menu.
+    /// Re-applied whenever we come back to the front, since macOS only honours it for the active app
+    /// (at launch we set it before the app has finished activating).
+    private func applyFullScreenPresentation() {
+        NSApp.presentationOptions = [.hideDock, .hideMenuBar]
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        if isInstantFullScreen { applyFullScreenPresentation() }
+    }
+
+    /// macOS full screen would otherwise drop the menu bar down whenever the mouse touches the top.
+    func window(_ window: NSWindow, willUseFullScreenPresentationOptions proposedOptions: NSApplication.PresentationOptions) -> NSApplication.PresentationOptions {
+        [.fullScreen, .hideDock, .hideMenuBar]
     }
 
     private func exitInstantFullScreen() {
@@ -202,6 +222,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         imageView.frame = content.bounds
         imageView.autoresizingMask = [.width, .height]
         imageView.delegate = self
+        imageView.menu = MainMenu.contextMenu()
         content.addSubview(imageView)
 
         infoBox.wantsLayer = true
