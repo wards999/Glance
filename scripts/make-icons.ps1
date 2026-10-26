@@ -9,6 +9,14 @@ $root = Split-Path -Parent $PSScriptRoot
 function Colour([string]$hex) { [System.Windows.Media.ColorConverter]::ConvertFromString($hex) }
 function Brush([string]$hex) { $b = New-Object System.Windows.Media.SolidColorBrush (Colour $hex); $b.Freeze(); $b }
 function Point([double]$x, [double]$y) { [System.Windows.Point]::new($x, $y) }
+# Rotate by `angle`, scale by `scale`, then move the centre to (x, y).
+function Placed([double]$angle, [double]$x, [double]$y, [double]$scale) {
+    $g = [System.Windows.Media.TransformGroup]::new()
+    $g.Children.Add([System.Windows.Media.RotateTransform]::new($angle))
+    $g.Children.Add([System.Windows.Media.ScaleTransform]::new($scale, $scale))
+    $g.Children.Add([System.Windows.Media.TranslateTransform]::new($x, $y))
+    $g
+}
 
 # Everything is drawn on a 1024 canvas. Mac: the standard 824 rounded square with a shadow.
 # Windows: the square fills more of the canvas, no shadow (Windows draws none behind icons).
@@ -20,7 +28,7 @@ function Render([int]$size, [bool]$mac) {
 
     if ($mac) { $inset = 100; $radius = 185 } else { $inset = if ($small) { 0 } else { 32 }; $radius = if ($small) { 200 } else { 210 } }
     $body = [System.Windows.Rect]::new($inset, $inset, 1024 - 2 * $inset, 1024 - 2 * $inset)
-    $background = [System.Windows.Media.LinearGradientBrush]::new((Colour "#4C8DFF"), (Colour "#6B3FE6"), (Point 0 0), (Point 1 1))
+    $background = [System.Windows.Media.LinearGradientBrush]::new((Colour "#FF9A5A"), (Colour "#F2457A"), (Point 0 0), (Point 1 1))
     if ($mac) {
         # Soft shadow under the square, as macOS icons have.
         foreach ($i in 1..14) {
@@ -34,45 +42,39 @@ function Render([int]$size, [bool]$mac) {
     $sheen = [System.Windows.Media.LinearGradientBrush]::new((Colour "#30FFFFFF"), (Colour "#00FFFFFF"), (Point 0.5 0), (Point 0.5 0.6))
     $dc.DrawRoundedRectangle($sheen, $null, $body, $radius, $radius)
 
-    # The eye: a white almond, scaled up a little when there are few pixels.
-    $k = if ($small) { 1.27 } else { 1.08 }
-    $half = 300 * $k; $lift = 205 * $k
-    $eye = New-Object System.Windows.Media.StreamGeometry
-    $ctx = $eye.Open()
-    $ctx.BeginFigure((Point (512 - $half) 512), $true, $true)
-    $ctx.BezierTo((Point (512 - $half * 0.5) (512 - $lift)), (Point (512 + $half * 0.5) (512 - $lift)), (Point (512 + $half) 512), $true, $true)
-    $ctx.BezierTo((Point (512 + $half * 0.5) (512 + $lift)), (Point (512 - $half * 0.5) (512 + $lift)), (Point (512 - $half) 512), $true, $true)
-    $ctx.Close()
-    $eyeShadow = [System.Windows.Media.TranslateTransform]::new(0, 14)
-    $dc.PushTransform($eyeShadow)
-    $dc.DrawGeometry((Brush "#26000040"), $null, $eye)
-    $dc.Pop()
-    $dc.DrawGeometry((Brush "#FFFFFF"), $null, $eye)
+    # Two prints, one tilted behind the other. The artwork is laid out for the Windows square
+    # (960) and scaled to the Mac's (824); small sizes get bigger prints with thicker borders.
+    $k = ($body.Width / 960.0) * $(if ($small) { 1.1 } else { 1.0 })
+    $card = [System.Windows.Rect]::new(-290, -225, 580, 450)
+    $border = if ($small) { 52 } else { 40 }
+    $photo = [System.Windows.Rect]::new(-290 + $border, -225 + $border, 580 - 2 * $border, 450 - 2 * $border)
 
-    # The iris is a photo: sky, sun and hills, inside a dark ring.
-    $r = 138 * $k
-    $iris = [System.Windows.Media.EllipseGeometry]::new((Point 512 512), $r, $r)
-    $dc.PushClip($iris)
-    $sky = [System.Windows.Media.LinearGradientBrush]::new((Colour "#2E9BFF"), (Colour "#9FE0FF"), (Point 0.5 0), (Point 0.5 1))
-    $dc.DrawRectangle($sky, $null, ([System.Windows.Rect]::new(300, 300, 424, 424)))
-    if (-not $small) { $dc.DrawEllipse((Brush "#FFD84D"), $null, (Point 566 462), 34, 34) }
+    $dc.PushTransform((Placed -11 (512 + (490 - 512) * $k) (512 + (500 - 512) * $k) $k))
+    $dc.DrawRoundedRectangle((Brush "#A0FFFFFF"), $null, $card, 40, 40)
+    $dc.Pop()
+
+    $dc.PushTransform((Placed 5 (512 + (530 - 512) * $k) (512 + (540 - 512) * $k) $k))
+    $dc.PushTransform([System.Windows.Media.TranslateTransform]::new(0, 12))
+    $dc.DrawRoundedRectangle((Brush "#30701030"), $null, $card, 40, 40)  # the front print's shadow
+    $dc.Pop()
+    $dc.DrawRoundedRectangle((Brush "#FFFFFF"), $null, $card, 40, 40)
+    # The picture on it: sky, sun and hills.
+    $dc.PushClip([System.Windows.Media.RectangleGeometry]::new($photo, 18, 18))
+    $sky = [System.Windows.Media.LinearGradientBrush]::new((Colour "#3FA2FF"), (Colour "#A8E3FF"), (Point 0.5 0), (Point 0.5 1))
+    $dc.DrawRectangle($sky, $null, $photo)
+    $x = $photo.X; $y = $photo.Y; $w = $photo.Width; $h = $photo.Height
+    $dc.DrawEllipse((Brush "#FFD54A"), $null, (Point ($x + 0.7 * $w) ($y + 0.3 * $h)), (0.11 * $w), (0.11 * $w))
     $hills = New-Object System.Windows.Media.StreamGeometry
     $ctx = $hills.Open()
-    $ctx.BeginFigure((Point 360 700), $true, $true)
-    $ctx.LineTo((Point 360 560), $true, $true)
-    $ctx.LineTo((Point 450 488), $true, $true)
-    $ctx.LineTo((Point 512 548), $true, $true)
-    $ctx.LineTo((Point 590 476), $true, $true)
-    $ctx.LineTo((Point 680 560), $true, $true)
-    $ctx.LineTo((Point 680 700), $true, $true)
+    $ctx.BeginFigure((Point $x ($y + $h)), $true, $true)
+    foreach ($p in @(@(0, 0.74), @(0.3, 0.42), @(0.52, 0.66), @(0.7, 0.5), @(1, 0.78), @(1, 1))) {
+        $ctx.LineTo((Point ($x + $p[0] * $w) ($y + $p[1] * $h)), $true, $true)
+    }
     $ctx.Close()
-    $dc.DrawGeometry(([System.Windows.Media.LinearGradientBrush]::new((Colour "#1FA67A"), (Colour "#0E6B57"), (Point 0.5 0), (Point 0.5 1))), $null, $hills)
+    $dc.DrawGeometry((Brush "#18A77C"), $null, $hills)
     $dc.Pop()
-    $ring = [System.Windows.Media.Pen]::new((Brush "#1E2A78"), $(if ($small) { 34 } else { 22 }))
-    $dc.DrawEllipse($null, $ring, (Point 512 512), $r, $r)
-    # The glint that makes it read as an eye.
-    $glint = if ($small) { 30 } else { 24 }
-    $dc.DrawEllipse((Brush "#F0FFFFFF"), $null, (Point (512 - $r * 0.42) (512 - $r * 0.42)), $glint, $glint)
+    $dc.Pop()
+
 
     $dc.Pop()
     $dc.Close()
