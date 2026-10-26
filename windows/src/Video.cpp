@@ -255,6 +255,15 @@ bool VideoPlayer::start() {
     mpv_handle* handle = mpv->create();
     if (!handle) return false;
     const std::string wid = std::to_string(reinterpret_cast<intptr_t>(surface_));
+    // mpv prepares its GPU shaders on first use; kept on disk, the next start skips that
+    // (about 0.15 s off every first video).
+    std::string shaderCache;
+    if (wchar_t local[MAX_PATH]; GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) {
+        const std::wstring folder = std::wstring(local) + L"\\Glance\\mpv-cache";
+        CreateDirectoryW((std::wstring(local) + L"\\Glance").c_str(), nullptr);
+        CreateDirectoryW(folder.c_str(), nullptr);
+        shaderCache = utf8(folder);
+    }
     applyOptions(mpv, handle,
                {{"wid", wid.c_str()},
                 {"vo", "gpu-next"},
@@ -278,6 +287,7 @@ bool VideoPlayer::start() {
                 // like, or kept in a Subs folder. Which one shows is Glance's choice (chooseSubtitles).
                 {"sub-auto", "fuzzy"},
                 {"sub-file-paths", "subs;Subs;subtitles;Subtitles"}});
+    if (!shaderCache.empty()) applyOptions(mpv, handle, {{"gpu-shader-cache-dir", shaderCache.c_str()}});
     if (mpv->initialize(handle) < 0) {
         mpv->terminateDestroy(handle);
         return false;
@@ -297,7 +307,7 @@ bool VideoPlayer::start() {
 
 bool VideoPlayer::warm() { return start(); }
 
-bool VideoPlayer::open(const std::wstring& path) {
+bool VideoPlayer::open(const std::wstring& path, bool play) {
     if (!start()) return false;
     const Api* mpv = api();
     auto* handle = static_cast<mpv_handle*>(mpv_);
@@ -308,7 +318,7 @@ bool VideoPlayer::open(const std::wstring& path) {
     videoWidth_ = videoHeight_ = 0;
     previews_.clear();
     ++generation_;
-    mpv->setPropertyString(handle, "pause", "yes");
+    mpv->setPropertyString(handle, "pause", play ? "no" : "yes");
     mpv->setPropertyString(handle, "loop-file", "no");
     const std::string file = utf8(path);
     run(mpv, handle, {"loadfile", file.c_str(), "replace"});
@@ -790,6 +800,32 @@ void VideoPlayer::drawControls() {
 
     if (controlsVisible_) {
     target_->FillRoundedRectangle(D2D1::RoundedRect(local(barRect_), 10 * s, 10 * s), panel.get());
+    // The file's name, just above the bar on the left (the title bar is gone in full screen).
+    if (!(hovering_ || scrubbing_)) {
+        std::wstring name = path_.substr(path_.find_last_of(L"\\/") + 1);
+        const size_t dot = name.find_last_of(L'.');
+        if (dot != std::wstring::npos && dot > 0) name.resize(dot);
+        const float maxWidth = float(barRect_.right - barRect_.left) * 0.6f;
+        ComPtr<IDWriteTextLayout> layout;
+        dwrite_->CreateTextLayout(name.c_str(), static_cast<UINT32>(name.size()), textFormat_.get(), maxWidth, 30 * s,
+                                  layout.put());
+        if (layout) {
+            layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+            ComPtr<IDWriteInlineObject> ellipsis;
+            dwrite_->CreateEllipsisTrimmingSign(textFormat_.get(), ellipsis.put());
+            layout->SetTrimming(&trimming, ellipsis.get());
+            DWRITE_TEXT_METRICS metrics{};
+            layout->GetMetrics(&metrics);
+            const float textWidth = std::min(metrics.width, maxWidth);
+            layout->SetMaxWidth(textWidth + 1);
+            const float padX = 12 * s, boxHeight = 30 * s;
+            const float left = float(barRect_.left), bottom = float(barRect_.top - top) - 8 * s;
+            const D2D1_RECT_F box{left, bottom - boxHeight, left + textWidth + 2 * padX, bottom};
+            target_->FillRoundedRectangle(D2D1::RoundedRect(box, 8 * s, 8 * s), panel.get());
+            target_->DrawTextLayout(D2D1::Point2F(left + padX, box.top), layout.get(), white.get());
+        }
+    }
     if (hovering_ && PtInRect(&playRect_, hover_)) target_->FillRoundedRectangle(D2D1::RoundedRect(local(playRect_), 6 * s, 6 * s), accent.get());
     const wchar_t* playGlyph = isPaused || ended_ ? L"\xE768" : L"\xE769";
     target_->DrawText(playGlyph, 1, iconFormat_.get(), local(playRect_), white.get());

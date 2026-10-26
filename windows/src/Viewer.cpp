@@ -524,9 +524,14 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
 
-    case WM_KEYDOWN:
-        if (onKey(wParam, GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0)) return 0;
+    case WM_KEYDOWN: {
+        // Bit 30: the key was already down, so this is Windows repeating a held key.
+        keyRepeating_ = (lParam & (1 << 30)) != 0;
+        const bool handled = onKey(wParam, GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0);
+        keyRepeating_ = false;
+        if (handled) return 0;
         break;
+    }
 
     case WM_SYSKEYDOWN:
         if (wParam == VK_RETURN) {  // Alt+Enter
@@ -2152,16 +2157,18 @@ void Viewer::showVideo(const std::wstring& path) {
     }
     showingVideo_ = true;
     videoPath_ = path;
-    if (!video_->open(path)) {
+    // Plays at once, except while a key is held down to skim: then it waits until you stop,
+    // so videos you pass on the way don't each start up.
+    const bool playNow = settings_.videoAutoplay && !keyRepeating_;
+    KillTimer(hwnd_, kVideoPlayTimer);
+    if (!video_->open(path, playNow)) {
         // libmpv-2.dll couldn't be loaded: say so rather than showing nothing.
         showingVideo_ = false;
         render();
         SetWindowTextW(hwnd_, (fileName(path) + L"  -  can't play videos (libmpv-2.dll is missing or damaged)  -  Glance").c_str());
         return;
     }
-    // The first frame shows straight away; playback waits until you've stopped here, so holding a
-    // key down skims past videos as quickly as pictures.
-    SetTimer(hwnd_, kVideoPlayTimer, kVideoPlayDelayMs, nullptr);
+    if (settings_.videoAutoplay && !playNow) SetTimer(hwnd_, kVideoPlayTimer, kVideoPlayDelayMs, nullptr);
     SetTimer(hwnd_, kVideoTickTimer, 250, nullptr);
     SetFocus(hwnd_);  // keys stay with Glance, not mpv's window
     render();

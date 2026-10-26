@@ -59,8 +59,8 @@ public:
     /// Starts mpv and its windows without a file, so the first video opens without the ~0.4 s
     /// it takes to bring up mpv's GPU output. False if libmpv-2.dll can't be loaded.
     bool warm();
-    /// Shows `path`: the first frame straight away, paused. play() starts it.
-    bool open(const std::wstring& path);
+    /// Shows `path`, playing at once if `play`; otherwise paused on the first frame until play().
+    bool open(const std::wstring& path, bool play);
     void play();
     /// Stops playback, closes the file (so it can be deleted or renamed) and hides the video.
     void close();

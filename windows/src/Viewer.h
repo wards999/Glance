@@ -277,6 +277,7 @@ private:
     bool showingVideo_ = false;
     std::wstring videoPath_;
     bool videoPressed_ = false;  // a click on the picture (not the controls) is under way
+    bool keyRepeating_ = false;  // during a WM_KEYDOWN that Windows repeats for a held key
 
     bool fullScreen_ = false;
     bool slideshow_ = false;
