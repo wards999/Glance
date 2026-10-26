@@ -22,18 +22,18 @@ Glance the default viewer, right-click an image ▸ Open with ▸ Choose another
 Look for another app on this PC, pick `Glance.exe`, and tick "Always use this app".
 
 **PDF thumbnails in Explorer** (optional, Windows): Windows doesn't show PDF pages as thumbnails
-on its own. `GlanceThumbnails.dll` adds that, using the same PDFium. Keep it next to `pdfium.dll`
-and register it once, as administrator (Explorer only uses thumbnail handlers registered for all
-users). From an ordinary PowerShell window, this shows the administrator prompt:
+on its own. `GlanceThumbnails.dll` adds that, using the same PDFium. Keep it next to `Glance.exe`
+and turn it on with right-click ▸ PDF pages ▸ **Show PDF covers in Explorer** (choose it again to
+turn it off). Windows asks for administrator permission, because Explorer only uses thumbnail
+handlers registered for all users. It works whichever app opens PDFs, and runs in Windows'
+isolated thumbnail process, so a damaged PDF can't affect Explorer. Updating it later is just
+replacing the file; turn it on again only if you move the folder.
+
+The same from a PowerShell window, if you prefer (`'/u', ` before the path removes it):
 
 ```powershell
 Start-Process regsvr32 -Verb RunAs -ArgumentList '"C:\Utilities\Glance\GlanceThumbnails.dll"'
 ```
-
-(use your own folder). It works whichever app opens PDFs, and runs in Windows' isolated thumbnail
-process, so a damaged PDF can't affect Explorer. Updating it later is just replacing the file;
-register again only if you move the folder. To remove it, the same command with `'/u', ` before
-the path.
 
 ## Build the Mac version
 
