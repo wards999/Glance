@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cwchar>
 #include <iterator>
 #include <new>
@@ -130,6 +131,8 @@ void readDetails(const std::wstring& path, IWICBitmapDecoder* decoder, IWICBitma
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes)) {
         info.fileSize = (ULONGLONG(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
     }
+    GUID container{};
+    if (SUCCEEDED(decoder->GetContainerFormat(&container))) info.isGif = container == GUID_ContainerFormatGif;
     ComPtr<IWICBitmapDecoderInfo> codec;
     if (SUCCEEDED(decoder->GetDecoderInfo(codec.put())) && codec) {
         wchar_t name[128] = L"";
@@ -155,6 +158,7 @@ void readDetails(const std::wstring& path, IWICBitmapDecoder* decoder, IWICBitma
     PROPVARIANT value;
     PropVariantInit(&value);
     if (SUCCEEDED(reader->GetMetadataByName(L"System.Photo.DateTaken", &value)) && value.vt == VT_FILETIME) {
+        info.takenTime = (ULONGLONG(value.filetime.dwHighDateTime) << 32) | value.filetime.dwLowDateTime;
         SYSTEMTIME utc, local;
         if (FileTimeToSystemTime(&value.filetime, &utc) && SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local)) {
             wchar_t text[32];
@@ -304,6 +308,102 @@ std::shared_ptr<Decoded> Decoder::decode(const std::wstring& path, UINT frameInd
         }
     }
     return result;
+}
+
+namespace {
+
+UINT metadataNumber(IWICMetadataQueryReader* reader, const wchar_t* query, UINT fallback) {
+    if (!reader) return fallback;
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    UINT number = fallback;
+    if (SUCCEEDED(reader->GetMetadataByName(query, &value))) {
+        if (value.vt == VT_UI2) number = value.uiVal;
+        else if (value.vt == VT_UI1) number = value.bVal;
+        else if (value.vt == VT_UI4) number = value.ulVal;
+    }
+    PropVariantClear(&value);
+    return number;
+}
+
+}  // namespace
+
+std::shared_ptr<Animation> Decoder::decodeAnimation(const std::wstring& path, size_t maxBytes) {
+    if (!factory_) return nullptr;
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory_->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
+                                                   decoder.put()))) {
+        return nullptr;
+    }
+    GUID container{};
+    UINT count = 0;
+    if (FAILED(decoder->GetContainerFormat(&container)) || container != GUID_ContainerFormatGif ||
+        FAILED(decoder->GetFrameCount(&count)) || count < 2) {
+        return nullptr;
+    }
+    ComPtr<IWICMetadataQueryReader> global;
+    decoder->GetMetadataQueryReader(global.put());
+    auto animation = std::make_shared<Animation>();
+    animation->width = metadataNumber(global.get(), L"/logscrdesc/Width", 0);
+    animation->height = metadataNumber(global.get(), L"/logscrdesc/Height", 0);
+    if (!animation->width || !animation->height) {
+        ComPtr<IWICBitmapFrameDecode> first;
+        if (FAILED(decoder->GetFrame(0, first.put()))) return nullptr;
+        first->GetSize(&animation->width, &animation->height);
+    }
+    const size_t frameBytes = size_t(animation->stride()) * animation->height;
+    if (frameBytes == 0 || frameBytes * count > maxBytes) return nullptr;
+
+    // GIF frames are patches over what came before: draw each onto a running canvas and keep a
+    // copy of the canvas per frame, following each frame's disposal rule afterwards.
+    std::vector<uint8_t> canvas(frameBytes, 0);
+    std::vector<uint8_t> saved;
+    std::vector<uint8_t> patch;
+    for (UINT index = 0; index < count; ++index) {
+        ComPtr<IWICBitmapFrameDecode> frame;
+        ComPtr<IWICFormatConverter> converter;
+        ComPtr<IWICMetadataQueryReader> reader;
+        if (FAILED(decoder->GetFrame(index, frame.put())) || FAILED(factory_->CreateFormatConverter(converter.put())) ||
+            FAILED(converter->Initialize(frame.get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0,
+                                         WICBitmapPaletteTypeMedianCut))) {
+            break;
+        }
+        frame->GetMetadataQueryReader(reader.put());
+        const UINT left = metadataNumber(reader.get(), L"/imgdesc/Left", 0);
+        const UINT top = metadataNumber(reader.get(), L"/imgdesc/Top", 0);
+        const UINT disposal = metadataNumber(reader.get(), L"/grctlext/Disposal", 0);
+        UINT delay = metadataNumber(reader.get(), L"/grctlext/Delay", 10) * 10;
+        if (delay < 20) delay = 100;  // what browsers do with 0 and 10 ms delays
+
+        UINT w = 0, h = 0;
+        converter->GetSize(&w, &h);
+        patch.resize(size_t(w) * h * 4);
+        if (FAILED(converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(patch.size()), patch.data()))) break;
+        if (disposal == 3) saved = canvas;  // "restore to previous" needs the canvas as it was
+
+        for (UINT y = 0; y < h && top + y < animation->height; ++y) {
+            const uint8_t* src = patch.data() + size_t(y) * w * 4;
+            uint8_t* dst = canvas.data() + size_t(top + y) * animation->stride() + size_t(left) * 4;
+            for (UINT x = 0; x < w && left + x < animation->width; ++x) {
+                if (src[x * 4 + 3]) std::memcpy(dst + x * 4, src + x * 4, 4);  // GIF pixels are opaque or transparent
+            }
+        }
+        auto copy = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[frameBytes]);
+        if (!copy) break;
+        std::memcpy(copy.get(), canvas.data(), frameBytes);
+        animation->frames.push_back(std::move(copy));
+        animation->delaysMs.push_back(delay);
+
+        if (disposal == 2) {  // restore the frame's area to the (transparent) background
+            for (UINT y = 0; y < h && top + y < animation->height; ++y) {
+                uint8_t* dst = canvas.data() + size_t(top + y) * animation->stride() + size_t(left) * 4;
+                std::memset(dst, 0, size_t(std::min(w, animation->width - std::min(left, animation->width))) * 4);
+            }
+        } else if (disposal == 3 && !saved.empty()) {
+            canvas = saved;
+        }
+    }
+    return animation->frames.size() >= 2 ? animation : nullptr;
 }
 
 std::vector<std::wstring> Decoder::supportedExtensions() {

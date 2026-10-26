@@ -29,4 +29,9 @@ std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const Deco
 /// The pages (1-based, reading order) on each screen.
 std::vector<std::vector<int>> spreads(const std::wstring& path, int layout);
 
+/// Whether the last attempt to open `path` failed for want of a (correct) password.
+bool needsPassword(const std::wstring& path);
+/// Remembered for this session only, in memory; never written anywhere.
+void setPassword(const std::wstring& path, const std::wstring& password);
+
 }  // namespace Pdf

@@ -2,6 +2,8 @@
 
 #include "AdjustmentsDialog.h"
 #include "Editing.h"
+#include "ParameterStore.h"
+#include "PasswordDialog.h"
 #include "Pdf.h"
 #include "SettingsDialog.h"
 
@@ -29,6 +31,11 @@ namespace {
 constexpr UINT WM_APP_DECODED = WM_APP + 1;
 constexpr UINT WM_APP_FOLDER = WM_APP + 2;
 constexpr UINT WM_APP_GPU_READY = WM_APP + 3;
+constexpr UINT WM_APP_ANIMATION = WM_APP + 4;
+constexpr UINT_PTR kAnimationTimer = 4;
+constexpr UINT_PTR kIdleTimer = 5;
+constexpr UINT kIdleDelayMs = 1500;
+constexpr size_t kAnimationBudget = size_t(512) << 20;  // longer/larger GIFs just show their first frame
 constexpr UINT_PTR kSlideshowTimer = 1;
 constexpr UINT_PTR kHoldTimer = 2;
 constexpr UINT_PTR kBusyTimer = 3;
@@ -74,6 +81,16 @@ enum Command {
     CmdFullScreen,
     CmdRightToLeft,
     CmdRecycle,
+    CmdPrint,
+    CmdPaste,
+    CmdCopyOriginal,
+    CmdDateNow,
+    CmdDateTaken,
+    CmdNextPage,
+    CmdPreviousPage,
+    CmdSaveParameters,
+    CmdClearParameters,
+    CmdControls,
     CmdSettings,
     CmdAbout,
     CmdExit,
@@ -86,6 +103,12 @@ enum Command {
 struct FolderResult {
     std::wstring selected;  // empty: a folder was opened, show its first image
     std::vector<FileEntry> files;
+};
+
+struct AnimationResult {
+    unsigned generation;
+    std::wstring path;
+    std::shared_ptr<Animation> animation;
 };
 
 D2D1_MATRIX_3X2_F matrix(float m11, float m12, float m21, float m22, float dx = 0, float dy = 0) {
@@ -277,6 +300,18 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
 
+    case WM_APP_ANIMATION: {
+        std::unique_ptr<AnimationResult> result(reinterpret_cast<AnimationResult*>(lParam));
+        if (result->generation != animationGeneration_ || !result->animation || result->animation->frames.size() < 2 || !current_ ||
+            !samePath(result->path, current_->info.path)) {
+            return 0;  // you've moved on
+        }
+        animation_ = result->animation;
+        animationFrame_ = 0;
+        showAnimationFrame();
+        return 0;
+    }
+
     case WM_APP_GPU_READY:
         // Swap to GPU drawing; the picture doesn't move, only the drawing path changes.
         if (!context_ && initGraphics()) {
@@ -307,6 +342,40 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 busy_ = true;
                 render();
             }
+        } else if (wParam == kAnimationTimer) {
+            if (animation_) {
+                animationFrame_ = (animationFrame_ + 1) % animation_->frames.size();
+                showAnimationFrame();
+            }
+        } else if (wParam == kIdleTimer) {
+            // The mouse has rested: hide the buttons (unless it's on them) and, in full
+            // screen, the pointer.
+            KillTimer(hwnd_, kIdleTimer);
+            if (barVisible_ && controlBarHit(lastMouse_) < 0) {
+                barVisible_ = false;
+                barHover_ = -1;
+                render();
+            }
+            if (fullScreen_ && settings_.hideCursor && !dragging_) {
+                cursorHidden_ = true;
+                SetCursor(nullptr);
+            }
+        }
+        return 0;
+
+    case WM_SETCURSOR:
+        if (cursorHidden_ && LOWORD(lParam) == HTCLIENT) {
+            SetCursor(nullptr);
+            return TRUE;
+        }
+        break;
+
+    case WM_MOUSELEAVE:
+        trackingMouse_ = false;
+        if (barVisible_) {
+            barVisible_ = false;
+            barHover_ = -1;
+            render();
         }
         return 0;
 
@@ -373,7 +442,13 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
 
-    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDOWN: {
+        const POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (const int button = barVisible_ ? controlBarHit(p) : -1; button >= 0) {
+            command(barButtons_[button].command);
+            render();
+            return 0;
+        }
         if (!current_) return 0;
         SetCapture(hwnd_);
         dragging_ = true;
@@ -387,8 +462,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             SetTimer(hwnd_, kHoldTimer, kHoldDelayMs, nullptr);
         }
         return 0;
+    }
 
     case WM_MOUSEMOVE:
+        mouseActivity(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         if (dragging_) {
             POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (magnifying_) {
@@ -541,6 +618,24 @@ bool Viewer::onKey(WPARAM key, bool control, bool shift) {
         if (!control) return false;
         command(CmdOpen);
         break;
+    case 'P':
+        if (!control) return false;
+        command(CmdPrint);
+        break;
+    case 'X':
+        if (!control) return false;
+        command(CmdCopyOriginal);
+        break;
+    case 'V':
+        if (!control) return false;
+        command(CmdPaste);
+        break;
+    case 'N':
+        if (!control) return false;
+        command(CmdControls);
+        break;
+    case VK_OEM_4: command(CmdPreviousPage); break;  // [
+    case VK_OEM_6: command(CmdNextPage); break;      // ]
     case VK_ESCAPE:
         if (dragging_) {
             ReleaseCapture();
@@ -599,6 +694,9 @@ void Viewer::updateTitle() {
         } else {
             title += L"  -  " + std::to_wstring(current_->info.orientedWidth()) + L" x " +
                      std::to_wstring(current_->info.orientedHeight());
+            if (hasPages()) {
+                title += L"  -  page " + std::to_wstring(frame_ + 1) + L"/" + std::to_wstring(current_->info.frameCount);
+            }
         }
         title += L"  -  " + std::to_wstring(static_cast<int>(std::lround(zoom_ * 100))) + L"%";
         if (edited_ || !adjustments_.isIdentity()) title += L"  -  edited";
@@ -632,13 +730,22 @@ void Viewer::showContextMenu(int x, int y) {
     add(menu, CmdSaveAs, L"Save processed image...\tCtrl+S", hasImage);
     add(menu, CmdReload, L"Reload image\tCtrl+R", hasFile);
     add(menu, CmdReveal, L"Open containing folder in Explorer\tW", hasFile);
+    add(menu, CmdPrint, L"Print image...\tCtrl+P", hasImage);
+    HMENU date = CreatePopupMenu();
+    add(date, CmdDateNow, L"To now", hasFile && !pdf);
+    add(date, CmdDateTaken, L"To date taken (EXIF)", hasImage && !pdf && current_->info.takenTime != 0);
+    submenu(menu, date, L"Set modification date");
     add(menu, CmdWallpaper, L"Set as desktop wallpaper", hasFile && !pdf);
     separator(menu);
     add(menu, CmdCopy, L"Copy to clipboard\tCtrl+C", hasImage);
+    add(menu, CmdCopyOriginal, L"Copy original size image\tCtrl+X", hasImage);
     add(menu, CmdCopyPath, L"Copy file path\tCtrl+Shift+C", hasFile);
+    add(menu, CmdPaste, L"Paste from clipboard\tCtrl+V",
+        IsClipboardFormatAvailable(CF_HDROP) || IsClipboardFormatAvailable(CF_DIB));
     separator(menu);
     add(menu, CmdInfo, L"Show picture info (EXIF)\tF2", true, settings_.showInfo);
     add(menu, CmdFilename, L"Show filename\tCtrl+F2", true, settings_.showFilename);
+    add(menu, CmdControls, L"Show navigation panel\tCtrl+N", true, settings_.showControls);
     separator(menu);
     add(menu, CmdNext, L"Next image\tSpace", several);
     add(menu, CmdPrevious, L"Previous image\tBackspace", several);
@@ -648,6 +755,9 @@ void Viewer::showContextMenu(int x, int y) {
     add(navigation, CmdLast, L"Last image\tEnd", navigator_.count() > 1);
     separator(navigation);
     add(navigation, CmdLoop, L"Loop through folder", true, settings_.loop);
+    separator(navigation);
+    add(navigation, CmdNextPage, L"Next page\t]", hasPages() || pdf);
+    add(navigation, CmdPreviousPage, L"Previous page\t[", hasPages() || pdf);
     submenu(menu, navigation, L"Navigation");
 
     HMENU order = CreatePopupMenu();
@@ -688,6 +798,10 @@ void Viewer::showContextMenu(int x, int y) {
     add(menu, CmdAutoCorrect, L"Auto correction\tF5", hasImage, adjustments_.autoCorrect);
     add(menu, CmdAdjustments, L"Adjustments...\tE", hasImage);
     add(menu, CmdKeepAdjustments, L"Keep parameters\tF4", true, settings_.keepAdjustments);
+    separator(menu);
+    add(menu, CmdSaveParameters, L"Save parameters to DB", hasFile && !adjustments_.isIdentity());
+    add(menu, CmdClearParameters, L"Clear parameters from DB",
+        hasFile && ParameterStore::load(*navigator_.current()).has_value());
     separator(menu);
 
     HMENU zoom = CreatePopupMenu();
@@ -753,7 +867,21 @@ void Viewer::command(int id) {
     case CmdReload: reload(); break;
     case CmdReveal: revealInExplorer(); break;
     case CmdWallpaper: setAsWallpaper(); break;
-    case CmdCopy: copyImage(); break;
+    case CmdCopy: copyImage(false); break;
+    case CmdCopyOriginal: copyImage(true); break;
+    case CmdPrint: printImage(); break;
+    case CmdPaste: pasteFromClipboard(); break;
+    case CmdDateNow: setModificationDate(false); break;
+    case CmdDateTaken: setModificationDate(true); break;
+    case CmdNextPage: changePage(1); break;
+    case CmdPreviousPage: changePage(-1); break;
+    case CmdSaveParameters: saveParameters(); break;
+    case CmdClearParameters: clearParameters(); break;
+    case CmdControls:
+        settings_.showControls = !settings_.showControls;
+        settings_.save();
+        if (!settings_.showControls) barVisible_ = false;
+        break;
     case CmdCopyPath: copyPath(); break;
     case CmdInfo:
         settings_.showInfo = !settings_.showInfo;
@@ -871,6 +999,10 @@ void Viewer::applySettings() {
         }
     }
     if (slideshow_) SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
+    if (!settings_.showControls) {
+        barVisible_ = false;
+        barHover_ = -1;
+    }
     if (pipeline_) pipeline_->setCostLimit(cacheLimit());
     if (zoomMode_ == ZoomMode::Fit) applyZoomMode();
     updateTitle();
@@ -938,10 +1070,11 @@ void Viewer::copyPath() {
     CloseClipboard();
 }
 
-void Viewer::copyImage() {
+void Viewer::copyImage(bool originalSize) {
     if (!current_) return;
-    // Upright, as on screen, with adjustments applied.
-    auto upright = Editing::orient(*current_, orientation());
+    // Upright, as on screen (or at full resolution), with adjustments applied.
+    if (originalSize) SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    auto upright = originalSize ? fullResolutionUpright() : Editing::orient(*current_, orientation());
     if (!upright) return;
     if (!adjustments_.isIdentity()) {
         if (auto adjusted = applyAdjustmentsForSaving(*upright)) upright = adjusted;
@@ -966,6 +1099,323 @@ void Viewer::copyImage() {
         SetClipboardData(CF_DIB, memory);
     }
     CloseClipboard();
+}
+
+void Viewer::printImage() {
+    if (!current_) return;
+    PRINTDLGW dialog{sizeof(dialog)};
+    dialog.hwndOwner = hwnd_;
+    dialog.Flags = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION | PD_USEDEVMODECOPIESANDCOLLATE;
+    if (!PrintDlgW(&dialog)) return;
+    SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    auto upright = fullResolutionUpright();
+    if (upright && !adjustments_.isIdentity()) {
+        if (auto adjusted = applyAdjustmentsForSaving(*upright)) upright = adjusted;
+    }
+    if (upright) {
+        HDC dc = dialog.hDC;
+        // As large as fits the printable area, centred, keeping the proportions.
+        const double pageW = GetDeviceCaps(dc, HORZRES), pageH = GetDeviceCaps(dc, VERTRES);
+        const double scale = std::min(pageW / upright->width, pageH / upright->height);
+        const int w = static_cast<int>(upright->width * scale), h = static_cast<int>(upright->height * scale);
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = static_cast<LONG>(upright->width);
+        info.bmiHeader.biHeight = -static_cast<LONG>(upright->height);
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        const std::wstring name = navigator_.current() ? fileName(*navigator_.current()) : L"Glance";
+        DOCINFOW document{sizeof(document)};
+        document.lpszDocName = name.c_str();
+        if (StartDocW(dc, &document) > 0) {
+            StartPage(dc);
+            SetStretchBltMode(dc, HALFTONE);
+            SetBrushOrgEx(dc, 0, 0, nullptr);
+            StretchDIBits(dc, static_cast<int>((pageW - w) / 2), static_cast<int>((pageH - h) / 2), w, h, 0, 0,
+                          static_cast<int>(upright->width), static_cast<int>(upright->height), upright->pixels.get(), &info,
+                          DIB_RGB_COLORS, SRCCOPY);
+            EndPage(dc);
+            EndDoc(dc);
+        }
+    }
+    if (dialog.hDC) DeleteDC(dialog.hDC);
+    if (dialog.hDevMode) GlobalFree(dialog.hDevMode);
+    if (dialog.hDevNames) GlobalFree(dialog.hDevNames);
+}
+
+void Viewer::pasteFromClipboard() {
+    if (!OpenClipboard(hwnd_)) return;
+    std::vector<std::wstring> files;
+    std::shared_ptr<Decoded> pasted;
+    if (HANDLE drop = GetClipboardData(CF_HDROP)) {
+        // Copied files (from Explorer): open them.
+        const UINT count = DragQueryFileW(static_cast<HDROP>(drop), 0xFFFFFFFF, nullptr, 0);
+        for (UINT i = 0; i < count; ++i) {
+            const UINT length = DragQueryFileW(static_cast<HDROP>(drop), i, nullptr, 0);
+            std::wstring path(length, L'\0');
+            DragQueryFileW(static_cast<HDROP>(drop), i, path.data(), length + 1);
+            files.push_back(path);
+        }
+    } else if (HANDLE dib = GetClipboardData(CF_DIB)) {
+        // A copied picture: 24- or 32-bit, either row order.
+        const auto* header = static_cast<const BITMAPINFOHEADER*>(GlobalLock(dib));
+        if (header && (header->biBitCount == 24 || header->biBitCount == 32) &&
+            (header->biCompression == BI_RGB || header->biCompression == BI_BITFIELDS) && header->biWidth > 0 &&
+            header->biHeight != 0) {
+            const UINT width = static_cast<UINT>(header->biWidth);
+            const UINT height = static_cast<UINT>(std::abs(header->biHeight));
+            const bool bottomUp = header->biHeight > 0;
+            const size_t masks = header->biCompression == BI_BITFIELDS && header->biSize == sizeof(BITMAPINFOHEADER) ? 12 : 0;
+            const auto* bits = reinterpret_cast<const uint8_t*>(header) + header->biSize + masks + header->biClrUsed * 4;
+            const size_t sourceStride = ((size_t(width) * header->biBitCount + 31) / 32) * 4;
+            pasted = std::make_shared<Decoded>();
+            pasted->width = width;
+            pasted->height = height;
+            pasted->stride = width * 4;
+            pasted->pixels.reset(new (std::nothrow) uint8_t[pasted->bytes()]);
+            if (pasted->pixels) {
+                const int step = header->biBitCount / 8;
+                for (UINT y = 0; y < height; ++y) {
+                    const uint8_t* src = bits + size_t(bottomUp ? height - 1 - y : y) * sourceStride;
+                    uint8_t* dst = pasted->pixels.get() + size_t(y) * pasted->stride;
+                    for (UINT x = 0; x < width; ++x) {
+                        dst[x * 4 + 0] = src[x * step + 0];
+                        dst[x * 4 + 1] = src[x * step + 1];
+                        dst[x * 4 + 2] = src[x * step + 2];
+                        dst[x * 4 + 3] = 255;  // clipboard alpha is unreliable; treat as opaque
+                    }
+                }
+            } else {
+                pasted.reset();
+            }
+        }
+        if (header) GlobalUnlock(dib);
+    }
+    CloseClipboard();
+
+    if (pasted) {
+        // Everything here works on files, so a pasted picture becomes one, in its own temporary
+        // folder so navigation doesn't wander into other temporary files.
+        wchar_t temp[MAX_PATH];
+        GetTempPathW(MAX_PATH, temp);
+        const std::wstring folder = std::wstring(temp) + L"Glance Pasted " + std::to_wstring(GetTickCount64());
+        CreateDirectoryW(folder.c_str(), nullptr);
+        const std::wstring path = folder + L"\\Pasted image.png";
+        if (Editing::save(*pasted, path, GUID_ContainerFormatPng, 100, L"")) files.push_back(path);
+    }
+    if (!files.empty()) open(files);
+}
+
+void Viewer::setModificationDate(bool toDateTaken) {
+    const std::wstring* path = navigator_.current();
+    if (!path) return;
+    FILETIME time{};
+    if (toDateTaken) {
+        if (!current_ || !current_->info.takenTime) return;
+        time.dwLowDateTime = static_cast<DWORD>(current_->info.takenTime);
+        time.dwHighDateTime = static_cast<DWORD>(current_->info.takenTime >> 32);
+    } else {
+        GetSystemTimeAsFileTime(&time);
+    }
+    HANDLE file = CreateFileW(path->c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        MessageBoxW(hwnd_, L"The file's date couldn't be changed.", L"Glance", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    SetFileTime(file, nullptr, nullptr, &time);
+    CloseHandle(file);
+}
+
+void Viewer::saveParameters() {
+    if (const std::wstring* path = navigator_.current()) ParameterStore::save(*path, adjustments_);
+}
+
+void Viewer::clearParameters() {
+    if (const std::wstring* path = navigator_.current()) ParameterStore::clear(*path);
+}
+
+// MARK: - Animation and pages
+
+void Viewer::startAnimation() {
+    stopAnimation();
+    if (!current_ || !current_->info.isGif || current_->info.frameCount < 2) return;
+    // Decoding every frame takes a moment for a long GIF; the first frame shows meanwhile.
+    const unsigned generation = animationGeneration_;
+    const std::wstring path = current_->info.path;
+    HWND hwnd = hwnd_;
+    std::thread([hwnd, generation, path] {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        std::shared_ptr<Animation> animation;
+        {
+            Decoder decoder;
+            animation = decoder.decodeAnimation(path, kAnimationBudget);
+        }
+        CoUninitialize();
+        PostMessageW(hwnd, WM_APP_ANIMATION, 0, reinterpret_cast<LPARAM>(new AnimationResult{generation, path, animation}));
+    }).detach();
+}
+
+void Viewer::stopAnimation() {
+    ++animationGeneration_;
+    KillTimer(hwnd_, kAnimationTimer);
+    animation_.reset();
+    animationGpu_.reset();
+}
+
+void Viewer::showAnimationFrame() {
+    if (!animation_ || !context_) return;
+    const UINT stride = animation_->stride();
+    if (!animationGpu_) {
+        // One GPU bitmap, refilled with each frame.
+        D2D1_BITMAP_PROPERTIES1 properties{};
+        properties.pixelFormat = {DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED};
+        properties.dpiX = properties.dpiY = 96;
+        GpuImage::Tile tile;
+        if (FAILED(context_->CreateBitmap(D2D1_SIZE_U{animation_->width, animation_->height}, animation_->frames[0].get(),
+                                          stride, &properties, tile.bitmap.put()))) {
+            animation_.reset();
+            return;
+        }
+        tile.rect = D2D1_RECT_F{0, 0, float(animation_->width), float(animation_->height)};
+        animationGpu_ = std::make_shared<GpuImage>();
+        animationGpu_->width = animation_->width;
+        animationGpu_->height = animation_->height;
+        animationGpu_->tiles.push_back(std::move(tile));
+    } else {
+        animationGpu_->tiles[0].bitmap->CopyFromMemory(nullptr, animation_->frames[animationFrame_].get(), stride);
+    }
+    shown_ = animationGpu_;
+    render();
+    SetTimer(hwnd_, kAnimationTimer, animation_->delaysMs[animationFrame_], nullptr);
+}
+
+bool Viewer::hasPages() const {
+    return current_ && !current_->info.isPdf && !current_->info.isGif && current_->info.frameCount > 1 &&
+           navigator_.current() && samePath(current_->info.path, *navigator_.current());
+}
+
+void Viewer::changePage(int delta) {
+    if (showingPdf()) {
+        go(delta);  // a PDF's pages turn the same way as with Space
+        return;
+    }
+    if (!hasPages()) return;
+    const long long target = static_cast<long long>(frame_) + delta;
+    if (target < 0 || target >= static_cast<long long>(current_->info.frameCount)) {
+        MessageBeep(MB_OK);
+        return;
+    }
+    frame_ = static_cast<UINT>(target);
+    showCurrent();
+}
+
+// MARK: - Button bar
+
+bool Viewer::ensureIconFont() {
+    if (!ensureText()) return false;
+    const UINT dpi = GetDpiForWindow(hwnd_);
+    if (iconFormat_ && iconFormatDpi_ == dpi) return true;
+    iconFormat_.reset();
+    // Windows 11's icon font, or Windows 10's.
+    ComPtr<IDWriteFontCollection> fonts;
+    dwrite_->GetSystemFontCollection(fonts.put(), FALSE);
+    UINT32 index = 0;
+    BOOL exists = FALSE;
+    const wchar_t* family = L"Segoe Fluent Icons";
+    if (fonts) fonts->FindFamilyName(family, &index, &exists);
+    if (!exists) family = L"Segoe MDL2 Assets";
+    dwrite_->CreateTextFormat(family, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                              16.0f * dpi / 96.0f, L"", iconFormat_.put());
+    if (!iconFormat_) return false;
+    iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    iconFormatDpi_ = dpi;
+    return true;
+}
+
+void Viewer::mouseActivity(POINT point) {
+    // Windows sends "moves" that aren't (after redraws, for example); only real ones count.
+    if (point.x == lastMouse_.x && point.y == lastMouse_.y) return;
+    lastMouse_ = point;
+    if (cursorHidden_) {
+        cursorHidden_ = false;
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+    }
+    if (!trackingMouse_) {
+        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd_, 0};
+        trackingMouse_ = TrackMouseEvent(&track) != 0;
+    }
+    double width, height;
+    viewSize(width, height);
+    const double scale = GetDpiForWindow(hwnd_) / 96.0;
+    const bool nearBottom = settings_.showControls && current_ && !dragging_ && point.y > height - 110 * scale;
+    const int hover = barVisible_ ? controlBarHit(point) : -1;
+    if (nearBottom != barVisible_ || hover != barHover_) {
+        barVisible_ = nearBottom || hover >= 0;
+        barHover_ = barVisible_ ? hover : -1;
+        render();
+    }
+    SetTimer(hwnd_, kIdleTimer, kIdleDelayMs, nullptr);
+}
+
+int Viewer::controlBarHit(POINT point) const {
+    for (size_t i = 0; i < barButtons_.size(); ++i) {
+        const D2D1_RECT_F& r = barButtons_[i].rect;
+        if (point.x >= r.left && point.x < r.right && point.y >= r.top && point.y < r.bottom) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void Viewer::drawControlBar() {
+    if (!ensureIconFont()) return;
+    // JPEGView's navigation panel: the common commands, one click away.
+    static const struct {
+        int command;
+        const wchar_t* glyph;
+        bool text;
+    } kButtons[] = {
+        {CmdPrevious, L"\xE76B", false},  {CmdNext, L"\xE76C", false},       {CmdRotateLeft, L"\xE7A7", false},
+        {CmdRotateRight, L"\xE7A6", false}, {CmdZoomOut, L"\xE71F", false},   {CmdZoomIn, L"\xE8A3", false},
+        {CmdFit, L"\xE9A6", false},       {CmdActual, L"1:1", true},         {CmdInfo, L"\xE946", false},
+        {CmdAdjustments, L"\xE9E9", false}, {CmdSlideshow, L"\xE768", false}, {CmdFullScreen, L"\xE740", false},
+    };
+    double width, height;
+    viewSize(width, height);
+    const float scale = GetDpiForWindow(hwnd_) / 96.0f;
+    const float size = 40 * scale, gap = 4 * scale, pad = 8 * scale;
+    const float barWidth = std::size(kButtons) * size + (std::size(kButtons) - 1) * gap + pad * 2;
+    const float left = static_cast<float>(width - barWidth) / 2;
+    const float top = static_cast<float>(height) - 20 * scale - size - pad * 2;
+    const D2D1_ROUNDED_RECT bar{{left, top, left + barWidth, top + size + pad * 2}, 10 * scale, 10 * scale};
+    context_->FillRoundedRectangle(&bar, overlayBrush_.get());
+
+    barButtons_.clear();
+    for (size_t i = 0; i < std::size(kButtons); ++i) {
+        const float x = left + pad + i * (size + gap);
+        const D2D1_RECT_F rect{x, top + pad, x + size, top + pad + size};
+        barButtons_.push_back(BarButton{kButtons[i].command, kButtons[i].glyph, kButtons[i].text, rect});
+        if (static_cast<int>(i) == barHover_) {
+            const D2D1_ROUNDED_RECT highlight{rect, 6 * scale, 6 * scale};
+            context_->FillRoundedRectangle(&highlight, overlayBrush_.get());
+        }
+        // The slideshow and full screen buttons show what pressing them does now.
+        const wchar_t* glyph = kButtons[i].glyph;
+        if (kButtons[i].command == CmdSlideshow && slideshow_) glyph = L"\xE769";      // pause
+        if (kButtons[i].command == CmdFullScreen && fullScreen_) glyph = L"\xE73F";    // back to window
+        IDWriteTextFormat* format = kButtons[i].text ? textFormat_.get() : iconFormat_.get();
+        if (kButtons[i].text) {
+            textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+        context_->DrawText(glyph, static_cast<UINT32>(wcslen(glyph)), format, &rect, brush_.get(),
+                           D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+        if (kButtons[i].text) {
+            textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        }
+    }
 }
 
 void Viewer::moveToRecycleBin() {
@@ -1252,7 +1702,15 @@ void Viewer::showCurrent() {
         adjustments_ = Adjustments{};
         AdjustmentsDialog::update(adjustments_);
     }
+    if (path) {
+        // Adjustments saved for this picture ("Save parameters to DB") come back with it.
+        if (auto saved = ParameterStore::load(*path)) {
+            adjustments_ = *saved;
+            AdjustmentsDialog::update(adjustments_);
+        }
+    }
     if (!path) {
+        stopAnimation();
         waiting_ = false;
         pdfScreens_ = 0;
         current_.reset();
@@ -1288,8 +1746,10 @@ void Viewer::show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, b
         pdfPath_ = image->info.path;
         pdfScreens_ = image->info.frameCount;
     }
+    if (resetView) stopAnimation();
     shown_ = context_ ? gpuFor(key, image) : nullptr;
     if (resetView) {
+        if (image->info.isGif && image->info.frameCount > 1) startAnimation();
         quarterTurns_ = 0;
         zoomMode_ = ZoomMode::Fit;
         requestedLevel_ = 0;
@@ -1326,6 +1786,23 @@ void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
         KillTimer(hwnd_, kBusyTimer);
         if (result->image) {
             show(result->key, result->image, true);
+        } else if (Pdf::isPdf(result->key.path) && Pdf::needsPassword(result->key.path)) {
+            // Locked PDF: ask, then try again. A wrong password asks again; Cancel leaves it.
+            static std::wstring lastAsked;
+            const bool retry = samePath(lastAsked, result->key.path);
+            lastAsked = result->key.path;
+            if (auto password = PasswordDialog::ask(hwnd_, fileName(result->key.path), retry)) {
+                Pdf::setPassword(result->key.path, *password);
+                pipeline_->invalidate(result->key.path);
+                forgetGpu(result->key.path);
+                showCurrent();
+                return;
+            }
+            lastAsked.clear();
+            current_.reset();
+            shown_.reset();
+            updateTitle();
+            render();
         } else {
             current_.reset();
             shown_.reset();
@@ -1374,7 +1851,7 @@ void Viewer::prefetchNeighbors() {
 }
 
 void Viewer::requestResolutionIfNeeded() {
-    if (!current_ || edited_) return;
+    if (!current_ || edited_ || animation_ || (current_->info.isGif && current_->info.frameCount > 1)) return;
     const UINT full = current_->info.longSide();
     const UINT have = current_->longSide();
     if (have >= full) return;
@@ -1919,6 +2396,7 @@ void Viewer::render() {
     }
     if (settings_.showInfo || settings_.showFilename) drawOverlay();
     if (busy_ && waiting_) drawBusyNote();
+    if (barVisible_ && settings_.showControls && current_) drawControlBar();
 
     HRESULT hr = context_->EndDraw();
     if (SUCCEEDED(hr)) hr = swapChain_->Present(1, 0);

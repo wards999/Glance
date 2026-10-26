@@ -57,6 +57,8 @@ Settings Settings::load() {
     s.showInfo = flag(L"ShowInfo", s.showInfo);
     s.showFilename = flag(L"ShowFilename", s.showFilename);
     s.pixelatedZoom = flag(L"PixelatedZoom", s.pixelatedZoom);
+    s.showControls = flag(L"ShowControls", s.showControls);
+    s.hideCursor = flag(L"HideCursor", s.hideCursor);
     s.prefetchCount = std::clamp(number(L"PrefetchCount", s.prefetchCount), 0, 8);
     s.cacheMB = std::clamp(number(L"CacheMB", s.cacheMB), 0, 65536);
     s.saveQuality = std::clamp(number(L"SaveQuality", s.saveQuality), 30, 100);
@@ -93,6 +95,8 @@ void Settings::save() const {
     put(L"ShowInfo", showInfo);
     put(L"ShowFilename", showFilename);
     put(L"PixelatedZoom", pixelatedZoom);
+    put(L"ShowControls", showControls);
+    put(L"HideCursor", hideCursor);
     put(L"PrefetchCount", prefetchCount);
     put(L"CacheMB", cacheMB);
     put(L"SaveQuality", saveQuality);

@@ -24,6 +24,8 @@ struct Settings {
     bool showInfo = false;
     bool showFilename = false;
     bool pixelatedZoom = true;  // individual pixels above 400%
+    bool showControls = true;   // button bar when the mouse nears the bottom (JPEGView's navigation panel)
+    bool hideCursor = true;     // in full screen, after the mouse stops
 
     // Performance
     int prefetchCount = 3;

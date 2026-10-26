@@ -48,6 +48,7 @@ int readBlock(void* param, unsigned long position, unsigned char* buffer, unsign
 
 struct Api {
     void (*initLibrary)();
+    unsigned long (*lastError)();
     Document (*loadCustomDocument)(FileAccess* file, const char* password);
     void (*closeDocument)(Document);
     int (*pageCount)(Document);
@@ -131,6 +132,7 @@ const Api* api() {
         ok = function != nullptr;
     };
     find(loaded.initLibrary, "FPDF_InitLibrary");
+    find(loaded.lastError, "FPDF_GetLastError");
     find(loaded.loadCustomDocument, "FPDF_LoadCustomDocument");
     find(loaded.closeDocument, "FPDF_CloseDocument");
     find(loaded.pageCount, "FPDF_GetPageCount");
@@ -172,6 +174,28 @@ struct OpenPage {
 std::list<OpenDocument> g_documents;  // most recent first
 std::list<OpenPage> g_pages;          // most recent first
 
+// Passwords live apart from g_pdfium so the UI never waits behind a slow page to check them.
+std::mutex g_passwordLock;
+std::vector<std::pair<std::wstring, std::string>> g_passwords;  // path, UTF-8 password
+std::vector<std::wstring> g_needsPassword;
+constexpr unsigned long kPasswordError = 4;  // FPDF_ERR_PASSWORD
+
+std::string passwordFor(const std::wstring& path) {
+    std::lock_guard lock(g_passwordLock);
+    for (const auto& [file, password] : g_passwords) {
+        if (samePath(file, path)) return password;
+    }
+    return {};
+}
+
+void markNeedsPassword(const std::wstring& path, bool needs) {
+    std::lock_guard lock(g_passwordLock);
+    g_needsPassword.erase(std::remove_if(g_needsPassword.begin(), g_needsPassword.end(),
+                                         [&](const std::wstring& file) { return samePath(file, path); }),
+                          g_needsPassword.end());
+    if (needs) g_needsPassword.push_back(path);
+}
+
 void closePagesOf(Document document) {
     for (auto it = g_pages.begin(); it != g_pages.end();) {
         if (it->document == document) {
@@ -211,12 +235,16 @@ OpenDocument* open(const std::wstring& path) {
         return nullptr;
     }
     opened.access = std::make_unique<FileAccess>(FileAccess{static_cast<unsigned long>(size.QuadPart), readBlock, opened.file});
-    opened.document = pdfium->loadCustomDocument(opened.access.get(), nullptr);
+    const std::string password = passwordFor(path);
+    opened.document = pdfium->loadCustomDocument(opened.access.get(), password.empty() ? nullptr : password.c_str());
     if (!opened.document) {
+        const bool locked = pdfium->lastError() == kPasswordError;
+        markNeedsPassword(path, locked);
         CloseHandle(opened.file);
-        trace("PDF load failed (damaged, or needs a password)");
+        trace(locked ? "PDF needs a password" : "PDF load failed (damaged?)");
         return nullptr;
     }
+    markNeedsPassword(path, false);
     const int count = pdfium->pageCount(opened.document);
     for (int i = 0; i < count; ++i) {
         SizeF pageSize{612, 792};
@@ -297,6 +325,26 @@ bool isPdf(const std::wstring& path) { return Navigator::extensionOf(path) == L"
 bool available() {
     static const bool present = GetFileAttributesW(dllPath().c_str()) != INVALID_FILE_ATTRIBUTES;
     return present;
+}
+
+bool needsPassword(const std::wstring& path) {
+    std::lock_guard lock(g_passwordLock);
+    for (const auto& file : g_needsPassword) {
+        if (samePath(file, path)) return true;
+    }
+    return false;
+}
+
+void setPassword(const std::wstring& path, const std::wstring& password) {
+    // PDFium takes the password as UTF-8.
+    const int length = WideCharToMultiByte(CP_UTF8, 0, password.c_str(), static_cast<int>(password.size()), nullptr, 0, nullptr, nullptr);
+    std::string utf8(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, password.c_str(), static_cast<int>(password.size()), utf8.data(), length, nullptr, nullptr);
+    std::lock_guard lock(g_passwordLock);
+    g_passwords.erase(std::remove_if(g_passwords.begin(), g_passwords.end(),
+                                     [&](const auto& entry) { return samePath(entry.first, path); }),
+                      g_passwords.end());
+    g_passwords.emplace_back(path, std::move(utf8));
 }
 
 std::vector<std::vector<int>> spreads(const std::wstring& path, int layout) {

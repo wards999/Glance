@@ -23,6 +23,8 @@ struct ImageInfo {
     std::wstring camera;
     std::wstring lens;
     std::wstring taken;     // "2024-05-01 10:22"
+    unsigned long long takenTime = 0;  // the same, as a FILETIME (UTC); 0 if unknown
+    bool isGif = false;     // frames are animation frames, not pages
     std::wstring exposure;  // "1/250 s   f/2.8   ISO 100   35 mm"
 
     // PDFs: frameCount counts screens (pages or spreads); this says which pages are showing.
@@ -60,6 +62,16 @@ struct Decoded {
     UINT longSide() const { return width > height ? width : height; }
 };
 
+/// An animated GIF, every frame already composited to a full canvas (premultiplied BGRA).
+struct Animation {
+    UINT width = 0;
+    UINT height = 0;
+    std::vector<std::unique_ptr<uint8_t[]>> frames;
+    std::vector<UINT> delaysMs;
+
+    UINT stride() const { return width * 4; }
+};
+
 /// Wraps WIC. Use one per thread.
 class Decoder {
 public:
@@ -70,6 +82,10 @@ public:
     /// `urgent`: someone is waiting to see this (as opposed to decoding ahead).
     std::shared_ptr<Decoded> decode(const std::wstring& path, UINT frame, const DecodeRequest& request, int pdfLayout = -1,
                                     bool urgent = true);
+
+    /// All frames of an animated GIF. Null if it isn't one, or the frames would need more than
+    /// `maxBytes` (very long or very large animations just show their first frame).
+    std::shared_ptr<Animation> decodeAnimation(const std::wstring& path, size_t maxBytes);
 
     /// Lower-case extensions (no dot) that the installed WIC codecs can decode, including
     /// Store extensions such as HEIF, WebP, AVIF and RAW when they're installed.

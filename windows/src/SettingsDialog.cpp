@@ -28,6 +28,8 @@ enum Id {
     IdInfo,
     IdFilename,
     IdPixels,
+    IdControls,
+    IdHideCursor,
     IdPrefetch,
     IdCache,
     IdQuality,
@@ -118,13 +120,15 @@ SIZE build() {
                {L"1 second", L"2 seconds", L"3 seconds", L"5 seconds", L"10 seconds", L"30 seconds"},
                indexOf(kSlideshowSeconds, s.slideshowSeconds, 2));
     left.endGroup();
-    left.group(L"Display", 6);
+    left.group(L"Display", 8);
     left.checkbox(IdStartFullScreen, L"Open in full screen", s.startFullScreen);
     left.checkbox(IdEnlarge, L"Enlarge small images to fit the window", s.enlargeSmall);
     left.button(IdBackground, L"Background:", L"Choose colour...");
     left.checkbox(IdInfo, L"Show picture info (EXIF)", s.showInfo);
     left.checkbox(IdFilename, L"Show the file name", s.showFilename);
     left.checkbox(IdPixels, L"Show individual pixels above 400% zoom", s.pixelatedZoom);
+    left.checkbox(IdControls, L"Show buttons when the mouse nears the bottom", s.showControls);
+    left.checkbox(IdHideCursor, L"Hide the mouse pointer in full screen", s.hideCursor);
     left.endGroup();
 
     Column right{544, 500};
@@ -198,6 +202,8 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case IdInfo: s.showInfo = checked; break;
         case IdFilename: s.showFilename = checked; break;
         case IdPixels: s.pixelatedZoom = checked; break;
+        case IdControls: s.showControls = checked; break;
+        case IdHideCursor: s.hideCursor = checked; break;
         case IdPrefetch: s.prefetchCount = selection; break;
         case IdCache: s.cacheMB = pick(kCacheMB, selection, 0); break;
         case IdQuality: s.saveQuality = pick(kQuality, selection, 90); break;

@@ -117,6 +117,28 @@ private:
     void losslessTransform(int which);
     void revertEdits();
 
+    // Animated GIFs: frames decode on a worker thread, then play on a timer
+    void startAnimation();
+    void stopAnimation();
+    void showAnimationFrame();
+
+    // Multi-page TIFFs (PDF pages turn with go())
+    void changePage(int delta);
+    bool hasPages() const;
+
+    // The button bar at the bottom, and hiding the pointer in full screen
+    void drawControlBar();
+    int controlBarHit(POINT point) const;
+    void mouseActivity(POINT point);
+    bool ensureIconFont();
+
+    // More file commands
+    void printImage();
+    void pasteFromClipboard();
+    void setModificationDate(bool toDateTaken);
+    void saveParameters();
+    void clearParameters();
+
     // Window, menu and commands
     void setFullScreen(bool on);
     void updateTitle();
@@ -125,7 +147,8 @@ private:
     bool onKey(WPARAM key, bool control, bool shift);
     void applySettings();
     void setSlideshow(bool on);
-    void copyImage();
+    /// `originalSize`: the full-resolution picture, rather than what's on screen.
+    void copyImage(bool originalSize);
     void copyPath();
     void revealInExplorer();
     void setAsWallpaper();
@@ -218,6 +241,26 @@ private:
     Levels levels_;
     std::wstring levelsFor_;
     std::shared_ptr<Decoded> edited_;  // after a crop: upright, full-resolution pixels
+
+    std::shared_ptr<Animation> animation_;
+    std::shared_ptr<GpuImage> animationGpu_;
+    size_t animationFrame_ = 0;
+    unsigned animationGeneration_ = 0;  // a newer picture makes older animation decodes irrelevant
+
+    struct BarButton {
+        int command;
+        const wchar_t* glyph;  // Segoe icon font character, or text
+        bool text;
+        D2D1_RECT_F rect;
+    };
+    std::vector<BarButton> barButtons_;
+    bool barVisible_ = false;
+    int barHover_ = -1;
+    bool trackingMouse_ = false;
+    bool cursorHidden_ = false;
+    POINT lastMouse_{-1, -1};
+    ComPtr<IDWriteTextFormat> iconFormat_;
+    UINT iconFormatDpi_ = 0;
 
     bool fullScreen_ = false;
     bool slideshow_ = false;
