@@ -762,7 +762,9 @@ void VideoPlayer::drawControls() {
     target_->DrawText(muteGlyph, 1, iconFormat_.get(), local(muteRect_), white.get());
     const std::wstring now = clock(shownTime), total = clock(duration_);
     target_->DrawText(now.c_str(), static_cast<UINT32>(now.size()), textFormat_.get(), local(nowRect), white.get());
-    target_->DrawText(total.c_str(), static_cast<UINT32>(total.size()), textFormat_.get(), local(totalRect), dim.get());
+    ComPtr<ID2D1SolidColorBrush> soft;
+    target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.75f), soft.put());
+    target_->DrawText(total.c_str(), static_cast<UINT32>(total.size()), textFormat_.get(), local(totalRect), soft.get());
 
     // Timeline: thicker under the pointer, played part solid, a knob at the playhead.
     D2D1_RECT_F track = local(trackRect_);
