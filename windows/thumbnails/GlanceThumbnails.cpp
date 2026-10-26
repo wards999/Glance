@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <olectl.h>  // SELFREG_E_CLASS
 #include <thumbcache.h>
 
 #include <algorithm>
