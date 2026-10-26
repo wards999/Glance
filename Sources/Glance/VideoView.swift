@@ -448,12 +448,11 @@ final class VideoView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if event.clickCount == 2 {
+        // On the bar, quick clicks are separate presses (Next File twice, say), not a double-click.
+        if event.clickCount == 2 && !(!controls.isHidden && controls.barRect.contains(point)) {
             // The first click already played or paused; undo that, and switch full screen.
-            if !controls.barRect.contains(point) {
-                togglePause()
-                delegate?.videoViewToggleFullScreen(self)
-            }
+            togglePause()
+            delegate?.videoViewToggleFullScreen(self)
             pressedOnPicture = false
             return
         }
