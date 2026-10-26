@@ -20,7 +20,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <cwchar>
 #include <iterator>
@@ -165,15 +164,15 @@ ComPtr<ID3D11Device> createDevice() {
 
 // MARK: - PDF thumbnails in Explorer (GlanceThumbnails.dll, beside Glance.exe)
 
-constexpr wchar_t kThumbnailHandlerKey[] = L"Software\Classes\.pdf\ShellEx\{e357fccd-a995-4576-b01f-234630154e96}";
+constexpr wchar_t kThumbnailHandlerKey[] = L"Software\\Classes\\.pdf\\ShellEx\\{e357fccd-a995-4576-b01f-234630154e96}";
 constexpr wchar_t kThumbnailServerKey[] =
-    L"Software\Classes\CLSID\{B6E3C3A1-5F0D-4E8B-9C2A-7D41E6F0A9B3}\InprocServer32";
+    L"Software\\Classes\\CLSID\\{B6E3C3A1-5F0D-4E8B-9C2A-7D41E6F0A9B3}\\InprocServer32";
 constexpr wchar_t kThumbnailClsid[] = L"{B6E3C3A1-5F0D-4E8B-9C2A-7D41E6F0A9B3}";
 
 std::wstring thumbnailDll() {
     wchar_t exe[MAX_PATH * 4];
     const DWORD length = GetModuleFileNameW(nullptr, exe, static_cast<DWORD>(std::size(exe)));
-    return Navigator::folderOf(std::wstring(exe, length)) + L"\GlanceThumbnails.dll";
+    return Navigator::folderOf(std::wstring(exe, length)) + L"\\GlanceThumbnails.dll";
 }
 
 bool thumbnailDllPresent() {
@@ -894,12 +893,6 @@ void Viewer::showContextMenu(int x, int y) {
         for (int i = 0; i < 4; ++i) add(pages, CmdPdfLayoutBase + i, layouts[i], true, settings_.pdfLayout == i);
         separator(pages);
         add(pages, CmdRightToLeft, L"Right to left", true, settings_.pdfRightToLeft);
-        {
-            const std::wstring dll = thumbnailDll();
-            char line[1200];
-            snprintf(line, sizeof(line), "thumbnail dll %ls present=%d registered=%d", dll.c_str(), thumbnailDllPresent(), thumbnailsRegistered());
-            trace(line);
-        }
         if (thumbnailDllPresent()) {
             separator(pages);
             add(pages, CmdPdfThumbnails, L"Show PDF covers in Explorer", true, thumbnailsRegistered());
