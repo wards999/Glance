@@ -21,6 +21,7 @@ final class VideoView: NSView {
         var alwaysSubtitles = false
         var subtitleLanguage = 0  // index into VideoLanguages.all
         var volume = 100          // where the player starts (the level you last left it at)
+        var muted = false         // and whether it was muted
     }
 
     weak var delegate: VideoViewDelegate?
@@ -112,6 +113,7 @@ final class VideoView: NSView {
             ("config", "no"),
             ("audio-display", "no"),
             ("volume", "\(min(max(options.volume, 0), 100))"),
+            ("mute", options.muted ? "yes" : "no"),
             // Subtitle files beside the video load even when named "Movie.en.srt" or kept in a Subs
             // folder; which one shows is Glance's choice (chooseSubtitles).
             ("sub-auto", "fuzzy"),
@@ -257,6 +259,7 @@ final class VideoView: NSView {
         mpv.set(handle, "mute", "no")
         let volume = Int(mpv.double(handle, "volume") ?? 100)
         Settings.shared.videoVolume = volume  // remembered for next time
+        Settings.shared.videoMuted = false
         flash("Volume \(volume)%")
     }
 
@@ -268,13 +271,16 @@ final class VideoView: NSView {
         mpv.set(handle, "volume", "\(volume)")
         mpv.set(handle, "mute", "no")
         Settings.shared.videoVolume = volume  // remembered for next time
+        Settings.shared.videoMuted = false
         flash("Volume \(volume)%")
     }
 
     func toggleMute() {
         guard isOpen else { return }
         mpv.run(handle, ["cycle", "mute"])
-        flash(mpv.flag(handle, "mute") == true ? "Muted" : "Sound on")
+        let muted = mpv.flag(handle, "mute") == true
+        Settings.shared.videoMuted = muted  // remembered for next time
+        flash(muted ? "Muted" : "Sound on")
     }
 
     // MARK: - Drawing (called by the layer)

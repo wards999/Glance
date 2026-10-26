@@ -1339,7 +1339,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var videoOptions: VideoView.Options {
         VideoView.Options(autoplay: settings.videoAutoplay, previews: settings.videoTimelinePictures,
                           loopShort: settings.videoLoopShortClips, alwaysSubtitles: settings.alwaysSubtitles,
-                          subtitleLanguage: settings.subtitleLanguage, volume: settings.videoVolume)
+                          subtitleLanguage: settings.subtitleLanguage, volume: settings.videoVolume,
+                          muted: settings.videoMuted)
     }
 
     /// The player view, made the first time it's needed; nil without libmpv.

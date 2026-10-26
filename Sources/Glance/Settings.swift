@@ -70,6 +70,7 @@ final class Settings {
         static let alwaysSubtitles = "alwaysSubtitles"
         static let subtitleLanguage = "subtitleLanguage"
         static let videoVolume = "videoVolume"
+        static let videoMuted = "videoMuted"
     }
 
     private let defaults = UserDefaults.standard
@@ -114,6 +115,7 @@ final class Settings {
             Key.alwaysSubtitles: false,
             Key.subtitleLanguage: 0,
             Key.videoVolume: 100,
+            Key.videoMuted: false,
         ])
     }
 
@@ -318,6 +320,12 @@ final class Settings {
     var videoVolume: Int {
         get { defaults.integer(forKey: Key.videoVolume) }
         set { defaults.set(min(max(newValue, 0), 100), forKey: Key.videoVolume) }
+    }
+
+    /// Whether video was left muted. Saved quietly as it changes.
+    var videoMuted: Bool {
+        get { defaults.bool(forKey: Key.videoMuted) }
+        set { defaults.set(newValue, forKey: Key.videoMuted) }
     }
 
     private func store(_ value: Any, _ key: String) {

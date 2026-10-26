@@ -50,6 +50,7 @@ struct Settings {
     int subtitleMode = 0;         // 0 only forced (foreign dialogue), 1 always
     int subtitleLanguage = 0;     // index into Video::languages(); 0 English
     int videoVolume = 100;        // percent, as last left (saved when Glance closes)
+    bool videoMuted = false;      // likewise
 
     // Window position, remembered between runs (empty: centred, 80% of the screen)
     RECT windowRect{};
