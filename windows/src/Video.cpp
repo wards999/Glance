@@ -744,19 +744,23 @@ void VideoPlayer::previewWorker() {
             time = ahead[nextAhead++];
             exact = false;  // made ahead: the keyframe is enough, and quick
         }
-        // A frame mpv drew before this seek mustn't be taken for the new one.
+        // A frame mpv drew before this seek mustn't be taken for the new one, and old events
+        // (seeks and restarts) are of no interest.
         if (mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) renderInto(scratch, 16, 16);
+        while (mpv->waitEvent(handle, 0)->event_id != MPV_EVENT_NONE) {
+        }
         char at[32];
         snprintf(at, sizeof(at), "%.3f", time);
         const auto started = std::chrono::steady_clock::now();
         run(mpv, handle, {"seek", at, exact ? "absolute+exact" : "absolute+keyframes"});
-        waitFor(mpv, handle, MPV_EVENT_PLAYBACK_RESTART, 3);
+        // Take the frame the moment it's decoded. (Not "playback restarted": with this renderer mpv
+        // only reports that once the frame has been drawn, so waiting for it costs ~200 ms each.)
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+        while (!(mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) && std::chrono::steady_clock::now() < deadline) {
+            Sleep(1);
+        }
         double shown = time;
         mpv->getProperty(handle, "time-pos", MPV_FORMAT_DOUBLE, &shown);  // where a keyframe seek landed
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-        while (!(mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) && std::chrono::steady_clock::now() < deadline) {
-            Sleep(2);
-        }
         double w = 16, h = 9;
         mpv->getProperty(handle, "dwidth", MPV_FORMAT_DOUBLE, &w);
         mpv->getProperty(handle, "dheight", MPV_FORMAT_DOUBLE, &h);

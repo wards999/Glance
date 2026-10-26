@@ -1176,11 +1176,13 @@ final class PreviewMaker {
         // A frame mpv drew before this seek mustn't be taken for the new one.
         var scratch: [UInt8] = []
         if mpv.renderUpdate(context) & frameFlag != 0 { render(into: &scratch, width: 16, height: 16) }
+        while let event = mpv.waitEvent(handle, 0)?.pointee, event.event_id != MPV_EVENT_NONE {}  // old seeks and restarts
         mpv.run(handle, ["seek", String(format: "%.3f", time), exact ? "absolute+exact" : "absolute+keyframes"])
-        _ = mpv.wait(handle, for: MPV_EVENT_PLAYBACK_RESTART, timeout: 3)
+        // Take the frame the moment it's decoded. (Not "playback restarted": with this renderer mpv
+        // only reports that once the frame has been drawn, so waiting for it costs ~200 ms each.)
+        let deadline = Date().addingTimeInterval(1.5)
+        while mpv.renderUpdate(context) & frameFlag == 0 && Date() < deadline { usleep(1000) }
         let shown = mpv.double(handle, "time-pos") ?? time  // where a keyframe seek landed
-        let deadline = Date().addingTimeInterval(0.5)
-        while mpv.renderUpdate(context) & frameFlag == 0 && Date() < deadline { usleep(2000) }
         let w = mpv.double(handle, "dwidth") ?? 16, h = mpv.double(handle, "dheight") ?? 9
         let height = max(2, Int((Double(width) * (w > 0 && h > 0 ? h / w : 9.0 / 16)).rounded()))
         var pixels: [UInt8] = []
