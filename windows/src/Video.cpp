@@ -746,7 +746,12 @@ void VideoPlayer::previewWorker() {
         }
         // A frame mpv drew before this seek mustn't be taken for the new one, and old events
         // (seeks and restarts) are of no interest.
-        const auto t0 = std::chrono::steady_clock::now();
+        // The picture's size, from the video's shape: asked before seeking, because once a frame
+        // is waiting mpv answers nothing until it has been drawn (a ~200 ms stall).
+        double w = 16, h = 9;
+        mpv->getProperty(handle, "dwidth", MPV_FORMAT_DOUBLE, &w);
+        mpv->getProperty(handle, "dheight", MPV_FORMAT_DOUBLE, &h);
+        const int height = std::max(2, static_cast<int>(std::lround(width * (h > 0 && w > 0 ? h / w : 9.0 / 16))));
         if (mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) renderInto(scratch, 16, 16);
         while (mpv->waitEvent(handle, 0)->event_id != MPV_EVENT_NONE) {
         }
@@ -754,33 +759,27 @@ void VideoPlayer::previewWorker() {
         snprintf(at, sizeof(at), "%.3f", time);
         const auto started = std::chrono::steady_clock::now();
         run(mpv, handle, {"seek", at, exact ? "absolute+exact" : "absolute+keyframes"});
-        const auto t1 = std::chrono::steady_clock::now();
         // Take the frame the moment it's decoded. (Not "playback restarted": with this renderer mpv
         // only reports that once the frame has been drawn, so waiting for it costs ~200 ms each.)
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
         while (!(mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) && std::chrono::steady_clock::now() < deadline) {
             Sleep(1);
         }
-        const auto t2 = std::chrono::steady_clock::now();
-        double shown = time;
-        mpv->getProperty(handle, "time-pos", MPV_FORMAT_DOUBLE, &shown);  // where a keyframe seek landed
-        double w = 16, h = 9;
-        mpv->getProperty(handle, "dwidth", MPV_FORMAT_DOUBLE, &w);
-        mpv->getProperty(handle, "dheight", MPV_FORMAT_DOUBLE, &h);
-        const int height = std::max(2, static_cast<int>(std::lround(width * (h > 0 && w > 0 ? h / w : 9.0 / 16))));
+        // Draw it straight away, then ask where a keyframe seek landed.
         auto result = std::make_unique<PreviewResult>();
+        renderInto(result->pixels, static_cast<int>(width), height);
+        double shown = time;
+        mpv->getProperty(handle, "time-pos", MPV_FORMAT_DOUBLE, &shown);
         result->generation = generation;
         result->exact = exact;
         result->time = shown;
         result->width = width;
         result->height = static_cast<UINT>(height);
-        renderInto(result->pixels, static_cast<int>(width), height);
         for (size_t i = 3; i < result->pixels.size(); i += 4) result->pixels[i] = 255;  // bgr0 -> opaque BGRA
         {
-            auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
-            char line[160];
-            snprintf(line, sizeof(line), "preview %s %.1f s: drain %.0f, seek %.0f, frame %.0f, draw %.0f ms", exact ? "exact" : "ahead",
-                     time, ms(t0, started), ms(started, t1), ms(t1, t2), ms(t2, std::chrono::steady_clock::now()));
+            char line[96];
+            snprintf(line, sizeof(line), "preview %s %.1f s: %.0f ms", exact ? "exact" : "ahead", time,
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
             trace(line);
         }
         PostMessageW(parent_, previewMessage_, 0, reinterpret_cast<LPARAM>(result.release()));

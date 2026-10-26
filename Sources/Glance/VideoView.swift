@@ -1173,6 +1173,10 @@ final class PreviewMaker {
     private func picture(at time: Double, width: Int, exact: Bool) -> (Double, CGImage)? {
         guard let mpv, let context else { return nil }
         let frameFlag = UInt64(MPV_RENDER_UPDATE_FRAME.rawValue)
+        // The picture's size, from the video's shape: asked before seeking, because once a frame
+        // is waiting mpv answers nothing until it has been drawn (a ~200 ms stall).
+        let w = mpv.double(handle, "dwidth") ?? 16, h = mpv.double(handle, "dheight") ?? 9
+        let height = max(2, Int((Double(width) * (w > 0 && h > 0 ? h / w : 9.0 / 16)).rounded()))
         // A frame mpv drew before this seek mustn't be taken for the new one.
         var scratch: [UInt8] = []
         if mpv.renderUpdate(context) & frameFlag != 0 { render(into: &scratch, width: 16, height: 16) }
@@ -1182,11 +1186,10 @@ final class PreviewMaker {
         // only reports that once the frame has been drawn, so waiting for it costs ~200 ms each.)
         let deadline = Date().addingTimeInterval(1.5)
         while mpv.renderUpdate(context) & frameFlag == 0 && Date() < deadline { usleep(1000) }
-        let shown = mpv.double(handle, "time-pos") ?? time  // where a keyframe seek landed
-        let w = mpv.double(handle, "dwidth") ?? 16, h = mpv.double(handle, "dheight") ?? 9
-        let height = max(2, Int((Double(width) * (w > 0 && h > 0 ? h / w : 9.0 / 16)).rounded()))
+        // Draw it straight away, then ask where a keyframe seek landed.
         var pixels: [UInt8] = []
         render(into: &pixels, width: width, height: height)
+        let shown = mpv.double(handle, "time-pos") ?? time
         let data = Data(pixels) as CFData
         guard let provider = CGDataProvider(data: data) else { return nil }
         guard let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
