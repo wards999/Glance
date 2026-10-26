@@ -360,22 +360,35 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 barHover_ = -1;
                 render();
             }
-            if (fullScreen_ && settings_.hideCursor && !dragging_) {
+            // Only while the pointer is over this window: hiding it over another app (after a
+            // quick move to another monitor, say) could leave it invisible there.
+            POINT pointer{};
+            GetCursorPos(&pointer);
+            if (fullScreen_ && settings_.hideCursor && !dragging_ && WindowFromPoint(pointer) == hwnd_) {
                 cursorHidden_ = true;
+                hiddenAt_ = pointer;
                 SetCursor(nullptr);
             }
         }
         return 0;
 
     case WM_SETCURSOR:
-        if (cursorHidden_ && LOWORD(lParam) == HTCLIENT) {
-            SetCursor(nullptr);
-            return TRUE;
+        if (cursorHidden_) {
+            // Any movement at all brings it back, even one whose WM_MOUSEMOVE went elsewhere.
+            POINT pointer{};
+            GetCursorPos(&pointer);
+            if (LOWORD(lParam) == HTCLIENT && pointer.x == hiddenAt_.x && pointer.y == hiddenAt_.y) {
+                SetCursor(nullptr);
+                return TRUE;
+            }
+            cursorHidden_ = false;
         }
         break;
 
     case WM_MOUSELEAVE:
         trackingMouse_ = false;
+        KillTimer(hwnd_, kIdleTimer);
+        cursorHidden_ = false;
         if (barVisible_) {
             barVisible_ = false;
             barHover_ = -1;

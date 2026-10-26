@@ -258,6 +258,7 @@ private:
     int barHover_ = -1;
     bool trackingMouse_ = false;
     bool cursorHidden_ = false;
+    POINT hiddenAt_{};  // screen position when the pointer was hidden
     POINT lastMouse_{-1, -1};
     ComPtr<IDWriteTextFormat> iconFormat_;
     UINT iconFormatDpi_ = 0;
