@@ -722,6 +722,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         else GetWindowPlacement(hwnd_, &placement);
         settings_.windowRect = placement.rcNormalPosition;
         settings_.maximized = placement.showCmd == SW_SHOWMAXIMIZED;
+        if (video_) settings_.videoVolume = video_->volume();  // the level you left it at, for next time
         settings_.save();
         video_.reset();     // mpv and its windows first, while the parent still exists
         pipeline_.reset();  // stop the workers before the window goes away
@@ -2111,6 +2112,7 @@ VideoPlayer::Options Viewer::videoOptions() const {
     options.loopShort = settings_.videoLoopShort;
     options.alwaysSubtitles = settings_.subtitleMode == 1;
     options.subtitleLanguage = settings_.subtitleLanguage;
+    options.volume = settings_.videoVolume;
     return options;
 }
 

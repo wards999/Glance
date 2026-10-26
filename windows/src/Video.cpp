@@ -284,6 +284,7 @@ bool VideoPlayer::start() {
                 {"terminal", "no"},
                 {"config", "no"},
                 {"audio-display", "no"},
+                {"volume", std::to_string(std::clamp(options_.volume, 0, 100)).c_str()},
                 // Subtitle files beside the video load even when named "Movie.en.srt" and the
                 // like, or kept in a Subs folder. Which one shows is Glance's choice (chooseSubtitles).
                 {"sub-auto", "fuzzy"},
@@ -496,6 +497,10 @@ void VideoPlayer::toggleMute() {
     if (!open_) return;
     command({"cycle", "mute"});
     drawControls();
+}
+
+int VideoPlayer::volume() const {
+    return static_cast<int>(std::lround(std::clamp(property("volume", options_.volume), 0.0, 100.0)));
 }
 
 std::wstring VideoPlayer::describe() const {

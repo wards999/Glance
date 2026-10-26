@@ -49,6 +49,7 @@ struct Settings {
     bool videoLoopShort = true;   // loop silent clips under 30 seconds, like GIFs
     int subtitleMode = 0;         // 0 only forced (foreign dialogue), 1 always
     int subtitleLanguage = 0;     // index into Video::languages(); 0 English
+    int videoVolume = 100;        // percent, as last left (saved when Glance closes)
 
     // Window position, remembered between runs (empty: centred, 80% of the screen)
     RECT windowRect{};

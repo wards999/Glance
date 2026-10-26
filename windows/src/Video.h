@@ -46,6 +46,7 @@ public:
         bool loopShort = true;
         bool alwaysSubtitles = false;  // otherwise only forced ones (for foreign-language dialogue)
         int subtitleLanguage = 0;      // index into Video::languages()
+        int volume = 100;              // where the player starts (the level you last left it at)
     };
 
     /// Command IDs for the subtitle and audio menus start here (the CC button and right-click).
@@ -104,6 +105,8 @@ public:
 
     /// "1920 x 1080  -  1:32:10" for the title bar.
     std::wstring describe() const;
+    /// The volume now, percent (to remember for next time).
+    int volume() const;
 
 private:
     struct Track {

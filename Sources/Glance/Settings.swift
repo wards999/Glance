@@ -69,6 +69,7 @@ final class Settings {
         static let videoLoopShort = "videoLoopShortClips"
         static let alwaysSubtitles = "alwaysSubtitles"
         static let subtitleLanguage = "subtitleLanguage"
+        static let videoVolume = "videoVolume"
     }
 
     private let defaults = UserDefaults.standard
@@ -112,6 +113,7 @@ final class Settings {
             Key.videoLoopShort: true,
             Key.alwaysSubtitles: false,
             Key.subtitleLanguage: 0,
+            Key.videoVolume: 100,
         ])
     }
 
@@ -310,6 +312,12 @@ final class Settings {
     var subtitleLanguage: Int {
         get { defaults.integer(forKey: Key.subtitleLanguage) }
         set { store(newValue, Key.subtitleLanguage) }
+    }
+
+    /// Percent, as last left. Saved quietly as it changes (no settings-changed notification).
+    var videoVolume: Int {
+        get { defaults.integer(forKey: Key.videoVolume) }
+        set { defaults.set(min(max(newValue, 0), 100), forKey: Key.videoVolume) }
     }
 
     private func store(_ value: Any, _ key: String) {

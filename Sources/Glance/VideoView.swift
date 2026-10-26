@@ -20,6 +20,7 @@ final class VideoView: NSView {
         var loopShort = true
         var alwaysSubtitles = false
         var subtitleLanguage = 0  // index into VideoLanguages.all
+        var volume = 100          // where the player starts (the level you last left it at)
     }
 
     weak var delegate: VideoViewDelegate?
@@ -110,6 +111,7 @@ final class VideoView: NSView {
             ("terminal", "no"),
             ("config", "no"),
             ("audio-display", "no"),
+            ("volume", "\(min(max(options.volume, 0), 100))"),
             // Subtitle files beside the video load even when named "Movie.en.srt" or kept in a Subs
             // folder; which one shows is Glance's choice (chooseSubtitles).
             ("sub-auto", "fuzzy"),
@@ -253,7 +255,9 @@ final class VideoView: NSView {
         guard isOpen else { return }
         mpv.run(handle, ["add", "volume", "\(delta)"])
         mpv.set(handle, "mute", "no")
-        flash("Volume \(Int(mpv.double(handle, "volume") ?? 100))%")
+        let volume = Int(mpv.double(handle, "volume") ?? 100)
+        Settings.shared.videoVolume = volume  // remembered for next time
+        flash("Volume \(volume)%")
     }
 
     /// Clicking or dragging along the volume slider: left is silent, right is full volume.
@@ -263,6 +267,7 @@ final class VideoView: NSView {
         let volume = Int((min(max((x - slider.minX) / slider.width, 0), 1) * 100).rounded())
         mpv.set(handle, "volume", "\(volume)")
         mpv.set(handle, "mute", "no")
+        Settings.shared.videoVolume = volume  // remembered for next time
         flash("Volume \(volume)%")
     }
 
