@@ -85,7 +85,7 @@ std::string utf8(const std::wstring& text) {
     return result;
 }
 
-void setOptions(const Api* mpv, mpv_handle* handle, std::initializer_list<std::pair<const char*, const char*>> options) {
+void applyOptions(const Api* mpv, mpv_handle* handle, std::initializer_list<std::pair<const char*, const char*>> options) {
     for (const auto& [name, value] : options) {
         if (mpv->setOptionString(handle, name, value) < 0) {
             char line[160];
@@ -236,7 +236,7 @@ bool VideoPlayer::start() {
     mpv_handle* handle = mpv->create();
     if (!handle) return false;
     const std::string wid = std::to_string(reinterpret_cast<intptr_t>(surface_));
-    setOptions(mpv, handle,
+    applyOptions(mpv, handle,
                {{"wid", wid.c_str()},
                 {"vo", "gpu-next"},
                 {"hwdec", "auto-safe"},           // the GPU decodes when it can
@@ -567,7 +567,7 @@ void VideoPlayer::previewWorker() {
     if (!mpv) return;
     mpv_handle* handle = mpv->create();
     if (!handle) return;
-    setOptions(mpv, handle,
+    applyOptions(mpv, handle,
                {{"vo", "libmpv"}, {"aid", "no"}, {"sid", "no"}, {"hr-seek", "no"}, {"pause", "yes"},
                 {"hwdec", "no"}, {"idle", "yes"}, {"keep-open", "yes"}, {"vd-lavc-skiploopfilter", "all"},
                 {"vd-lavc-fast", "yes"}, {"cache", "no"}, {"demuxer-max-bytes", "8MiB"}, {"load-scripts", "no"},
