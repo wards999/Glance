@@ -54,6 +54,21 @@
         </dict>
         <dict>
             <key>CFBundleTypeName</key>
+            <string>Video</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.movie</string>
+                <string>org.matroska.mkv</string>
+                <string>org.webmproject.webm</string>
+                <string>org.xiph.ogg-video</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
             <string>Folder</string>
             <key>CFBundleTypeRole</key>
             <string>Viewer</string>
@@ -63,6 +78,74 @@
             <array>
                 <string>public.folder</string>
             </array>
+        </dict>
+    </array>
+    <!-- Video formats macOS doesn't describe itself, so Finder knows they're movies and offers
+         Glance in Open With. (Imported: if another app declares them too, theirs is used.) -->
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.matroska.mkv</string>
+            <key>UTTypeDescription</key>
+            <string>Matroska video</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.movie</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>mkv</string>
+                </array>
+                <key>public.mime-type</key>
+                <array>
+                    <string>video/x-matroska</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.webmproject.webm</string>
+            <key>UTTypeDescription</key>
+            <string>WebM video</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.movie</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>webm</string>
+                </array>
+                <key>public.mime-type</key>
+                <array>
+                    <string>video/webm</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.xiph.ogg-video</string>
+            <key>UTTypeDescription</key>
+            <string>Ogg video</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.movie</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>ogv</string>
+                </array>
+                <key>public.mime-type</key>
+                <array>
+                    <string>video/ogg</string>
+                </array>
+            </dict>
         </dict>
     </array>
 </dict>
