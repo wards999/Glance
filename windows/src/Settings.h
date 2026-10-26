@@ -42,6 +42,12 @@ struct Settings {
     int holdToZoom = 1;           // 0 off, 1 PDFs only, 2 PDFs and images
     int holdZoomPercent = 250;
 
+    // Video (needs libmpv-2.dll beside Glance.exe)
+    bool includeVideos = true;    // when browsing folders; opening a video always includes its neighbours
+    bool videoAutoplay = true;    // start playing when you stop on a video
+    bool videoPreviews = true;    // pictures above the timeline as you hover along it
+    bool videoLoopShort = true;   // loop silent clips under 30 seconds, like GIFs
+
     // Window position, remembered between runs (empty: centred, 80% of the screen)
     RECT windowRect{};
     bool maximized = false;

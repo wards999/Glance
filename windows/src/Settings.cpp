@@ -66,6 +66,10 @@ Settings Settings::load() {
     s.pdfLayout = std::clamp(number(L"PdfLayout", s.pdfLayout), 0, 3);
     s.pdfRightToLeft = flag(L"PdfRightToLeft", s.pdfRightToLeft);
     s.includePdfs = flag(L"IncludePdfs", s.includePdfs);
+    s.includeVideos = flag(L"IncludeVideos", s.includeVideos);
+    s.videoAutoplay = flag(L"VideoAutoplay", s.videoAutoplay);
+    s.videoPreviews = flag(L"VideoPreviews", s.videoPreviews);
+    s.videoLoopShort = flag(L"VideoLoopShort", s.videoLoopShort);
     s.holdToZoom = std::clamp(number(L"HoldToZoom", s.holdToZoom), 0, 2);
     s.holdZoomPercent = std::clamp(number(L"HoldZoomPercent", s.holdZoomPercent), 150, 400);
     s.windowRect = {number(L"WindowLeft", 0), number(L"WindowTop", 0), number(L"WindowRight", 0), number(L"WindowBottom", 0)};
@@ -104,6 +108,10 @@ void Settings::save() const {
     put(L"PdfLayout", pdfLayout);
     put(L"PdfRightToLeft", pdfRightToLeft);
     put(L"IncludePdfs", includePdfs);
+    put(L"IncludeVideos", includeVideos);
+    put(L"VideoAutoplay", videoAutoplay);
+    put(L"VideoPreviews", videoPreviews);
+    put(L"VideoLoopShort", videoLoopShort);
     put(L"HoldToZoom", holdToZoom);
     put(L"HoldZoomPercent", holdZoomPercent);
     put(L"WindowLeft", windowRect.left);

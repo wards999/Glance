@@ -4,6 +4,7 @@
 #include "Navigator.h"
 #include "Pipeline.h"
 #include "Settings.h"
+#include "Video.h"
 
 #include <d2d1_1.h>
 #include <d3d11.h>
@@ -131,6 +132,15 @@ private:
     int controlBarHit(POINT point) const;
     void mouseActivity(POINT point);
     bool ensureIconFont();
+
+    // Videos (libmpv, loaded only when the first one is shown)
+    bool isVideoFile(const std::wstring& path) const;
+    void showVideo(const std::wstring& path);
+    void leaveVideo();
+    bool videoKey(WPARAM key, bool control, bool shift);
+    /// The video's controls show while the mouse moves, and stay while paused or in use.
+    void syncVideoControls();
+    VideoPlayer::Options videoOptions() const;
 
     // More file commands
     void printImage();
@@ -262,6 +272,11 @@ private:
     POINT lastMouse_{-1, -1};
     ComPtr<IDWriteTextFormat> iconFormat_;
     UINT iconFormatDpi_ = 0;
+
+    std::unique_ptr<VideoPlayer> video_;
+    bool showingVideo_ = false;
+    std::wstring videoPath_;
+    bool videoPressed_ = false;  // a click on the picture (not the controls) is under way
 
     bool fullScreen_ = false;
     bool slideshow_ = false;

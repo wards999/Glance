@@ -39,6 +39,10 @@ enum Id {
     IdIncludePdfs,
     IdHoldToZoom,
     IdHoldZoom,
+    IdIncludeVideos,
+    IdVideoAutoplay,
+    IdVideoPreviews,
+    IdVideoLoopShort,
     IdClose,
 };
 
@@ -130,6 +134,12 @@ SIZE build() {
     left.checkbox(IdControls, L"Show buttons when the mouse nears the bottom", s.showControls);
     left.checkbox(IdHideCursor, L"Hide the mouse pointer in full screen", s.hideCursor);
     left.endGroup();
+    left.group(L"Video", 4);
+    left.checkbox(IdIncludeVideos, L"Include videos when browsing folders", s.includeVideos);
+    left.checkbox(IdVideoAutoplay, L"Play videos when you stop on them", s.videoAutoplay);
+    left.checkbox(IdVideoPreviews, L"Show pictures above the timeline as you hover", s.videoPreviews);
+    left.checkbox(IdVideoLoopShort, L"Loop silent clips under 30 seconds", s.videoLoopShort);
+    left.endGroup();
 
     Column right{544, 500};
     right.group(L"Performance", 3);
@@ -211,6 +221,10 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case IdPdfLayout: s.pdfLayout = selection; break;
         case IdPdfRightToLeft: s.pdfRightToLeft = checked; break;
         case IdIncludePdfs: s.includePdfs = checked; break;
+        case IdIncludeVideos: s.includeVideos = checked; break;
+        case IdVideoAutoplay: s.videoAutoplay = checked; break;
+        case IdVideoPreviews: s.videoPreviews = checked; break;
+        case IdVideoLoopShort: s.videoLoopShort = checked; break;
         case IdHoldToZoom: s.holdToZoom = selection; break;
         case IdHoldZoom: s.holdZoomPercent = pick(kHoldZoom, selection, 250); break;
         default: return 0;

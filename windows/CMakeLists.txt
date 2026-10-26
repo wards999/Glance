@@ -13,7 +13,7 @@ set(SYSTEM_LIBS windowscodecs ole32 oleaut32 uuid shlwapi user32 shcore)
 # The viewer: a GUI app with no runtime to install.
 add_executable(Glance WIN32
     src/main.cpp src/Viewer.cpp src/Settings.cpp src/SettingsDialog.cpp
-    src/Adjustments.cpp src/AdjustmentsDialog.cpp src/Editing.cpp src/ParameterStore.cpp src/PasswordDialog.cpp
+    src/Adjustments.cpp src/AdjustmentsDialog.cpp src/Editing.cpp src/ParameterStore.cpp src/PasswordDialog.cpp src/Video.cpp
     ${CORE_SOURCES} glance.rc)
 target_link_libraries(Glance PRIVATE d2d1 d3d11 dxgi dxguid dwrite dwmapi comdlg32 comctl32 shell32 gdi32 ${SYSTEM_LIBS})
 

@@ -32,6 +32,11 @@ constexpr UINT WM_APP_DECODED = WM_APP + 1;
 constexpr UINT WM_APP_FOLDER = WM_APP + 2;
 constexpr UINT WM_APP_GPU_READY = WM_APP + 3;
 constexpr UINT WM_APP_ANIMATION = WM_APP + 4;
+constexpr UINT WM_APP_VIDEO = WM_APP + 5;
+constexpr UINT WM_APP_VIDEO_PREVIEW = WM_APP + 6;
+constexpr UINT_PTR kVideoPlayTimer = 6;  // a video starts once you've stopped on it
+constexpr UINT_PTR kVideoTickTimer = 7;  // the controls' clock
+constexpr UINT kVideoPlayDelayMs = 300;
 constexpr UINT_PTR kAnimationTimer = 4;
 constexpr UINT_PTR kIdleTimer = 5;
 constexpr UINT kIdleDelayMs = 1500;
@@ -129,15 +134,16 @@ D2D1_COLOR_F colour(COLORREF c, float alpha = 1) {
     return D2D1_COLOR_F{GetRValue(c) / 255.0f, GetGValue(c) / 255.0f, GetBValue(c) / 255.0f, alpha};
 }
 
-/// Everything WIC can decode, plus PDF when asked for and available. Asks WIC once; the
-/// caller's thread must have COM initialised.
-std::unordered_set<std::wstring> supportedExtensions(bool withPdf) {
+/// Everything WIC can decode, plus PDF and videos when asked for and available. Asks WIC once;
+/// the caller's thread must have COM initialised.
+std::unordered_set<std::wstring> supportedExtensions(bool withPdf, bool withVideo) {
     static const std::unordered_set<std::wstring> images = [] {
         auto list = Decoder::supportedExtensions();
         return std::unordered_set<std::wstring>(list.begin(), list.end());
     }();
     auto extensions = images;
     if (withPdf && Pdf::available()) extensions.insert(L"pdf");
+    if (withVideo && Video::available()) extensions.insert(Video::extensions().begin(), Video::extensions().end());
     return extensions;
 }
 
@@ -250,7 +256,8 @@ bool Viewer::create() {
     int height = (work.bottom - work.top) * 8 / 10;
     int x = work.left + (work.right - work.left - width) / 2;
     int y = work.top + (work.bottom - work.top - height) / 2;
-    hwnd_ = CreateWindowExW(WS_EX_ACCEPTFILES, kClassName, L"Glance", WS_OVERLAPPEDWINDOW, x, y, width, height,
+    // Clipping children keeps painting off the video's window when there is one.
+    hwnd_ = CreateWindowExW(WS_EX_ACCEPTFILES, kClassName, L"Glance", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, x, y, width, height,
                             nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
 
@@ -369,6 +376,14 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
 
+    case WM_APP_VIDEO:
+        if (video_ && video_->handleEvents()) updateTitle();
+        return 0;
+
+    case WM_APP_VIDEO_PREVIEW:
+        if (video_) video_->takePreview(lParam);
+        return 0;
+
     case WM_APP_GPU_READY:
         // Swap to GPU drawing; the picture doesn't move, only the drawing path changes.
         if (!context_ && initGraphics()) {
@@ -382,7 +397,18 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_TIMER:
+        if (wParam == kVideoPlayTimer) {
+            KillTimer(hwnd_, kVideoPlayTimer);
+            if (showingVideo_ && video_ && settings_.videoAutoplay) video_->play();
+            syncVideoControls();
+            return 0;
+        }
+        if (wParam == kVideoTickTimer) {
+            if (showingVideo_ && video_) video_->tick();
+            return 0;
+        }
         if (wParam == kSlideshowTimer) {
+            if (showingVideo_ && video_ && video_->playing()) return 0;  // a video plays to its end first
             direction_ = 1;
             if (showingPdf() && frame_ + 1 < pdfScreens_) {
                 ++frame_;
@@ -412,7 +438,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             // The mouse has rested: hide the buttons (unless it's on them) and, in full
             // screen, the pointer.
             KillTimer(hwnd_, kIdleTimer);
-            if (barVisible_ && controlBarHit(lastMouse_) < 0) {
+            if (showingVideo_) {
+                if (barVisible_ && !(video_ && video_->overControls(lastMouse_))) barVisible_ = false;
+                syncVideoControls();
+            } else if (barVisible_ && controlBarHit(lastMouse_) < 0) {
                 barVisible_ = false;
                 barHover_ = -1;
                 render();
@@ -421,7 +450,8 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             // quick move to another monitor, say) could leave it invisible there.
             POINT pointer{};
             GetCursorPos(&pointer);
-            if (fullScreen_ && settings_.hideCursor && !dragging_ && WindowFromPoint(pointer) == hwnd_) {
+            if (fullScreen_ && settings_.hideCursor && !dragging_ && WindowFromPoint(pointer) == hwnd_ &&
+                !(showingVideo_ && video_ && video_->overControls(lastMouse_))) {
                 cursorHidden_ = true;
                 hiddenAt_ = pointer;
                 SetCursor(nullptr);
@@ -451,10 +481,13 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             barHover_ = -1;
             render();
         }
+        if (video_) video_->mouseLeave();
+        syncVideoControls();
         return 0;
 
     case WM_SIZE:
         if (wParam != SIZE_MINIMIZED) {
+            if (video_) video_->layout();
             resize();
             if (zoomMode_ != ZoomMode::Custom) applyZoomMode(); else clampCenter();
             render();
@@ -503,6 +536,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         ScreenToClient(hwnd_, &p);
         int delta = GET_WHEEL_DELTA_WPARAM(wParam);
         bool control = GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL;
+        if (showingVideo_ && video_ && (control || !settings_.wheelNavigates)) {
+            video_->changeVolume(delta > 0 ? 5 : -5);  // where pictures would zoom, videos get louder
+            return 0;
+        }
         if (settings_.wheelNavigates && !control) {
             // High-resolution wheels send small steps; act on whole notches.
             wheelRemainder_ += delta;
@@ -518,6 +555,14 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
 
     case WM_LBUTTONDOWN: {
         const POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (showingVideo_) {
+            // The controls take their clicks (and a drag along the timeline); a click anywhere
+            // else plays or pauses, on release, so a double-click can mean full screen instead.
+            SetCapture(hwnd_);
+            if (!(video_ && video_->mouseDown(p))) videoPressed_ = true;
+            syncVideoControls();
+            return 0;
+        }
         if (const int button = barVisible_ ? controlBarHit(p) : -1; button >= 0) {
             command(barButtons_[button].command);
             render();
@@ -540,6 +585,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
 
     case WM_MOUSEMOVE:
         mouseActivity(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        if (showingVideo_) {
+            if (video_) video_->mouseMove(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            return 0;
+        }
         if (dragging_) {
             POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (magnifying_) {
@@ -569,6 +618,18 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_LBUTTONUP:
+        if (showingVideo_) {
+            ReleaseCapture();
+            const POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (video_ && video_->scrubbing()) {
+                video_->mouseUp(p);
+            } else if (videoPressed_ && video_) {
+                video_->togglePause();
+            }
+            videoPressed_ = false;
+            syncVideoControls();
+            return 0;
+        }
         if (dragging_) {
             ReleaseCapture();
             KillTimer(hwnd_, kHoldTimer);
@@ -590,6 +651,15 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_LBUTTONDBLCLK: {
+        if (showingVideo_) {
+            // The first click already toggled play/pause; undo that, and switch full screen.
+            const POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (video_ && !video_->overControls(p)) {
+                video_->togglePause();
+                setFullScreen(!fullScreen_);
+            }
+            return 0;
+        }
         if (!current_) return 0;
         // Toggle between fitting the window and 100% at the clicked point.
         double fit = fitZoom();
@@ -642,6 +712,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         settings_.windowRect = placement.rcNormalPosition;
         settings_.maximized = placement.showCmd == SW_SHOWMAXIMIZED;
         settings_.save();
+        video_.reset();     // mpv and its windows first, while the parent still exists
         pipeline_.reset();  // stop the workers before the window goes away
         PostQuitMessage(0);
         return 0;
@@ -651,6 +722,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
 }
 
 bool Viewer::onKey(WPARAM key, bool control, bool shift) {
+    if (showingVideo_ && videoKey(key, control, shift)) return true;
     double width, height;
     viewSize(width, height);
     const double step = std::max(width, height) * 0.15;
@@ -742,11 +814,11 @@ void Viewer::setFullScreen(bool on) {
         GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &monitor);
         const RECT& r = monitor.rcMonitor;
         // Borderless and covering the whole monitor, taskbar included: no animation, no delay.
-        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN);
         SetWindowPos(hwnd_, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top,
                      SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
     } else {
-        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN);
         if (windowedPlacement_.showCmd == SW_HIDE) windowedPlacement_.showCmd = SW_SHOWNORMAL;
         SetWindowPlacement(hwnd_, &windowedPlacement_);
         SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
@@ -762,7 +834,11 @@ void Viewer::updateTitle() {
     }
     std::wstring title = fileName(*path) + L"  -  " + std::to_wstring(navigator_.index() + 1) + L" / " +
                          std::to_wstring(navigator_.count());
-    if (current_ && samePath(current_->info.path, *path)) {
+    if (showingVideo_) {
+        if (video_) {
+            if (const std::wstring details = video_->describe(); !details.empty()) title += L"  -  " + details;
+        }
+    } else if (current_ && samePath(current_->info.path, *path)) {
         if (current_->info.isPdf) {
             title += L"  -  " + current_->info.pdfPages;
         } else {
@@ -1060,7 +1136,10 @@ void Viewer::command(int id) {
         applySettings();
         break;
     case CmdFullScreen: setFullScreen(!fullScreen_); break;
-    case CmdRecycle: moveToRecycleBin(); break;
+    case CmdRecycle:
+        if (showingVideo_ && video_) video_->close();  // mpv lets go of the file first
+        moveToRecycleBin();
+        break;
     case CmdSettings:
         SettingsDialog::show(hwnd_, &settings_, [this] { applySettings(); });
         break;
@@ -1098,6 +1177,8 @@ void Viewer::applySettings() {
         barVisible_ = false;
         barHover_ = -1;
     }
+    if (video_) video_->setOptions(videoOptions());
+    syncVideoControls();
     if (pipeline_) pipeline_->setCostLimit(cacheLimit());
     if (zoomMode_ == ZoomMode::Fit) applyZoomMode();
     updateTitle();
@@ -1445,6 +1526,13 @@ void Viewer::mouseActivity(POINT point) {
     double width, height;
     viewSize(width, height);
     const double scale = GetDpiForWindow(hwnd_) / 96.0;
+    if (showingVideo_) {
+        // A video's controls appear whenever the mouse moves, as in most players.
+        barVisible_ = settings_.showControls;
+        syncVideoControls();
+        SetTimer(hwnd_, kIdleTimer, kIdleDelayMs, nullptr);
+        return;
+    }
     const bool nearBottom = settings_.showControls && current_ && !dragging_ && point.y > height - 110 * scale;
     const int hover = barVisible_ ? controlBarHit(point) : -1;
     if (nearBottom != barVisible_ || hover != barHover_) {
@@ -1745,11 +1833,12 @@ void Viewer::scanFolder(const std::wstring& folder, const std::wstring& selected
     HWND hwnd = hwnd_;
     const SortOrder order = settings_.sortOrder;
     const bool descending = settings_.descending;
-    // Opening a PDF directly means you're reading PDFs, so its neighbours count too.
+    // Opening a PDF (or video) directly means you're reading PDFs, so its neighbours count too.
     const bool withPdf = settings_.includePdfs || Pdf::isPdf(selected);
-    std::thread([hwnd, folder, selected, order, descending, withPdf] {
+    const bool withVideo = settings_.includeVideos || Video::isVideo(selected);
+    std::thread([hwnd, folder, selected, order, descending, withPdf, withVideo] {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        auto files = Navigator::scan(folder, supportedExtensions(withPdf));
+        auto files = Navigator::scan(folder, supportedExtensions(withPdf, withVideo));
         Navigator::sortEntries(files, order, descending);
         CoUninitialize();
         PostMessageW(hwnd, WM_APP_FOLDER, 0, reinterpret_cast<LPARAM>(new FolderResult{selected, std::move(files)}));
@@ -1805,6 +1894,7 @@ void Viewer::showCurrent() {
         }
     }
     if (!path) {
+        if (showingVideo_) leaveVideo();
         stopAnimation();
         waiting_ = false;
         pdfScreens_ = 0;
@@ -1814,6 +1904,11 @@ void Viewer::showCurrent() {
         render();
         return;
     }
+    if (isVideoFile(*path)) {
+        showVideo(*path);
+        return;
+    }
+    if (showingVideo_) leaveVideo();
     if (pdfScreens_ && !samePath(*path, pdfPath_)) pdfScreens_ = 0;  // moved on to another file
     DecodeKey key = keyFor(*path, frame_, openingRequest());
     wantedKey_ = key;
@@ -1937,12 +2032,102 @@ void Viewer::prefetchNeighbors() {
         } else {
             const std::wstring* path = navigator_.at(offset > 0 ? (pdf ? 1 : offset) : (pdf ? -1 : offset));
             if (!path || (now && samePath(*path, *now))) continue;
+            if (isVideoFile(*path)) {
+                // Videos aren't decoded ahead (that's what keeps browsing past them instant), but
+                // one right next to you gets the player ready, so it opens without a pause.
+                if ((offset == 1 || offset == -1) && !video_) {
+                    video_ = std::make_unique<VideoPlayer>(hwnd_, WM_APP_VIDEO, WM_APP_VIDEO_PREVIEW);
+                    video_->setOptions(videoOptions());
+                    video_->warm();
+                }
+                continue;
+            }
             key = keyFor(*path, 0, request);
         }
         if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
     }
     prefetchKeys_ = keys;
     pipeline_->prefetch(keys);
+}
+
+// MARK: - Videos
+
+bool Viewer::isVideoFile(const std::wstring& path) const {
+    return Video::available() && Video::isVideo(path);
+}
+
+VideoPlayer::Options Viewer::videoOptions() const {
+    VideoPlayer::Options options;
+    options.autoplay = settings_.videoAutoplay;
+    options.previews = settings_.videoPreviews;
+    options.loopShort = settings_.videoLoopShort;
+    return options;
+}
+
+void Viewer::showVideo(const std::wstring& path) {
+    // Nothing of the picture machinery applies: no decoding, no zoom, no adjustments.
+    waiting_ = false;
+    busy_ = false;
+    KillTimer(hwnd_, kBusyTimer);
+    stopAnimation();
+    current_.reset();
+    shown_.reset();
+    pdfScreens_ = 0;
+    hasSelection_ = false;
+    if (!video_) {
+        video_ = std::make_unique<VideoPlayer>(hwnd_, WM_APP_VIDEO, WM_APP_VIDEO_PREVIEW);
+        video_->setOptions(videoOptions());
+    }
+    showingVideo_ = true;
+    videoPath_ = path;
+    if (!video_->open(path)) {
+        // libmpv-2.dll couldn't be loaded: say so rather than showing nothing.
+        showingVideo_ = false;
+        render();
+        SetWindowTextW(hwnd_, (fileName(path) + L"  -  can't play videos (libmpv-2.dll is missing or damaged)  -  Glance").c_str());
+        return;
+    }
+    // The first frame shows straight away; playback waits until you've stopped here, so holding a
+    // key down skims past videos as quickly as pictures.
+    SetTimer(hwnd_, kVideoPlayTimer, kVideoPlayDelayMs, nullptr);
+    SetTimer(hwnd_, kVideoTickTimer, 250, nullptr);
+    SetFocus(hwnd_);  // keys stay with Glance, not mpv's window
+    render();
+    updateTitle();
+    prefetchNeighbors();
+}
+
+void Viewer::leaveVideo() {
+    KillTimer(hwnd_, kVideoPlayTimer);
+    KillTimer(hwnd_, kVideoTickTimer);
+    showingVideo_ = false;
+    videoPressed_ = false;
+    if (GetCapture() == hwnd_) ReleaseCapture();
+    if (video_) video_->close();
+}
+
+void Viewer::syncVideoControls() {
+    if (!showingVideo_ || !video_) return;
+    const bool busy = video_->scrubbing() || video_->paused() || video_->overControls(lastMouse_);
+    video_->setControlsVisible(settings_.showControls && (barVisible_ || busy));
+}
+
+bool Viewer::videoKey(WPARAM key, bool control, bool shift) {
+    if (!video_) return false;
+    switch (key) {
+    case VK_SPACE: video_->togglePause(); break;
+    // Arrows move through the video; Page Up/Down, Backspace and the wheel still change file.
+    case VK_LEFT: video_->seekBy(shift ? -30 : control ? -1 : -5); break;
+    case VK_RIGHT: video_->seekBy(shift ? 30 : control ? 1 : 5); break;
+    case VK_UP: video_->changeVolume(5); break;
+    case VK_DOWN: video_->changeVolume(-5); break;
+    case 'M': video_->toggleMute(); break;
+    case VK_OEM_COMMA: video_->frameStep(false); break;   // ,
+    case VK_OEM_PERIOD: video_->frameStep(true); break;   // .
+    default: return false;
+    }
+    syncVideoControls();
+    return true;
 }
 
 void Viewer::requestResolutionIfNeeded() {
