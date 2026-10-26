@@ -52,35 +52,16 @@ enum MainMenu {
         return main
     }
 
-    /// The right-click menu, laid out like JPEGView's. It's the only menu in full screen,
-    /// so everything is here.
-    static func contextMenu() -> NSMenu {
-        let navigation = navigationItems().filter {
-            $0.action != #selector(C.nextImage(_:)) && $0.action != #selector(C.previousImage(_:))
-        }
-        let menu = NSMenu()
-        let items = sections(
-            fileItems(),
-            clipboardItems(),
-            overlayItems(),
-            [
-                item("Next Image", #selector(C.nextImage(_:)), "]"),
-                item("Previous Image", #selector(C.previousImage(_:)), "["),
-                submenu("Navigation", navigation),
-                submenu("Display Order", displayOrderItems()),
-                submenu("Slideshow", slideshowItems()),
-            ],
-            [
-                submenu("Transform Image", transformItems()),
-                submenu("Lossless Transformations", losslessItems()),
-            ] + adjustmentItems(),
-            parameterItems(),
-            [
-                submenu("Zoom", zoomItems()),
-                submenu("Auto Zoom Mode", autoZoomItems()),
-                submenu("PDF Pages", pdfItems()),
-                item("Enter Full Screen", #selector(C.toggleFullScreenMode(_:)), "f", [.command, .control]),
-            ],
+    enum ContextKind {
+        case picture, pdf, video
+    }
+
+    /// The right-click menu's items for what's on screen: JPEGView's full menu for pictures, pages
+    /// and layout for PDFs, playback, subtitles and audio for videos. It's the only menu in full
+    /// screen, so everything that applies is here.
+    static func contextItems(for kind: ContextKind, tracks: (subtitles: [NSMenuItem], audio: [NSMenuItem])?) -> [NSMenuItem] {
+        let tail: [[NSMenuItem]] = [
+            [item("Enter Full Screen", #selector(C.toggleFullScreenMode(_:)), "f", [.command, .control])],
             [
                 item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
                 item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
@@ -88,14 +69,105 @@ enum MainMenu {
             [
                 item("Move to Trash", #selector(C.moveToTrash(_:)), "\u{8}"),
                 item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q"),
+            ],
+        ]
+        let browsing: [NSMenuItem] = [
+            submenu("Navigation", [
+                item(kind == .pdf ? "First Document" : "First Image", #selector(C.firstImage(_:)), ""),
+                item(kind == .pdf ? "Last Document" : "Last Image", #selector(C.lastImage(_:)), ""),
+                .separator(),
+                item("Loop Through Folder", #selector(C.toggleLoop(_:)), ""),
+            ]),
+            submenu("Display Order", displayOrderItems()),
+            submenu(kind == .pdf ? "Turn Pages as a Slideshow" : "Slideshow", slideshowItems()),
+        ]
+        switch kind {
+        case .video:
+            var playback = [
+                item("Play/Pause", #selector(C.togglePlayPause(_:)), ""),
+                item("Mute", #selector(C.toggleVideoMute(_:)), ""),
             ]
-        )
-        items.forEach { menu.addItem($0) }
-        return menu
+            if let tracks {
+                playback.append(submenu("Subtitles", tracks.subtitles))
+                if !tracks.audio.isEmpty { playback.append(submenu("Audio Track", tracks.audio)) }
+            }
+            var groups: [[NSMenuItem]] = [
+                playback,
+                [
+                    item("Open…", #selector(C.openDocument(_:)), "o"),
+                    item("Reveal in Finder", #selector(C.revealInFinder(_:)), "r", [.command, .shift]),
+                    item("Copy File Path", #selector(C.copyFilePath(_:)), "c", [.command, .shift]),
+                    submenu("Set Modification Date", [item("To Now", #selector(C.setModificationDateToNow(_:)), "")]),
+                ],
+                [
+                    item("Next File", #selector(C.nextImage(_:)), "]"),
+                    item("Previous File", #selector(C.previousImage(_:)), "["),
+                ] + browsing,
+                [
+                    item("Show Filename", #selector(C.toggleFilename(_:)), ""),
+                    item("Show Controls", #selector(C.toggleNavigationControls(_:)), ""),
+                ],
+            ]
+            groups.append(contentsOf: tail)
+            return sections(groups)
+        case .pdf:
+            var groups: [[NSMenuItem]] = [
+                [
+                    item("Next Page", #selector(C.nextImage(_:)), ""),
+                    item("Previous Page", #selector(C.previousImage(_:)), ""),
+                    item("Next Document", #selector(C.nextDocument(_:)), ""),
+                    item("Previous Document", #selector(C.previousDocument(_:)), ""),
+                ] + browsing,
+                [submenu("Page Layout", pdfItems()), submenu("Zoom", zoomItems())],
+                [
+                    item("Open…", #selector(C.openDocument(_:)), "o"),
+                    item("Save Page as Image…", #selector(C.saveImageAs(_:)), "s", [.command, .shift]),
+                    item("Print Page…", #selector(C.printImage(_:)), "p"),
+                    item("Reload Document", #selector(C.reloadImage(_:)), ""),
+                    item("Reveal in Finder", #selector(C.revealInFinder(_:)), "r", [.command, .shift]),
+                ],
+                [
+                    item("Copy Page", #selector(C.copy(_:)), "c"),
+                    item("Copy File Path", #selector(C.copyFilePath(_:)), "c", [.command, .shift]),
+                ],
+                [
+                    item("Show Filename", #selector(C.toggleFilename(_:)), ""),
+                    item("Show Navigation Controls", #selector(C.toggleNavigationControls(_:)), ""),
+                ],
+            ]
+            groups.append(contentsOf: tail)
+            return sections(groups)
+        case .picture:
+            let navigation = navigationItems().filter {
+                $0.action != #selector(C.nextImage(_:)) && $0.action != #selector(C.previousImage(_:))
+            }
+            var groups: [[NSMenuItem]] = [
+                fileItems(),
+                clipboardItems(),
+                overlayItems(),
+                [
+                    item("Next Image", #selector(C.nextImage(_:)), "]"),
+                    item("Previous Image", #selector(C.previousImage(_:)), "["),
+                    submenu("Navigation", navigation),
+                    submenu("Display Order", displayOrderItems()),
+                    submenu("Slideshow", slideshowItems()),
+                ],
+                [
+                    submenu("Transform Image", transformItems()),
+                    submenu("Lossless Transformations", losslessItems()),
+                ] + adjustmentItems(),
+                parameterItems(),
+                [submenu("Zoom", zoomItems()), submenu("Auto Zoom Mode", autoZoomItems())],
+            ]
+            groups.append(contentsOf: tail)
+            return sections(groups)
+        }
     }
 
     /// Joins groups of items with separators between them.
-    private static func sections(_ groups: [NSMenuItem]...) -> [NSMenuItem] {
+    private static func sections(_ groups: [NSMenuItem]...) -> [NSMenuItem] { sections(groups) }
+
+    private static func sections(_ groups: [[NSMenuItem]]) -> [NSMenuItem] {
         var items: [NSMenuItem] = []
         for group in groups where !group.isEmpty {
             if !items.isEmpty { items.append(.separator()) }

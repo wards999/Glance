@@ -27,7 +27,7 @@ private final class ViewerWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
-final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, ImageViewDelegate {
+final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate, ImageViewDelegate, VideoViewDelegate {
     private let imageView = ImageView(frame: .zero)
     private let infoBox = NSView()
     private let infoLabel = NSTextField(wrappingLabelWithString: "")
@@ -74,6 +74,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// Window state to return to when leaving instant full screen.
     private var windowedFrame: NSRect?
     private var windowedStyle: NSWindow.StyleMask = []
+
+    // Videos (libmpv, loaded only when the first one is shown)
+    private var videoView: VideoView?
+    private var showingVideo = false
+    private var keyRepeating = false  // while a held key repeats: videos wait until you stop
+    private var videoPlayTimer: Timer?
+    private let contextMenu = NSMenu()
     private static let frameAutosaveName = "GlanceViewer"
 
     init() {
@@ -125,6 +132,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         showInfo = settings.showInfo
         updateInfo()
         if !settings.showControls { setControlsVisible(false) }
+        videoView?.options = videoOptions
 
         imageView.defaultZoomMode = settings.startZoom.zoomMode
         imageView.enlargeSmallImages = settings.enlargeSmallImages
@@ -254,7 +262,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         imageView.frame = content.bounds
         imageView.autoresizingMask = [.width, .height]
         imageView.delegate = self
-        imageView.menu = MainMenu.contextMenu()
+        contextMenu.delegate = self  // rebuilt for pictures, PDFs or videos each time it opens
+        imageView.menu = contextMenu
         content.addSubview(imageView)
 
         infoBox.wantsLayer = true
@@ -322,7 +331,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             showCurrent()
             scanFolder(first.deletingLastPathComponent(), keeping: first)
         } else {
-            let openable = urls.filter { ImageDecoder.isSupported($0) || PDFRenderer.isPDF($0) }
+            let openable = urls.filter { ImageDecoder.isSupported($0) || PDFRenderer.isPDF($0) || VideoFiles.isPlayable($0) }
             let images = FolderNavigator.sort(openable, by: navigator.sortOrder, descending: navigator.descending)
             navigator.setFiles(images, current: images.first)
             showCurrent()
@@ -334,8 +343,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let descending = navigator.descending
         // Opening a PDF directly means you're reading PDFs, so its neighbours count too.
         let includePDFs = settings.includePDFsInFolders || (selected.map(PDFRenderer.isPDF) ?? false)
+        let includeVideos = settings.includeVideosInFolders || (selected.map(VideoFiles.isPlayable) ?? false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let files = FolderNavigator.scan(folder: folder, order: order, descending: descending, includePDFs: includePDFs)
+            let files = FolderNavigator.scan(folder: folder, order: order, descending: descending,
+                                             includePDFs: includePDFs, includeVideos: includeVideos)
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let selected {
@@ -359,7 +370,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
-        panel.allowedContentTypes = [.image, .pdf]
+        panel.allowedContentTypes = MPV.available ? [.image, .pdf, .movie, .video] : [.image, .pdf]
         let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard response == .OK else {
                 if self?.navigator.current == nil {
@@ -418,12 +429,18 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         foregroundKey = nil
 
         guard let url = navigator.current else {
+            if showingVideo { leaveVideo() }
             current = nil
             imageView.setImage(nil, fullSize: .zero, resetView: true)
             updateTitle()
             updateInfo()
             return
         }
+        if VideoFiles.isPlayable(url) {
+            showVideo(url)
+            return
+        }
+        if showingVideo { leaveVideo() }
         if !keepPage { page = 0 }
         generation += 1
         let gen = generation
@@ -566,6 +583,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 continue
             }
             guard let url = navigator.url(at: offset), url != navigator.current else { continue }
+            if VideoFiles.isPlayable(url) {
+                // Videos aren't decoded ahead (that's what keeps browsing past them instant), but
+                // one right next to you gets the player ready, so it opens without a pause.
+                if abs(offset) == 1 { makeVideoView()?.warm() }
+                continue
+            }
             let key = pipelineKey(url, page: 0, size: size)
             if !keys.contains(key) { keys.append(key) }
         }
@@ -645,6 +668,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     func imageView(_ view: ImageView, handleKeyDown event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
         guard modifiers.isEmpty, let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first else { return false }
+        keyRepeating = event.isARepeat
+        defer { keyRepeating = false }
+        if showingVideo, let videoView, handleVideoKey(scalar, shift: event.modifierFlags.contains(.shift), video: videoView) {
+            return true
+        }
         let step = max(view.bounds.width, view.bounds.height) * 0.15
 
         switch Int(scalar.value) {
@@ -798,6 +826,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         direction = 1
         slideshowTimer = Timer.scheduledTimer(withTimeInterval: slideshowInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
+            if self.showingVideo && self.videoView?.isPlaying == true { return }  // a video plays to its end first
             if !self.navigator.move(by: 1) {
                 self.stopSlideshow()
                 return
@@ -1077,6 +1106,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     @objc func moveToTrash(_ sender: Any?) {
         guard let url = navigator.current else { return }
+        if showingVideo { videoView?.close() }  // mpv lets go of the file first
         do {
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
         } catch {
@@ -1282,11 +1312,150 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         showMessage("Saved adjustments cleared")
     }
 
+    // MARK: - Videos
+
+    private var videoOptions: VideoView.Options {
+        VideoView.Options(autoplay: settings.videoAutoplay, previews: settings.videoTimelinePictures,
+                          loopShort: settings.videoLoopShortClips, alwaysSubtitles: settings.alwaysSubtitles,
+                          subtitleLanguage: settings.subtitleLanguage)
+    }
+
+    /// The player view, made the first time it's needed; nil without libmpv.
+    private func makeVideoView() -> VideoView? {
+        if let videoView { return videoView }
+        guard MPV.available, let content = window?.contentView, let view = VideoView(delegate: self) else { return nil }
+        view.frame = content.bounds
+        view.autoresizingMask = [.width, .height]
+        view.isHidden = true
+        view.menu = contextMenu
+        view.options = videoOptions
+        content.addSubview(view, positioned: .above, relativeTo: imageView)
+        videoView = view
+        return view
+    }
+
+    private func showVideo(_ url: URL) {
+        // Nothing of the picture machinery applies: no decoding, zoom or adjustments.
+        current = nil
+        editedImage = nil
+        imageView.setImage(nil, fullSize: .zero, resetView: true)
+        setControlsVisible(false)
+        if messageIsSticky { hideMessage() }
+        guard let view = makeVideoView() else {
+            showMessage("Can't play “\(url.lastPathComponent)”", duration: nil)
+            return
+        }
+        showingVideo = true
+        view.isHidden = false
+        // Plays at once, except while a key is held down to skim: then it waits until you stop.
+        let playNow = settings.videoAutoplay && !keyRepeating
+        view.open(url, play: playNow)
+        videoPlayTimer?.invalidate()
+        if settings.videoAutoplay && !playNow {
+            videoPlayTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+                guard let self, self.showingVideo, self.navigator.current == url else { return }
+                self.videoView?.play()
+            }
+        }
+        window?.makeFirstResponder(imageView)  // keys stay with Glance
+        updateTitle()
+        updateInfo()
+        prefetchNeighbors()
+    }
+
+    private func leaveVideo() {
+        videoPlayTimer?.invalidate()
+        showingVideo = false
+        videoView?.close()
+        videoView?.isHidden = true
+    }
+
+    private func handleVideoKey(_ scalar: Unicode.Scalar, shift: Bool, video: VideoView) -> Bool {
+        switch Int(scalar.value) {
+        case 0x20: video.togglePause()
+        // Arrows move through the video; Page Up/Down and the wheel still change file.
+        case NSLeftArrowFunctionKey: video.seek(by: shift ? -30 : -5)
+        case NSRightArrowFunctionKey: video.seek(by: shift ? 30 : 5)
+        case NSUpArrowFunctionKey: video.changeVolume(by: 5)
+        case NSDownArrowFunctionKey: video.changeVolume(by: -5)
+        default:
+            switch Character(scalar) {
+            case "m", "M": video.toggleMute()
+            case "j": video.cycleSubtitles(forward: true)  // as in mpv
+            case "J": video.cycleSubtitles(forward: false)
+            case "v", "V": video.toggleSubtitles()
+            case ",": video.frameStep(forward: false)
+            case ".": video.frameStep(forward: true)
+            default: return false
+            }
+        }
+        return true
+    }
+
+    @objc func togglePlayPause(_ sender: Any?) { videoView?.togglePause() }
+    @objc func toggleVideoMute(_ sender: Any?) { videoView?.toggleMute() }
+    @objc func chooseSubtitle(_ sender: NSMenuItem) { videoView?.selectSubtitle(sender.tag, announce: true) }
+    @objc func chooseAudioTrack(_ sender: NSMenuItem) { videoView?.selectAudio(sender.tag) }
+    @objc func loadSubtitleFile(_ sender: Any?) { videoView?.loadSubtitleFile() }
+
+    @objc func nextDocument(_ sender: Any?) { goToFile(1) }
+    @objc func previousDocument(_ sender: Any?) { goToFile(-1) }
+
+    private func goToFile(_ delta: Int) {
+        direction = delta < 0 ? -1 : 1
+        guard navigator.move(by: delta) else {
+            NSSound.beep()
+            return
+        }
+        showCurrent()
+    }
+
+    // MARK: VideoViewDelegate
+
+    var videoViewIsFullScreen: Bool { isFullScreen }
+
+    func videoViewToggleFullScreen(_ view: VideoView) { toggleFullScreenMode(nil) }
+
+    func videoViewDidLoadFile(_ view: VideoView) { updateTitle() }
+
+    func videoView(_ view: VideoView, scrollWheel event: NSEvent) {
+        // Mouse wheels only: trackpad scrolling does nothing on a video.
+        guard !event.hasPreciseScrollingDeltas, event.scrollingDeltaY != 0 else { return }
+        if settings.wheelAction == .navigate && !event.modifierFlags.contains(.command) {
+            go(event.scrollingDeltaY > 0 ? -1 : 1)
+        } else {
+            view.changeVolume(by: event.scrollingDeltaY > 0 ? 5 : -5)  // where pictures would zoom, videos get louder
+        }
+    }
+
+    // MARK: NSMenuDelegate
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === contextMenu else { return }
+        menu.removeAllItems()
+        let kind: MainMenu.ContextKind = showingVideo ? .video : currentPDF != nil ? .pdf : .picture
+        var tracks: (subtitles: [NSMenuItem], audio: [NSMenuItem])?
+        if kind == .video, let videoView, videoView.isOpen {
+            tracks = videoView.trackMenuItems(target: self, subtitleAction: #selector(chooseSubtitle(_:)),
+                                              audioAction: #selector(chooseAudioTrack(_:)), loadAction: #selector(loadSubtitleFile(_:)))
+        }
+        MainMenu.contextItems(for: kind, tracks: tracks).forEach { menu.addItem($0) }
+    }
+
     // MARK: - Menu validation
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         let hasImage = current != nil
         switch item.action {
+        case #selector(togglePlayPause(_:)):
+            item.title = videoView?.isPlaying == true ? "Pause" : "Play"
+            return showingVideo
+        case #selector(toggleVideoMute(_:)), #selector(chooseSubtitle(_:)), #selector(chooseAudioTrack(_:)), #selector(loadSubtitleFile(_:)):
+            return showingVideo
+        case #selector(nextDocument(_:)), #selector(previousDocument(_:)):
+            return navigator.count > 1
+        case #selector(revealInFinder(_:)), #selector(copyFilePath(_:)), #selector(setModificationDateToNow(_:)), #selector(moveToTrash(_:)):
+            return navigator.current != nil
         case #selector(openDocument(_:)):
             return true
         case #selector(toggleFullScreenMode(_:)):
@@ -1377,6 +1546,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 parts.append("page \(page + 1)/\(info.pageCount)")
             }
             parts.append("\(Int((imageView.zoom * 100).rounded()))%")
+        } else if showingVideo, let details = videoView?.details {
+            parts.append(details)
         }
         window.subtitle = parts.joined(separator: "  ·  ")
         if settings.showFilename && !showInfo { updateInfo() }

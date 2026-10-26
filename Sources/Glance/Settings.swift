@@ -63,6 +63,12 @@ final class Settings {
         static let holdToZoom = "holdToZoom"
         static let holdZoomFactor = "holdZoomFactor"
         static let cacheGB = "cacheGB"
+        static let includeVideos = "includeVideosInFolders"
+        static let videoAutoplay = "videoAutoplay"
+        static let videoPreviews = "videoTimelinePictures"
+        static let videoLoopShort = "videoLoopShortClips"
+        static let alwaysSubtitles = "alwaysSubtitles"
+        static let subtitleLanguage = "subtitleLanguage"
     }
 
     private let defaults = UserDefaults.standard
@@ -100,6 +106,12 @@ final class Settings {
             Key.holdToZoom: HoldToZoom.pdfsOnly.rawValue,
             Key.holdZoomFactor: 2.5,
             Key.cacheGB: Self.defaultCacheGB,
+            Key.includeVideos: true,
+            Key.videoAutoplay: true,
+            Key.videoPreviews: true,
+            Key.videoLoopShort: true,
+            Key.alwaysSubtitles: false,
+            Key.subtitleLanguage: 0,
         ])
     }
 
@@ -263,6 +275,41 @@ final class Settings {
     var holdZoomFactor: Double {
         get { defaults.double(forKey: Key.holdZoomFactor) }
         set { store(newValue, Key.holdZoomFactor) }
+    }
+
+    // MARK: Video
+
+    /// Listed alongside pictures when browsing a folder (opening a video always lists its neighbours).
+    var includeVideosInFolders: Bool {
+        get { defaults.bool(forKey: Key.includeVideos) }
+        set { store(newValue, Key.includeVideos) }
+    }
+
+    var videoAutoplay: Bool {
+        get { defaults.bool(forKey: Key.videoAutoplay) }
+        set { store(newValue, Key.videoAutoplay) }
+    }
+
+    var videoTimelinePictures: Bool {
+        get { defaults.bool(forKey: Key.videoPreviews) }
+        set { store(newValue, Key.videoPreviews) }
+    }
+
+    var videoLoopShortClips: Bool {
+        get { defaults.bool(forKey: Key.videoLoopShort) }
+        set { store(newValue, Key.videoLoopShort) }
+    }
+
+    /// Otherwise only forced subtitles (the ones translating dialogue in another language).
+    var alwaysSubtitles: Bool {
+        get { defaults.bool(forKey: Key.alwaysSubtitles) }
+        set { store(newValue, Key.alwaysSubtitles) }
+    }
+
+    /// Index into VideoLanguages.all; 0 is English.
+    var subtitleLanguage: Int {
+        get { defaults.integer(forKey: Key.subtitleLanguage) }
+        set { store(newValue, Key.subtitleLanguage) }
     }
 
     private func store(_ value: Any, _ key: String) {

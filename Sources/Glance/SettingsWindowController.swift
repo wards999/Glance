@@ -25,6 +25,7 @@ final class SettingsWindowController: NSWindowController {
         tabs.addTabViewItem(tab("General", generalRows()))
         tabs.addTabViewItem(tab("Display", displayRows()))
         tabs.addTabViewItem(tab("PDF", pdfRows()))
+        if MPV.available { tabs.addTabViewItem(tab("Video", videoRows())) }
         tabs.addTabViewItem(tab("Saving", savingRows()))
         tabs.addTabViewItem(tab("Performance", performanceRows()))
         window.contentView = tabs
@@ -99,6 +100,19 @@ final class SettingsWindowController: NSWindowController {
                 { s.holdZoomFactor = factors[$0] }
             )],
             [empty, note("Press and hold on the page to magnify it; move the mouse to look around, let go to return.")],
+        ]
+    }
+
+    private func videoRows() -> [[NSView]] {
+        let s = Settings.shared
+        return [
+            [empty, checkbox("Include videos when browsing folders", { s.includeVideosInFolders }, { s.includeVideosInFolders = $0 })],
+            [empty, checkbox("Play videos when you stop on them", { s.videoAutoplay }, { s.videoAutoplay = $0 })],
+            [empty, checkbox("Show pictures above the timeline as you hover", { s.videoTimelinePictures }, { s.videoTimelinePictures = $0 })],
+            [empty, checkbox("Loop silent clips under 30 seconds", { s.videoLoopShortClips }, { s.videoLoopShortClips = $0 })],
+            [label("Subtitles:"), popup(["Only forced (foreign dialogue)", "Always"], { s.alwaysSubtitles ? 1 : 0 }, { s.alwaysSubtitles = $0 == 1 })],
+            [label("Language:"), popup(VideoLanguages.all.map(\.name), { s.subtitleLanguage }, { s.subtitleLanguage = $0 })],
+            [empty, note("A subtitle file beside the video (Movie.srt, Movie.en.srt, or in a Subs folder) is shown when it opens. J changes subtitles, V turns them off and on.")],
         ]
     }
 
