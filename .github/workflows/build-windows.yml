@@ -48,6 +48,7 @@ jobs:
           name: Glance-windows
           path: |
             windows/build/Release/*.exe
+            windows/build/Release/GlanceThumbnails.dll
             windows/build/Release/pdfium.dll
             windows/build/Release/pdfium-LICENSE.txt
             windows/build/Release/pdfium-licenses/
