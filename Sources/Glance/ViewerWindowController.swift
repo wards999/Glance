@@ -99,6 +99,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.minSize = NSSize(width: 320, height: 240)
         window.isReleasedWhenClosed = false
+        // No "growing" animation when the window first appears (or closes): the picture just shows.
+        window.animationBehavior = .none
         super.init(window: window)
         window.delegate = self
         window.setFrameAutosaveName(Self.frameAutosaveName)
