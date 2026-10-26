@@ -32,6 +32,9 @@ jobs:
       - name: Toolchain
         run: swift --version
 
+      - name: Video libraries (pinned, hash-checked)
+        run: ./scripts/fetch-mac-deps.sh
+
       - name: Build Glance.app
         run: ./scripts/bundle.sh
 
