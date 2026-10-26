@@ -21,6 +21,19 @@ only needed for PDFs; keep it next to `Glance.exe` (delete it if you only view p
 Glance the default viewer, right-click an image ▸ Open with ▸ Choose another app ▸ More apps ▸
 Look for another app on this PC, pick `Glance.exe`, and tick "Always use this app".
 
+**PDF thumbnails in Explorer** (optional, Windows): Windows doesn't show PDF pages as thumbnails
+on its own. `GlanceThumbnails.dll` adds that, using the same PDFium. Keep it next to `pdfium.dll`
+and run, from that folder:
+
+```bat
+regsvr32 GlanceThumbnails.dll
+```
+
+It's registered for your user only, so no administrator rights are needed, and it works whichever
+app opens PDFs. Windows only isolates thumbnail handlers installed for all users, so this one runs
+inside Explorer. If PDFium ever crashes on a damaged file, the handler catches it and stops making
+PDF thumbnails until Explorer restarts. To remove it: `regsvr32 /u GlanceThumbnails.dll`.
+
 ## Build the Mac version
 
 Requires macOS 13 or later and Xcode 15 or later (or the matching Command Line Tools).
@@ -152,6 +165,10 @@ by PDFium (Chrome's engine, `pdfium.dll` from bblanchon/pdfium-binaries build 80
 hash), which is loaded only when the first PDF opens. On a 132-page magazine it renders the
 heaviest pages about 3× faster than Windows' built-in PDF engine, and re-renders open pages
 (zoom, hold to zoom) in well under 0.1 s.
+
+`windows/thumbnails/` builds `GlanceThumbnails.dll`, an Explorer thumbnail handler
+(IThumbnailProvider) that renders a PDF's first page with PDFium: typically about 30 ms per file
+the first time, then Explorer's cache.
 
 Settings are in a Settings dialog (right-click ▸ Settings…) and saved to
 `%APPDATA%\Glance\Glance.ini`; adjustments saved per picture go to `Parameters.ini` beside it.
