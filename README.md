@@ -28,6 +28,11 @@ Glance the default viewer, right-click an image ▸ Open with ▸ Choose another
 Look for another app on this PC, pick `Glance.exe`, and tick "Always use this app". Do the same
 with a PDF to read PDFs in Glance.
 
+**Video add-on** (optional, Windows): to play videos too, also download
+**Glance-video-addon.zip** and unzip it into the same folder as `Glance.exe`. It adds
+`libmpv-2.dll` (about 120 MB), which is loaded only when you open a video. See
+[Watching videos](#watching-videos-windows).
+
 ## Reading PDFs
 
 Glance reads PDFs as well as pictures, and is built for magazines: pages are sharp at any zoom,
@@ -310,4 +315,13 @@ windows/src/
   Adjustments.cpp, Editing.cpp     adjustments, crop, saving, lossless rotation
   Settings.cpp, SettingsDialog.cpp preferences (INI) and the Settings dialog
   AdjustmentsDialog.cpp, PasswordDialog.cpp, ParameterStore.cpp
+  Video.cpp                        video playback through libmpv: controls, timeline pictures
+windows/thumbnails/                GlanceThumbnails.dll: PDF covers in Explorer
 ```
+
+## Licence
+
+Glance is free software under the [GNU General Public License, version 3](LICENSE): you can use,
+share and change it, and versions you share must stay under the same licence with their source
+available. The Windows downloads include PDFium (BSD) and, in the video add-on, libmpv (GPL);
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists them and where their source is.
