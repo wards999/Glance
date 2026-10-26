@@ -47,7 +47,8 @@ final class VideoView: NSView {
 
     // Timeline pictures: a second, silent mpv on its own queue; the newest request wins.
     private let previews = PreviewMaker()
-    private var pictures: [Int: CGImage] = [:]
+    private var pictures: [Int: (time: Double, image: CGImage)] = [:]  // made ahead: bucket -> keyframe picture
+    private var exactPicture: (time: Double, image: CGImage)?          // the exact frame for the latest hover
     private var generation = 0
 
     init?(delegate: VideoViewDelegate) {
@@ -65,9 +66,13 @@ final class VideoView: NSView {
         controls.autoresizingMask = [.width, .height]
         controls.isHidden = true
         addSubview(controls)
-        previews.onPicture = { [weak self] generation, time, image in
+        previews.onPicture = { [weak self] generation, exact, time, image in
             guard let self, generation == self.generation else { return }
-            self.pictures[self.bucket(for: time)] = image
+            if exact {
+                self.exactPicture = (time, image)
+            } else {
+                self.pictures[self.bucket(for: time)] = (time, image)
+            }
             self.updateControls()
         }
     }
@@ -137,6 +142,7 @@ final class VideoView: NSView {
         duration = 0
         videoSize = .zero
         pictures = [:]
+        exactPicture = nil
         generation += 1
         mpv.set(handle, "pause", play ? "no" : "yes")
         mpv.set(handle, "loop-file", "no")
@@ -493,20 +499,29 @@ final class VideoView: NSView {
         Int(time / max(1, duration / 300))
     }
 
+    /// About a pixel of timeline, in seconds.
+    private var exactTolerance: Double { max(0.04, duration / Double(max(controls.trackRect.width, 1))) }
+
+    /// Asks for the exact frame at `time` (the newest request replaces any waiting one).
     private func requestPicture(at time: Double) {
         guard options.previews, duration > 0, let url else { return }
-        let bucket = bucket(for: time)
-        guard pictures[bucket] == nil else { return }
-        let length = max(1, duration / 300)
+        if let exactPicture, abs(exactPicture.time - time) <= exactTolerance { return }  // already have it
         let width = Int(220 * (window?.backingScaleFactor ?? 2))
-        previews.request(url: url, time: min(duration, (Double(bucket) + 0.5) * length), width: width, generation: generation)
+        previews.request(url: url, time: min(max(time, 0), duration), width: width, generation: generation)
     }
 
     private func nearestPicture(to time: Double) -> CGImage? {
         let wanted = bucket(for: time)
-        // The nearest made so far (until the exact one arrives), but not a far-away one.
-        guard let nearest = pictures.keys.min(by: { abs($0 - wanted) < abs($1 - wanted) }), abs(nearest - wanted) <= 8 else { return nil }
-        return pictures[nearest]
+        // The nearest made ahead (until the exact one arrives), but not a far-away one.
+        var best: (time: Double, image: CGImage)?
+        if let nearest = pictures.keys.min(by: { abs($0 - wanted) < abs($1 - wanted) }), abs(nearest - wanted) <= 8 {
+            best = pictures[nearest]
+        }
+        // The exact frame wins whenever it's nearer the pointer.
+        if let exactPicture, best.map({ abs(exactPicture.time - time) < abs($0.time - time) }) ?? true {
+            best = exactPicture
+        }
+        return best?.image
     }
 
     // MARK: - Subtitles and audio tracks
@@ -986,7 +1001,7 @@ final class VideoControlsView: NSView {
 /// A second, silent mpv: no audio, software decoding of the nearest keyframe only, drawn small by
 /// mpv's software renderer. It runs below normal priority so playback never waits for it.
 final class PreviewMaker {
-    var onPicture: ((Int, Double, CGImage) -> Void)?
+    var onPicture: ((Int, Bool, Double, CGImage) -> Void)?  // generation, exact, time shown, picture
 
     private let queue = DispatchQueue(label: "glance.video-previews", qos: .utility)
     private let lock = NSLock()
@@ -1090,20 +1105,24 @@ final class PreviewMaker {
                     loaded = nil
                 }
             }
+            var exact = true
             if time == nil, url != nil, url == loaded, nextAhead < ahead.count {
                 time = ahead[nextAhead]
                 nextAhead += 1
+                exact = false  // made ahead: the keyframe is enough, and quick
             }
-            guard let time, let url, url == loaded, let image = picture(at: time, width: width) else { continue }
-            DispatchQueue.main.async { self.onPicture?(generation, time, image) }
+            guard let time, let url, url == loaded, let (shown, image) = picture(at: time, width: width, exact: exact) else { continue }
+            DispatchQueue.main.async { self.onPicture?(generation, exact, shown, image) }
         }
     }
 
     private func start() -> Bool {
         if handle != nil { return true }
         guard let mpv = MPV.shared, let created = mpv.create() else { return false }
-        for (name, value) in [("vo", "libmpv"), ("aid", "no"), ("sid", "no"), ("hr-seek", "no"), ("pause", "yes"),
-                              ("hwdec", "no"), ("idle", "yes"), ("keep-open", "yes"), ("vd-lavc-skiploopfilter", "all"),
+        // Exact frames mean decoding on from a keyframe: the GPU (VideoToolbox) does that fastest
+        // for HEVC, AV1 and VP9, the CPU for H.264.
+        for (name, value) in [("vo", "libmpv"), ("aid", "no"), ("sid", "no"), ("hr-seek", "yes"), ("pause", "yes"),
+                              ("hwdec", "auto-copy"), ("hwdec-codecs", "hevc,av1,vp9"), ("idle", "yes"), ("keep-open", "yes"),
                               ("vd-lavc-fast", "yes"), ("cache", "no"), ("demuxer-max-bytes", "8MiB"),
                               ("load-scripts", "no"), ("ytdl", "no"), ("terminal", "no"), ("config", "no")] {
             mpv.set(created, option: name, value)
@@ -1150,14 +1169,15 @@ final class PreviewMaker {
         }
     }
 
-    private func picture(at time: Double, width: Int) -> CGImage? {
+    private func picture(at time: Double, width: Int, exact: Bool) -> (Double, CGImage)? {
         guard let mpv, let context else { return nil }
         let frameFlag = UInt64(MPV_RENDER_UPDATE_FRAME.rawValue)
         // A frame mpv drew before this seek mustn't be taken for the new one.
         var scratch: [UInt8] = []
         if mpv.renderUpdate(context) & frameFlag != 0 { render(into: &scratch, width: 16, height: 16) }
-        mpv.run(handle, ["seek", String(format: "%.3f", time), "absolute+keyframes"])
+        mpv.run(handle, ["seek", String(format: "%.3f", time), exact ? "absolute+exact" : "absolute+keyframes"])
         _ = mpv.wait(handle, for: MPV_EVENT_PLAYBACK_RESTART, timeout: 3)
+        let shown = mpv.double(handle, "time-pos") ?? time  // where a keyframe seek landed
         let deadline = Date().addingTimeInterval(0.5)
         while mpv.renderUpdate(context) & frameFlag == 0 && Date() < deadline { usleep(2000) }
         let w = mpv.double(handle, "dwidth") ?? 16, h = mpv.double(handle, "dheight") ?? 9
@@ -1166,9 +1186,10 @@ final class PreviewMaker {
         render(into: &pixels, width: width, height: height)
         let data = Data(pixels) as CFData
         guard let provider = CGDataProvider(data: data) else { return nil }
-        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
-                       space: CGColorSpaceCreateDeviceRGB(),
-                       bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue),
-                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        guard let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
+        return (shown, image)
     }
 }

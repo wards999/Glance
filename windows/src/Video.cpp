@@ -134,6 +134,7 @@ std::wstring clock(double seconds) {
 
 struct PreviewResult {
     unsigned generation;
+    bool exact;   // the frame for the moment asked for (else the keyframe nearest it, made ahead)
     double time;
     UINT width, height;
     std::vector<uint8_t> pixels;
@@ -317,6 +318,7 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
     duration_ = 0;
     videoWidth_ = videoHeight_ = 0;
     previews_.clear();
+    exactTime_ = -1;
     ++generation_;
     mpv->setPropertyString(handle, "pause", play ? "no" : "yes");
     mpv->setPropertyString(handle, "loop-file", "no");
@@ -607,15 +609,19 @@ int VideoPlayer::bucketFor(double time) const {
     return static_cast<int>(time / length);
 }
 
+double VideoPlayer::exactTolerance() const {
+    const int width = std::max<int>(1, trackRect_.right - trackRect_.left);
+    return std::max(0.04, duration_ / width);
+}
+
+/// Asks for the exact frame at `time` (the newest request replaces any waiting one).
 void VideoPlayer::requestPreview(double time) {
     if (!options_.previews || duration_ <= 0) return;
-    const int bucket = bucketFor(time);
-    if (previews_.count(bucket)) return;
-    const double length = std::max(1.0, duration_ / kPreviewBuckets);
+    if (exactTime_ >= 0 && std::abs(exactTime_ - time) <= exactTolerance()) return;  // already have it
     {
         std::lock_guard lock(previewLock_);
         previewPath_ = path_;
-        previewTime_ = std::min(duration_, (bucket + 0.5) * length);
+        previewTime_ = std::clamp(time, 0.0, duration_);
         previewGeneration_ = generation_;
         previewWidth_ = MulDiv(kPreviewWidth, GetDpiForWindow(parent_), 96);
     }
@@ -625,7 +631,9 @@ void VideoPlayer::requestPreview(double time) {
 void VideoPlayer::takePreview(LPARAM lParam) {
     std::unique_ptr<PreviewResult> result(reinterpret_cast<PreviewResult*>(lParam));
     if (!open_ || result->generation != generation_) return;  // a video you've left
-    Preview& preview = previews_[bucketFor(result->time)];
+    Preview& preview = result->exact ? exact_ : previews_[bucketFor(result->time)];
+    if (result->exact) exactTime_ = result->time;
+    preview.time = result->time;
     preview.width = result->width;
     preview.height = result->height;
     preview.pixels = std::move(result->pixels);
@@ -641,8 +649,11 @@ void VideoPlayer::previewWorker() {
     mpv_handle* handle = mpv->create();
     if (!handle) return;
     applyOptions(mpv, handle,
-               {{"vo", "libmpv"}, {"aid", "no"}, {"sid", "no"}, {"hr-seek", "no"}, {"pause", "yes"},
-                {"hwdec", "no"}, {"idle", "yes"}, {"keep-open", "yes"}, {"vd-lavc-skiploopfilter", "all"},
+               {{"vo", "libmpv"}, {"aid", "no"}, {"sid", "no"}, {"hr-seek", "yes"}, {"pause", "yes"},
+                // Exact frames mean decoding on from a keyframe: the GPU does that fastest for
+                // HEVC, AV1 and VP9 (35 ms against 115 ms for 1080p HEVC), the CPU for H.264.
+                {"hwdec", "auto-copy"}, {"hwdec-codecs", "hevc,av1,vp9"},
+                {"idle", "yes"}, {"keep-open", "yes"},
                 {"vd-lavc-fast", "yes"}, {"cache", "no"}, {"demuxer-max-bytes", "8MiB"}, {"load-scripts", "no"},
                 {"ytdl", "no"}, {"terminal", "no"}, {"config", "no"}});
     mpv_render_context* context = nullptr;
@@ -727,16 +738,20 @@ void VideoPlayer::previewWorker() {
                 if (!taken[i]) ahead.push_back((i + 0.5) * duration / count);
             }
         }
+        bool exact = true;
         if (time < 0) {
             if (nextAhead >= ahead.size()) continue;
             time = ahead[nextAhead++];
+            exact = false;  // made ahead: the keyframe is enough, and quick
         }
         // A frame mpv drew before this seek mustn't be taken for the new one.
         if (mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) renderInto(scratch, 16, 16);
         char at[32];
         snprintf(at, sizeof(at), "%.3f", time);
-        run(mpv, handle, {"seek", at, "absolute+keyframes"});
+        run(mpv, handle, {"seek", at, exact ? "absolute+exact" : "absolute+keyframes"});
         waitFor(mpv, handle, MPV_EVENT_PLAYBACK_RESTART, 3);
+        double shown = time;
+        mpv->getProperty(handle, "time-pos", MPV_FORMAT_DOUBLE, &shown);  // where a keyframe seek landed
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
         while (!(mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) && std::chrono::steady_clock::now() < deadline) {
             Sleep(2);
@@ -747,7 +762,8 @@ void VideoPlayer::previewWorker() {
         const int height = std::max(2, static_cast<int>(std::lround(width * (h > 0 && w > 0 ? h / w : 9.0 / 16))));
         auto result = std::make_unique<PreviewResult>();
         result->generation = generation;
-        result->time = time;
+        result->exact = exact;
+        result->time = shown;
         result->width = width;
         result->height = static_cast<UINT>(height);
         renderInto(result->pixels, static_cast<int>(width), height);
@@ -946,6 +962,11 @@ void VideoPlayer::drawControls() {
             }
             // The nearest made so far (until the exact one arrives), but not a far-away one.
             if (std::abs(it->first - bucket) <= 8) picture = &it->second;
+        }
+        // The exact frame wins whenever it's nearer the pointer than the one made ahead.
+        if (options_.previews && exactTime_ >= 0 &&
+            (!picture || std::abs(exactTime_ - at) < std::abs(picture->time - at))) {
+            picture = &exact_;
         }
         const float boxWidth = picture ? float(picture->width) : 70 * s;
         const float boxHeight = picture ? float(picture->height) : 0;

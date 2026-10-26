@@ -128,6 +128,7 @@ private:
     void flash(const std::wstring& text);
 
     struct Preview {
+        double time = 0;  // of the frame shown
         UINT width = 0, height = 0;
         std::vector<uint8_t> pixels;  // BGRA, opaque
     };
@@ -188,7 +189,10 @@ private:
     double previewTime_ = -1;    // guarded by previewLock_; < 0: nothing wanted
     unsigned previewGeneration_ = 0;  // guarded by previewLock_
     UINT previewWidth_ = 0;      // guarded by previewLock_
-    std::map<int, Preview> previews_;  // UI thread: bucket -> picture, for the open video
+    std::map<int, Preview> previews_;  // UI thread: bucket -> picture made ahead, for the open video
+    Preview exact_;                    // UI thread: the exact frame for the latest hover
+    double exactTime_ = -1;            // its time; < 0: none
+    double exactTolerance() const;     // seconds: about a pixel of timeline
     unsigned generation_ = 0;    // UI thread copy
     void previewWorker();
 };
