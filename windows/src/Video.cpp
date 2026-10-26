@@ -748,6 +748,7 @@ void VideoPlayer::previewWorker() {
         if (mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) renderInto(scratch, 16, 16);
         char at[32];
         snprintf(at, sizeof(at), "%.3f", time);
+        const auto started = std::chrono::steady_clock::now();
         run(mpv, handle, {"seek", at, exact ? "absolute+exact" : "absolute+keyframes"});
         waitFor(mpv, handle, MPV_EVENT_PLAYBACK_RESTART, 3);
         double shown = time;
@@ -768,6 +769,12 @@ void VideoPlayer::previewWorker() {
         result->height = static_cast<UINT>(height);
         renderInto(result->pixels, static_cast<int>(width), height);
         for (size_t i = 3; i < result->pixels.size(); i += 4) result->pixels[i] = 255;  // bgr0 -> opaque BGRA
+        {
+            char line[96];
+            snprintf(line, sizeof(line), "preview %s %.1f s: %.0f ms", exact ? "exact" : "ahead", time,
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+            trace(line);
+        }
         PostMessageW(parent_, previewMessage_, 0, reinterpret_cast<LPARAM>(result.release()));
     }
     mpv->renderFree(context);
