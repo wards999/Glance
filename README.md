@@ -118,7 +118,7 @@ and the window always agree.
 | ⇧⌘R | Reveal in Finder |
 | ⌘, | Settings |
 
-## Windows version (early)
+## Windows version
 
 `windows/` is a native C++ port: Win32, WIC decoding (with JPEG decoded directly at 1/2, 1/4 or
 1/8 size), Direct2D on the GPU, the same decode-ahead pipeline, and no runtime to install (about
