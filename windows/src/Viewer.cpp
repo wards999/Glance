@@ -97,6 +97,10 @@ enum Command {
     CmdClearParameters,
     CmdControls,
     CmdPdfThumbnails,
+    CmdPlayPause,
+    CmdMute,
+    CmdNextFile,
+    CmdPreviousFile,
     CmdSettings,
     CmdAbout,
     CmdExit,
@@ -862,10 +866,13 @@ void Viewer::updateTitle() {
 }
 
 void Viewer::showContextMenu(int x, int y) {
+    // One menu per kind of file: pictures get JPEGView's full menu, PDFs their pages and layout,
+    // videos playback and tracks. Only what applies to the file on screen is offered.
+    enum class Kind { Picture, Pdf, Video };
+    const Kind kind = showingVideo_ ? Kind::Video : showingPdf() ? Kind::Pdf : Kind::Picture;
     const bool hasImage = current_ != nullptr;
     const bool hasFile = navigator_.current() != nullptr;
-    const bool several = navigator_.count() > 1 || (showingPdf() && pdfScreens_ > 1);
-    const bool pdf = showingPdf();
+    const bool severalFiles = navigator_.count() > 1;
     auto add = [](HMENU menu, int id, const wchar_t* text, bool enabled = true, bool checked = false) {
         AppendMenuW(menu, MF_STRING | (enabled ? 0 : MF_GRAYED) | (checked ? MF_CHECKED : 0), id, text);
     };
@@ -874,119 +881,173 @@ void Viewer::showContextMenu(int x, int y) {
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(child), text);
     };
 
-    // Laid out like JPEGView's menu.
-    HMENU menu = CreatePopupMenu();
-    if (showingVideo_ && video_) {
-        video_->appendTrackMenus(menu);  // Subtitles, and Audio track when there's a choice
+    // Shared parts.
+    auto navigationMenu = [&](HMENU menu, const wchar_t* first, const wchar_t* last) {
+        HMENU navigation = CreatePopupMenu();
+        add(navigation, CmdFirst, first, severalFiles);
+        add(navigation, CmdLast, last, severalFiles);
+        separator(navigation);
+        add(navigation, CmdLoop, L"Loop through folder", true, settings_.loop);
+        if (kind == Kind::Picture && hasPages()) {
+            separator(navigation);
+            add(navigation, CmdNextPage, L"Next page\t]");
+            add(navigation, CmdPreviousPage, L"Previous page\t[");
+        }
+        submenu(menu, navigation, L"Navigation");
+    };
+    auto orderMenu = [&](HMENU menu) {
+        HMENU order = CreatePopupMenu();
+        const wchar_t* orders[] = {L"File name", L"Date modified", L"Date created", L"File size", L"Random"};
+        for (int i = 0; i < 5; ++i) add(order, CmdSortBase + i, orders[i], true, static_cast<int>(settings_.sortOrder) == i);
+        separator(order);
+        add(order, CmdDescending, L"Descending", true, settings_.descending);
+        submenu(menu, order, L"Display order");
+    };
+    auto slideshowMenu = [&](HMENU menu, const wchar_t* title) {
+        HMENU slideshow = CreatePopupMenu();
+        add(slideshow, CmdSlideshow, slideshow_ ? L"Stop slideshow\tS" : L"Start slideshow\tS",
+            severalFiles || (kind == Kind::Pdf && pdfScreens_ > 1));
+        separator(slideshow);
+        for (int i = 0; i < static_cast<int>(std::size(kSlideshowChoices)); ++i) {
+            std::wstring text = std::to_wstring(kSlideshowChoices[i]) + (kSlideshowChoices[i] == 1 ? L" second" : L" seconds");
+            add(slideshow, CmdIntervalBase + i, text.c_str(), true, settings_.slideshowSeconds == kSlideshowChoices[i]);
+        }
+        submenu(menu, slideshow, title);
+    };
+    auto zoomMenu = [&](HMENU menu) {
+        HMENU zoom = CreatePopupMenu();
+        add(zoom, CmdZoomIn, L"Zoom in\t+", hasImage);
+        add(zoom, CmdZoomOut, L"Zoom out\t-", hasImage);
+        add(zoom, CmdFit, L"Fit to window\t0", hasImage);
+        add(zoom, CmdActual, L"Actual size (100%)\t1", hasImage);
+        submenu(menu, zoom, L"Zoom");
+    };
+    auto tail = [&](HMENU menu) {
+        add(menu, CmdFullScreen, L"Full screen\tF11", true, fullScreen_);
         separator(menu);
-    }
-    add(menu, CmdOpen, L"Open image...\tCtrl+O");
-    add(menu, CmdSaveAs, L"Save processed image...\tCtrl+S", hasImage);
-    add(menu, CmdReload, L"Reload image\tCtrl+R", hasFile);
-    add(menu, CmdReveal, L"Open containing folder in Explorer\tW", hasFile);
-    add(menu, CmdPrint, L"Print image...\tCtrl+P", hasImage);
-    HMENU date = CreatePopupMenu();
-    add(date, CmdDateNow, L"To now", hasFile && !pdf);
-    add(date, CmdDateTaken, L"To date taken (EXIF)", hasImage && !pdf && current_->info.takenTime != 0);
-    submenu(menu, date, L"Set modification date");
-    add(menu, CmdWallpaper, L"Set as desktop wallpaper", hasFile && !pdf);
-    separator(menu);
-    add(menu, CmdCopy, L"Copy to clipboard\tCtrl+C", hasImage);
-    add(menu, CmdCopyOriginal, L"Copy original size image\tCtrl+X", hasImage);
-    add(menu, CmdCopyPath, L"Copy file path\tCtrl+Shift+C", hasFile);
-    add(menu, CmdPaste, L"Paste from clipboard\tCtrl+V",
-        IsClipboardFormatAvailable(CF_HDROP) || IsClipboardFormatAvailable(CF_DIB));
-    separator(menu);
-    add(menu, CmdInfo, L"Show picture info (EXIF)\tF2", true, settings_.showInfo);
-    add(menu, CmdFilename, L"Show filename\tCtrl+F2", true, settings_.showFilename);
-    add(menu, CmdControls, L"Show navigation panel\tCtrl+N", true, settings_.showControls);
-    separator(menu);
-    add(menu, CmdNext, L"Next image\tSpace", several);
-    add(menu, CmdPrevious, L"Previous image\tBackspace", several);
+        add(menu, CmdRecycle, L"Move to Recycle Bin\tDel", hasFile);
+        separator(menu);
+        add(menu, CmdSettings, L"Settings...");
+        add(menu, CmdAbout, L"About Glance...");
+        separator(menu);
+        add(menu, CmdExit, settings_.escapeCloses ? L"Exit\tEsc" : L"Exit");
+    };
 
-    HMENU navigation = CreatePopupMenu();
-    add(navigation, CmdFirst, L"First image\tHome", navigator_.count() > 1);
-    add(navigation, CmdLast, L"Last image\tEnd", navigator_.count() > 1);
-    separator(navigation);
-    add(navigation, CmdLoop, L"Loop through folder", true, settings_.loop);
-    separator(navigation);
-    add(navigation, CmdNextPage, L"Next page\t]", hasPages() || pdf);
-    add(navigation, CmdPreviousPage, L"Previous page\t[", hasPages() || pdf);
-    submenu(menu, navigation, L"Navigation");
-
-    HMENU order = CreatePopupMenu();
-    const wchar_t* orders[] = {L"File name", L"Date modified", L"Date created", L"File size", L"Random"};
-    for (int i = 0; i < 5; ++i) {
-        AppendMenuW(order, MF_STRING | (static_cast<int>(settings_.sortOrder) == i ? MF_CHECKED : 0), CmdSortBase + i, orders[i]);
-    }
-    separator(order);
-    add(order, CmdDescending, L"Descending", true, settings_.descending);
-    submenu(menu, order, L"Display order");
-
-    HMENU slideshow = CreatePopupMenu();
-    add(slideshow, CmdSlideshow, slideshow_ ? L"Stop slideshow\tS" : L"Start slideshow\tS", several);
-    separator(slideshow);
-    for (int i = 0; i < static_cast<int>(std::size(kSlideshowChoices)); ++i) {
-        std::wstring text = std::to_wstring(kSlideshowChoices[i]) + (kSlideshowChoices[i] == 1 ? L" second" : L" seconds");
-        add(slideshow, CmdIntervalBase + i, text.c_str(), true, settings_.slideshowSeconds == kSlideshowChoices[i]);
-    }
-    submenu(menu, slideshow, L"Play folder as slideshow");
-    separator(menu);
-
-    HMENU transform = CreatePopupMenu();
-    add(transform, CmdRotateRight, L"Rotate right\tR", hasImage);
-    add(transform, CmdRotateLeft, L"Rotate left\tL", hasImage);
-    separator(transform);
-    add(transform, CmdCrop, L"Crop to selection\tEnter", hasSelection_);
-    add(transform, CmdRevert, L"Revert all edits", edited_ || !adjustments_.isIdentity() || quarterTurns_ != 0);
-    submenu(menu, transform, L"Transform image");
-
-    HMENU lossless = CreatePopupMenu();
-    const bool canLossless = hasImage && !pdf && !edited_;
-    add(lossless, CmdLosslessBase + 0, L"Rotate 90 degrees clockwise", canLossless);
-    add(lossless, CmdLosslessBase + 1, L"Rotate 90 degrees counter-clockwise", canLossless);
-    add(lossless, CmdLosslessBase + 2, L"Rotate 180 degrees", canLossless);
-    add(lossless, CmdLosslessBase + 3, L"Mirror horizontally", canLossless);
-    add(lossless, CmdLosslessBase + 4, L"Mirror vertically", canLossless);
-    submenu(menu, lossless, L"Lossless JPEG transformations");
-    add(menu, CmdAutoCorrect, L"Auto correction\tF5", hasImage, adjustments_.autoCorrect);
-    add(menu, CmdAdjustments, L"Adjustments...\tE", hasImage);
-    add(menu, CmdKeepAdjustments, L"Keep parameters\tF4", true, settings_.keepAdjustments);
-    separator(menu);
-    add(menu, CmdSaveParameters, L"Save parameters to DB", hasFile && !adjustments_.isIdentity());
-    add(menu, CmdClearParameters, L"Clear parameters from DB",
-        hasFile && ParameterStore::load(*navigator_.current()).has_value());
-    separator(menu);
-
-    HMENU zoom = CreatePopupMenu();
-    add(zoom, CmdZoomIn, L"Zoom in\t+", hasImage);
-    add(zoom, CmdZoomOut, L"Zoom out\t-", hasImage);
-    add(zoom, CmdFit, L"Fit to window\t0", hasImage);
-    add(zoom, CmdActual, L"Actual size (100%)\t1", hasImage);
-    submenu(menu, zoom, L"Zoom");
-    HMENU autoZoom = CreatePopupMenu();
-    add(autoZoom, CmdEnlarge, L"Enlarge small images to fit", true, settings_.enlargeSmall);
-    submenu(menu, autoZoom, L"Auto zoom mode");
-    if (Pdf::available()) {
+    HMENU menu = CreatePopupMenu();
+    if (kind == Kind::Video) {
+        const bool open = video_ && video_->isOpen();
+        add(menu, CmdPlayPause, open && !video_->paused() ? L"Pause\tSpace" : L"Play\tSpace", open);
+        add(menu, CmdMute, L"Mute\tM", open);
+        if (open) video_->appendTrackMenus(menu);  // Subtitles, and Audio track when there's a choice
+        separator(menu);
+        add(menu, CmdOpen, L"Open...\tCtrl+O");
+        add(menu, CmdReveal, L"Open containing folder in Explorer\tW", hasFile);
+        add(menu, CmdCopyPath, L"Copy file path\tCtrl+Shift+C", hasFile);
+        HMENU date = CreatePopupMenu();
+        add(date, CmdDateNow, L"To now", hasFile);
+        submenu(menu, date, L"Set modification date");
+        separator(menu);
+        add(menu, CmdNext, L"Next file\tPage Down", severalFiles);
+        add(menu, CmdPrevious, L"Previous file\tPage Up", severalFiles);
+        navigationMenu(menu, L"First file\tHome", L"Last file\tEnd");
+        orderMenu(menu);
+        slideshowMenu(menu, L"Play folder as slideshow");
+        separator(menu);
+        add(menu, CmdFilename, L"Show filename\tCtrl+F2", true, settings_.showFilename);
+        add(menu, CmdControls, L"Show controls\tCtrl+N", true, settings_.showControls);
+        tail(menu);
+    } else if (kind == Kind::Pdf) {
+        add(menu, CmdNext, L"Next page\tSpace", true);
+        add(menu, CmdPrevious, L"Previous page\tBackspace", true);
+        add(menu, CmdNextFile, L"Next document", severalFiles);
+        add(menu, CmdPreviousFile, L"Previous document", severalFiles);
+        navigationMenu(menu, L"First document\tHome", L"Last document\tEnd");
+        separator(menu);
         HMENU pages = CreatePopupMenu();
         const wchar_t* layouts[] = {L"Automatic", L"Single page", L"Two pages", L"Two pages with cover"};
         for (int i = 0; i < 4; ++i) add(pages, CmdPdfLayoutBase + i, layouts[i], true, settings_.pdfLayout == i);
         separator(pages);
         add(pages, CmdRightToLeft, L"Right to left", true, settings_.pdfRightToLeft);
-        if (thumbnailDllPresent()) {
-            separator(pages);
-            add(pages, CmdPdfThumbnails, L"Show PDF covers in Explorer", true, thumbnailsRegistered());
-        }
-        submenu(menu, pages, L"PDF pages");
+        submenu(menu, pages, L"Page layout");
+        zoomMenu(menu);
+        separator(menu);
+        add(menu, CmdOpen, L"Open...\tCtrl+O");
+        add(menu, CmdSaveAs, L"Save page as image...\tCtrl+S", hasImage);
+        add(menu, CmdPrint, L"Print page...\tCtrl+P", hasImage);
+        add(menu, CmdReload, L"Reload document\tCtrl+R", hasFile);
+        add(menu, CmdReveal, L"Open containing folder in Explorer\tW", hasFile);
+        separator(menu);
+        add(menu, CmdCopy, L"Copy page to clipboard\tCtrl+C", hasImage);
+        add(menu, CmdCopyPath, L"Copy file path\tCtrl+Shift+C", hasFile);
+        separator(menu);
+        orderMenu(menu);
+        slideshowMenu(menu, L"Turn pages as a slideshow");
+        separator(menu);
+        add(menu, CmdFilename, L"Show filename\tCtrl+F2", true, settings_.showFilename);
+        add(menu, CmdControls, L"Show navigation panel\tCtrl+N", true, settings_.showControls);
+        if (thumbnailDllPresent()) add(menu, CmdPdfThumbnails, L"Show PDF covers in Explorer", true, thumbnailsRegistered());
+        tail(menu);
+    } else {
+        // Laid out like JPEGView's menu.
+        add(menu, CmdOpen, L"Open image...\tCtrl+O");
+        add(menu, CmdSaveAs, L"Save processed image...\tCtrl+S", hasImage);
+        add(menu, CmdReload, L"Reload image\tCtrl+R", hasFile);
+        add(menu, CmdReveal, L"Open containing folder in Explorer\tW", hasFile);
+        add(menu, CmdPrint, L"Print image...\tCtrl+P", hasImage);
+        HMENU date = CreatePopupMenu();
+        add(date, CmdDateNow, L"To now", hasFile);
+        add(date, CmdDateTaken, L"To date taken (EXIF)", hasImage && current_->info.takenTime != 0);
+        submenu(menu, date, L"Set modification date");
+        add(menu, CmdWallpaper, L"Set as desktop wallpaper", hasFile);
+        separator(menu);
+        add(menu, CmdCopy, L"Copy to clipboard\tCtrl+C", hasImage);
+        add(menu, CmdCopyOriginal, L"Copy original size image\tCtrl+X", hasImage);
+        add(menu, CmdCopyPath, L"Copy file path\tCtrl+Shift+C", hasFile);
+        add(menu, CmdPaste, L"Paste from clipboard\tCtrl+V",
+            IsClipboardFormatAvailable(CF_HDROP) || IsClipboardFormatAvailable(CF_DIB));
+        separator(menu);
+        add(menu, CmdInfo, L"Show picture info (EXIF)\tF2", true, settings_.showInfo);
+        add(menu, CmdFilename, L"Show filename\tCtrl+F2", true, settings_.showFilename);
+        add(menu, CmdControls, L"Show navigation panel\tCtrl+N", true, settings_.showControls);
+        separator(menu);
+        add(menu, CmdNext, L"Next image\tSpace", severalFiles);
+        add(menu, CmdPrevious, L"Previous image\tBackspace", severalFiles);
+        navigationMenu(menu, L"First image\tHome", L"Last image\tEnd");
+        orderMenu(menu);
+        slideshowMenu(menu, L"Play folder as slideshow");
+        separator(menu);
+
+        HMENU transform = CreatePopupMenu();
+        add(transform, CmdRotateRight, L"Rotate right\tR", hasImage);
+        add(transform, CmdRotateLeft, L"Rotate left\tL", hasImage);
+        separator(transform);
+        add(transform, CmdCrop, L"Crop to selection\tEnter", hasSelection_);
+        add(transform, CmdRevert, L"Revert all edits", edited_ || !adjustments_.isIdentity() || quarterTurns_ != 0);
+        submenu(menu, transform, L"Transform image");
+
+        HMENU lossless = CreatePopupMenu();
+        const bool canLossless = hasImage && !edited_;
+        add(lossless, CmdLosslessBase + 0, L"Rotate 90 degrees clockwise", canLossless);
+        add(lossless, CmdLosslessBase + 1, L"Rotate 90 degrees counter-clockwise", canLossless);
+        add(lossless, CmdLosslessBase + 2, L"Rotate 180 degrees", canLossless);
+        add(lossless, CmdLosslessBase + 3, L"Mirror horizontally", canLossless);
+        add(lossless, CmdLosslessBase + 4, L"Mirror vertically", canLossless);
+        submenu(menu, lossless, L"Lossless JPEG transformations");
+        add(menu, CmdAutoCorrect, L"Auto correction\tF5", hasImage, adjustments_.autoCorrect);
+        add(menu, CmdAdjustments, L"Adjustments...\tE", hasImage);
+        add(menu, CmdKeepAdjustments, L"Keep parameters\tF4", true, settings_.keepAdjustments);
+        separator(menu);
+        add(menu, CmdSaveParameters, L"Save parameters to DB", hasFile && !adjustments_.isIdentity());
+        add(menu, CmdClearParameters, L"Clear parameters from DB",
+            hasFile && ParameterStore::load(*navigator_.current()).has_value());
+        separator(menu);
+
+        zoomMenu(menu);
+        HMENU autoZoom = CreatePopupMenu();
+        add(autoZoom, CmdEnlarge, L"Enlarge small images to fit", true, settings_.enlargeSmall);
+        submenu(menu, autoZoom, L"Auto zoom mode");
+        tail(menu);
     }
-    add(menu, CmdFullScreen, L"Full screen\tF11", true, fullScreen_);
-    separator(menu);
-    add(menu, CmdRecycle, L"Move to Recycle Bin\tDel", hasFile);
-    separator(menu);
-    add(menu, CmdSettings, L"Settings...");
-    add(menu, CmdAbout, L"About Glance...");
-    separator(menu);
-    add(menu, CmdExit, settings_.escapeCloses ? L"Exit\tEsc" : L"Exit");
 
     int chosen = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, 0, hwnd_, nullptr);
     DestroyMenu(menu);  // destroys the submenus too
@@ -1068,6 +1129,10 @@ void Viewer::command(int id) {
         settings_.save();
         break;
     case CmdNext: go(1); break;
+    case CmdNextFile: goToFile(1); break;
+    case CmdPreviousFile: goToFile(-1); break;
+    case CmdPlayPause: if (video_) video_->togglePause(); break;
+    case CmdMute: if (video_) video_->toggleMute(); break;
     case CmdPrevious: go(-1); break;
     case CmdFirst:
         direction_ = 1;
