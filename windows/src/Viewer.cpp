@@ -91,6 +91,7 @@ enum Command {
     CmdSaveParameters,
     CmdClearParameters,
     CmdControls,
+    CmdPdfThumbnails,
     CmdSettings,
     CmdAbout,
     CmdExit,
@@ -158,6 +159,58 @@ ComPtr<ID3D11Device> createDevice() {
     }
     trace("GPU device created");
     return device;
+}
+
+
+// MARK: - PDF thumbnails in Explorer (GlanceThumbnails.dll, beside Glance.exe)
+
+constexpr wchar_t kThumbnailHandlerKey[] = L"Software\Classes\.pdf\ShellEx\{e357fccd-a995-4576-b01f-234630154e96}";
+constexpr wchar_t kThumbnailServerKey[] =
+    L"Software\Classes\CLSID\{B6E3C3A1-5F0D-4E8B-9C2A-7D41E6F0A9B3}\InprocServer32";
+constexpr wchar_t kThumbnailClsid[] = L"{B6E3C3A1-5F0D-4E8B-9C2A-7D41E6F0A9B3}";
+
+std::wstring thumbnailDll() {
+    wchar_t exe[MAX_PATH * 4];
+    const DWORD length = GetModuleFileNameW(nullptr, exe, static_cast<DWORD>(std::size(exe)));
+    return Navigator::folderOf(std::wstring(exe, length)) + L"\GlanceThumbnails.dll";
+}
+
+bool thumbnailDllPresent() {
+    return GetFileAttributesW(thumbnailDll().c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+/// Registered for all users (the only kind Explorer uses), from this copy of Glance.
+bool thumbnailsRegistered() {
+    wchar_t value[MAX_PATH * 4] = L"";
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, kThumbnailHandlerKey, nullptr, RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS ||
+        _wcsicmp(value, kThumbnailClsid) != 0) {
+        return false;
+    }
+    size = sizeof(value);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, kThumbnailServerKey, nullptr, RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) {
+        return false;
+    }
+    return _wcsicmp(value, thumbnailDll().c_str()) == 0;
+}
+
+/// Runs regsvr32 as administrator (Windows asks first). False if it failed or was cancelled.
+bool runRegsvr32(HWND owner, bool unregister) {
+    const std::wstring arguments = std::wstring(unregister ? L"/u " : L"") + L"/s \"" + thumbnailDll() + L"\"";
+    SHELLEXECUTEINFOW run{sizeof(run)};
+    run.fMask = SEE_MASK_NOCLOSEPROCESS;
+    run.hwnd = owner;
+    run.lpVerb = L"runas";
+    run.lpFile = L"regsvr32.exe";
+    run.lpParameters = arguments.c_str();
+    run.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&run) || !run.hProcess) return false;
+    WaitForSingleObject(run.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(run.hProcess, &code);
+    CloseHandle(run.hProcess);
+    if (code != 0) SetLastError(ERROR_GEN_FAILURE);  // ran, but refused
+    return code == 0;
 }
 
 }  // namespace
@@ -840,6 +893,10 @@ void Viewer::showContextMenu(int x, int y) {
         for (int i = 0; i < 4; ++i) add(pages, CmdPdfLayoutBase + i, layouts[i], true, settings_.pdfLayout == i);
         separator(pages);
         add(pages, CmdRightToLeft, L"Right to left", true, settings_.pdfRightToLeft);
+        if (thumbnailDllPresent()) {
+            separator(pages);
+            add(pages, CmdPdfThumbnails, L"Show PDF covers in Explorer", true, thumbnailsRegistered());
+        }
         submenu(menu, pages, L"PDF pages");
     }
     add(menu, CmdFullScreen, L"Full screen\tF11", true, fullScreen_);
@@ -903,6 +960,23 @@ void Viewer::command(int id) {
         settings_.save();
         if (!settings_.showControls) barVisible_ = false;
         break;
+    case CmdPdfThumbnails: {
+        // Explorer only uses thumbnail handlers registered for all users, so this needs the
+        // administrator prompt. Cancelling it changes nothing.
+        const bool on = !thumbnailsRegistered();
+        if (!runRegsvr32(hwnd_, !on)) {
+            if (GetLastError() != ERROR_CANCELLED) {
+                MessageBoxW(hwnd_, L"Windows didn't accept the change to PDF thumbnails.", L"Glance", MB_OK | MB_ICONWARNING);
+            }
+            break;
+        }
+        MessageBoxW(hwnd_,
+                    on ? L"Explorer will now show the first page of each PDF as its thumbnail (in views with "
+                         L"medium or larger icons). Press F5 in a folder that's already open."
+                       : L"Explorer will no longer show PDF covers.",
+                    L"Glance", MB_OK | MB_ICONINFORMATION);
+        break;
+    }
     case CmdCopyPath: copyPath(); break;
     case CmdInfo:
         settings_.showInfo = !settings_.showInfo;
