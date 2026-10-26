@@ -681,9 +681,13 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_LBUTTONDBLCLK: {
+        // Two quick clicks on a button (Next twice, say) are two presses, not a double-click.
+        const POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (showingVideo_ ? video_ && video_->overControls(p) : barVisible_ && controlBarHit(p) >= 0) {
+            return handle(WM_LBUTTONDOWN, wParam, lParam);
+        }
         if (showingVideo_) {
             // The first click already toggled play/pause; undo that, and switch full screen.
-            const POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (video_ && !video_->overControls(p)) {
                 video_->togglePause();
                 setFullScreen(!fullScreen_);
