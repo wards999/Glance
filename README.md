@@ -52,6 +52,10 @@ or two pages with cover, plus **right to left** for manga and other right-to-lef
 | Mouse wheel (when set to change images) | Down | Up |
 | Windows also | `]`, or Next on the button bar | `[`, or Previous on the button bar |
 
+To leave a PDF from any page and go straight to the next (or previous) file: **Ctrl+Page Down**
+(Ctrl+Page Up) on Windows, **⌥ Page Down** or **⌥↓** (⌥ Page Up, ⌥↑) on the Mac, or right-click ▸
+Next Document.
+
 **Zooming in to read.** Double-click a spot to see it at 100%; double-click again (or press 0)
 to see the whole page. While zoomed in, drag or use the arrow keys to move around the page, and
 turn pages with Space / Page Down (or the wheel). The zoom is kept: the next page opens at the same
