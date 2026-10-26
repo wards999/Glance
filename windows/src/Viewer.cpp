@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <cwchar>
 #include <iterator>
@@ -893,6 +894,12 @@ void Viewer::showContextMenu(int x, int y) {
         for (int i = 0; i < 4; ++i) add(pages, CmdPdfLayoutBase + i, layouts[i], true, settings_.pdfLayout == i);
         separator(pages);
         add(pages, CmdRightToLeft, L"Right to left", true, settings_.pdfRightToLeft);
+        {
+            const std::wstring dll = thumbnailDll();
+            char line[1200];
+            snprintf(line, sizeof(line), "thumbnail dll %ls present=%d registered=%d", dll.c_str(), thumbnailDllPresent(), thumbnailsRegistered());
+            trace(line);
+        }
         if (thumbnailDllPresent()) {
             separator(pages);
             add(pages, CmdPdfThumbnails, L"Show PDF covers in Explorer", true, thumbnailsRegistered());
