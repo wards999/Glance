@@ -12,6 +12,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Glance"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/Glance.icns "$APP/Contents/Resources/Glance.icns"
+# Glance is GPL, and so is the bundled libmpv: the licence and notices travel with the app.
+cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
+cp THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/THIRD-PARTY-NOTICES.txt"
 
 # Video playback: libmpv and its libraries (scripts/fetch-mac-deps.sh), loaded only when a video
 # is opened. Without them Glance still builds and runs; it just doesn't list videos.

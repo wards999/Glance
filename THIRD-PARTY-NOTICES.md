@@ -1,7 +1,7 @@
 # Third-party software
 
 Glance itself is licensed under the GNU General Public License, version 3 (see `LICENSE`).
-The Windows downloads include the following software by others.
+The downloads include the following software by others.
 
 ## PDFium (`pdfium.dll`, Windows)
 

@@ -7,8 +7,8 @@ CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "glance.manifest"
 1 ICON "glance.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,3,0,0
-PRODUCTVERSION 0,3,0,0
+FILEVERSION 0,4,0,0
+PRODUCTVERSION 0,4,0,0
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
@@ -16,8 +16,8 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Glance image viewer"
             VALUE "ProductName", "Glance"
-            VALUE "FileVersion", "0.3.0"
-            VALUE "ProductVersion", "0.3.0"
+            VALUE "FileVersion", "0.4.0"
+            VALUE "ProductVersion", "0.4.0"
         END
     END
     BLOCK "VarFileInfo"

@@ -42,6 +42,8 @@ jobs:
         run: |
           mkdir -p build/dmg
           cp -R build/Glance.app build/dmg/
+          cp LICENSE build/dmg/LICENSE.txt
+          cp THIRD-PARTY-NOTICES.md build/dmg/THIRD-PARTY-NOTICES.txt
           # Drag-to-install layout: the app next to a link to /Applications.
           ln -s /Applications build/dmg/Applications
           hdiutil create -volname Glance -srcfolder build/dmg -ov -format UDZO build/Glance.dmg

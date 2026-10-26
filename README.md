@@ -1,12 +1,15 @@
 # Glance
 
-A fast picture and PDF viewer for **macOS and Windows**, modeled on JPEGView: minimal UI, 
+A fast picture, PDF and video viewer for **macOS and Windows**, modeled on JPEGView: minimal UI,
 and built to put pixels on screen as fast as possible, including very large
 files. It opens **JPEG, PNG, GIF (animated), TIFF (multi-page), BMP, WebP, HEIC/HEIF, AVIF,
-camera RAW** and more (on the Mac also JPEG XL and PSD), and reads **PDFs** like a magazine: cover
-first, then two-page spreads, with pages turned instantly and hold to zoom. Each version is native
+camera RAW** and more (on the Mac also JPEG XL and PSD), reads **PDFs** like a magazine (cover
+first, then two-page spreads, with pages turned instantly and hold to zoom), and plays **videos**:
+MP4, MKV, WebM, MOV, AVI and more, with subtitles and a timeline that shows the exact frame under
+the pointer. Pictures, PDFs and videos in one folder are browsed together. Each version is native
 to its platform: Swift with AppKit, ImageIO, Core Animation and Core Image on the Mac; C++ with
-Win32, WIC and Direct2D on Windows.
+Win32, WIC and Direct2D on Windows. Video uses libmpv (mpv's engine, built on FFmpeg), loaded only
+when a video opens.
 
 On Windows, Glance opens every format Windows itself can decode; WebP, HEIC, AVIF and RAW need
 Microsoft's free image extensions from the Microsoft Store if they aren't already installed.
@@ -19,6 +22,8 @@ Get the latest version from [Releases](https://github.com/wards999/Glance/releas
 Glance to Applications. The app isn't signed with an Apple developer certificate, so the first
 time, right-click Glance in Applications, choose **Open**, then **Open** again. If macOS says the
 app is damaged, run `xattr -dr com.apple.quarantine /Applications/Glance.app` once in Terminal.
+Video playback is built in (it makes the download about 50 MB). To open videos in Glance from
+Finder, select one, choose Get Info, set "Open with" to Glance, and click "Change All…".
 
 **Windows** (Windows 10 or 11, 64-bit): download **Glance-windows.zip** and unzip it anywhere;
 there's nothing to install. Run `Glance.exe`. The app isn't code-signed, so the first time
@@ -30,8 +35,8 @@ with a PDF to read PDFs in Glance.
 
 **Video add-on** (optional, Windows): to play videos too, also download
 **Glance-video-addon.zip** and unzip it into the same folder as `Glance.exe`. It adds
-`libmpv-2.dll` (about 120 MB), which is loaded only when you open a video. See
-[Watching videos](#watching-videos-windows).
+`libmpv-2.dll` (about 120 MB), which is loaded only when you open a video. Set Glance as the
+default for video files the same way as for images. See [Watching videos](#watching-videos).
 
 ## Reading PDFs
 
@@ -54,7 +59,7 @@ or two pages with cover, plus **right to left** for manga and other right-to-lef
 
 To leave a PDF from any page and go straight to the next (or previous) file: **Ctrl+Page Down**
 (Ctrl+Page Up) on Windows, **⌥ Page Down** or **⌥↓** (⌥ Page Up, ⌥↑) on the Mac, or right-click ▸
-Next Document.
+Next File.
 
 **Zooming in to read.** Double-click a spot to see it at 100%; double-click again (or press 0)
 to see the whole page. While zoomed in, drag or use the arrow keys to move around the page, and
@@ -113,9 +118,16 @@ waits until you stop). Short silent clips loop like GIFs.
 | Page Down / Page Up, wheel | Next / previous file |
 | Double-click | Full screen |
 
-Moving the mouse shows the controls: play/pause, the time, the timeline, subtitles (CC) and mute.
-Click or drag along the timeline to jump; hover over it to see a picture from that moment, made by
-a second, silent decoder that reads only the nearest keyframe (typically 10–20 ms each).
+Moving the mouse shows the controls, with the video's name just above them:
+
+⏮ ▶ ⏭ · time · timeline · length · CC · 🔊 volume slider · ⛶
+
+Previous file, play/pause and next file on the left; subtitles and audio (CC), mute, a volume
+slider and full screen on the right. Click or drag along the timeline to jump. Hover over it to
+see **the exact frame at that moment**, as in MPC-BE: a second, silent decoder makes rough pictures
+along the whole video ahead of time, and the exact frame under the pointer replaces the nearest one
+within a few tens of milliseconds. The volume, and whether it was muted, are remembered between
+sessions.
 
 **Subtitles and audio tracks.** The CC button (and the right-click menu) lists every subtitle track
 by language and name, plus Off and "Load subtitle file…", and the audio tracks when there's a
@@ -126,10 +138,12 @@ Subtitles set to Always, a full track in your language (English unless you choos
 Subtitles move up while the controls show, so they're never hidden.
 
 Settings ▸ Video also turns autoplay, timeline pictures, looping short clips, and listing videos
-when browsing on or off.
+when browsing on or off. Changes, including whether PDFs and videos are listed, apply at once.
 
-The right-click menu changes with what's on screen: the full JPEGView-style menu for pictures,
-pages and layout for PDFs, and playback, subtitles and audio for videos.
+The right-click menu changes with what's on screen, in one layout so things are always in the same
+place: Next File and Previous File first, then what's particular to pictures (zoom, transform,
+adjustments), PDFs (pages and layout) or videos (play/pause, mute, subtitles and audio), then the
+file, the clipboard, display and Glance itself.
 
 ## Build the Mac version
 
@@ -257,7 +271,8 @@ saturation, gamma, sharpen, colour balance, auto correction) that can be saved p
 parameters to DB), crop (Ctrl+drag, Enter), Save processed image (Ctrl+S), lossless JPEG rotation,
 Print (Ctrl+P), Paste (Ctrl+V), Copy original size (Ctrl+X), Set modification date, and PDF reading
 with magazine spreads, right to left, hold to zoom, zoom kept across page turns and
-password-protected files. Animated WebP shows its first frame only. PDFs are rendered
+password-protected files, and video playback with the video add-on (mpv draws into its own GPU
+window; Glance draws the controls over it). Animated WebP shows its first frame only. PDFs are rendered
 by PDFium (Chrome's engine, `pdfium.dll` from bblanchon/pdfium-binaries build 8076, pinned by
 hash), which is loaded only when the first PDF opens. On a 132-page magazine it renders the
 heaviest pages about 3× faster than Windows' built-in PDF engine, and re-renders open pages
@@ -293,6 +308,7 @@ Settings are in a Settings dialog (right-click ▸ Settings…) and saved to
 | Ctrl+V | Paste (opens copied files or a copied picture) |
 | Ctrl+P | Print |
 | Ctrl+R | Reload |
+| Ctrl+Page Down / Ctrl+Page Up | Next / previous file, even from the middle of a PDF |
 | Ctrl+N | Button bar on/off |
 | W | Show in Explorer |
 | Delete | Move to Recycle Bin |
@@ -329,6 +345,7 @@ Sources/Glance/
   AdjustmentsPanel.swift           slider panel
   ControlBar.swift                 hover button strip
   InfoFormatter.swift              EXIF overlay text
+  MPV.swift, VideoView.swift       libmpv loading; video playback, controls, timeline pictures
 
 windows/src/
   main.cpp, Viewer.cpp             window, drawing (Direct2D), input, menu, commands
@@ -345,5 +362,6 @@ windows/thumbnails/                GlanceThumbnails.dll: PDF covers in Explorer
 
 Glance is free software under the [GNU General Public License, version 3](LICENSE): you can use,
 share and change it, and versions you share must stay under the same licence with their source
-available. The Windows downloads include PDFium (BSD) and, in the video add-on, libmpv (GPL);
+available. The Windows downloads include PDFium (BSD) and, in the video add-on, libmpv (GPL); the
+Mac app includes libmpv and FFmpeg (GPL and LGPL);
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists them and where their source is.
