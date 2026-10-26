@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 /// Video playback through libmpv (mpv's player engine, built on FFmpeg), in libmpv-2.dll beside
@@ -104,6 +105,12 @@ public:
     void mouseLeave();
     bool scrubbing() const { return scrubbing_ || volumeDragging_; }  // dragging the timeline or volume
 
+    /// The bar also has Previous File, Next File and Full Screen, which are Glance's to do: after
+    /// mouseDown, takeAction says which was pressed.
+    enum class Action { None, PreviousFile, NextFile, FullScreen };
+    Action takeAction() { return std::exchange(action_, Action::None); }
+    void setFullScreen(bool on) { fullScreen_ = on; }  // for the full screen button's picture
+
     /// "1920 x 1080  -  1:32:10" for the title bar.
     std::wstring describe() const;
     /// The volume now, percent (to remember for next time).
@@ -171,6 +178,9 @@ private:
     bool hovering_ = false;
     POINT hover_{};
     RECT barRect_{}, trackRect_{}, playRect_{}, muteRect_{}, ccRect_{}, volumeRect_{};
+    RECT previousRect_{}, nextRect_{}, fullRect_{};
+    Action action_ = Action::None;
+    bool fullScreen_ = false;
     bool volumeDragging_ = false;
     void setVolumeAt(int x);
     std::wstring toast_;

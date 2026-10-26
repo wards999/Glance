@@ -580,6 +580,12 @@ bool VideoPlayer::mouseDown(POINT point) {
     hit.bottom = barRect_.bottom;
     if (PtInRect(&playRect_, point)) {
         togglePause();
+    } else if (PtInRect(&previousRect_, point)) {
+        action_ = Action::PreviousFile;
+    } else if (PtInRect(&nextRect_, point)) {
+        action_ = Action::NextFile;
+    } else if (PtInRect(&fullRect_, point)) {
+        action_ = Action::FullScreen;
     } else if (PtInRect(&muteRect_, point)) {
         toggleMute();
     } else if (PtInRect(&ccRect_, point)) {
@@ -872,15 +878,20 @@ void VideoPlayer::drawControls() {
     const int timeWidth = static_cast<int>((duration_ >= 3600 ? 64 : 48) * s);
     barRect_ = RECT{margin, client.bottom - margin - barHeight, width - margin, client.bottom - margin};
     const int middle = (barRect_.top + barRect_.bottom) / 2;
-    playRect_ = RECT{barRect_.left + static_cast<int>(4 * s), middle - button / 2, barRect_.left + static_cast<int>(4 * s) + button,
+    // Previous file, play/pause, next file on the left; full screen at the right-hand end.
+    previousRect_ = RECT{barRect_.left + static_cast<int>(4 * s), middle - button / 2, barRect_.left + static_cast<int>(4 * s) + button,
+                         middle + button / 2};
+    playRect_ = RECT{previousRect_.right, previousRect_.top, previousRect_.right + button, previousRect_.bottom};
+    nextRect_ = RECT{playRect_.right, playRect_.top, playRect_.right + button, playRect_.bottom};
+    fullRect_ = RECT{barRect_.right - static_cast<int>(4 * s) - button, middle - button / 2, barRect_.right - static_cast<int>(4 * s),
                      middle + button / 2};
-    // Volume: a short slider at the right-hand end, the speaker (mute) just before it.
+    // Volume: a short slider before that, the speaker (mute) just before it.
     const int volumeWidth = static_cast<int>(80 * s);
-    volumeRect_ = RECT{barRect_.right - static_cast<int>(14 * s) - volumeWidth, barRect_.top, barRect_.right - static_cast<int>(14 * s),
+    volumeRect_ = RECT{fullRect_.left - static_cast<int>(10 * s) - volumeWidth, barRect_.top, fullRect_.left - static_cast<int>(10 * s),
                        barRect_.bottom};
     muteRect_ = RECT{volumeRect_.left - static_cast<int>(6 * s) - button, middle - button / 2, volumeRect_.left - static_cast<int>(6 * s),
                      middle + button / 2};
-    const RECT nowRect{playRect_.right, barRect_.top, playRect_.right + timeWidth, barRect_.bottom};
+    const RECT nowRect{nextRect_.right, barRect_.top, nextRect_.right + timeWidth, barRect_.bottom};
     ccRect_ = RECT{muteRect_.left - button, muteRect_.top, muteRect_.left, muteRect_.bottom};
     const RECT totalRect{ccRect_.left - timeWidth, barRect_.top, ccRect_.left, barRect_.bottom};
     trackRect_ = RECT{nowRect.right + static_cast<int>(8 * s), middle - static_cast<int>(2 * s), totalRect.left - static_cast<int>(8 * s),
@@ -936,7 +947,12 @@ void VideoPlayer::drawControls() {
             target_->DrawTextLayout(D2D1::Point2F(left + padX, box.top), layout.get(), white.get());
         }
     }
-    if (hovering_ && PtInRect(&playRect_, hover_)) target_->FillRoundedRectangle(D2D1::RoundedRect(local(playRect_), 6 * s, 6 * s), accent.get());
+    for (const RECT* button : {&previousRect_, &playRect_, &nextRect_, &fullRect_}) {
+        if (hovering_ && PtInRect(button, hover_)) target_->FillRoundedRectangle(D2D1::RoundedRect(local(*button), 6 * s, 6 * s), accent.get());
+    }
+    target_->DrawText(L"\xE892", 1, iconFormat_.get(), local(previousRect_), white.get());  // previous file
+    target_->DrawText(L"\xE893", 1, iconFormat_.get(), local(nextRect_), white.get());      // next file
+    target_->DrawText(fullScreen_ ? L"\xE73F" : L"\xE740", 1, iconFormat_.get(), local(fullRect_), white.get());
     const wchar_t* playGlyph = isPaused || ended_ ? L"\xE768" : L"\xE769";
     target_->DrawText(playGlyph, 1, iconFormat_.get(), local(playRect_), white.get());
     // The speaker shows the level: muted, then one to three waves.

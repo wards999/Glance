@@ -8,6 +8,7 @@ protocol VideoViewDelegate: AnyObject {
     func videoViewToggleFullScreen(_ view: VideoView)
     func videoViewDidLoadFile(_ view: VideoView)
     func videoView(_ view: VideoView, scrollWheel event: NSEvent)
+    func videoView(_ view: VideoView, goToFile delta: Int)  // the bar's Previous File / Next File
 }
 
 /// Plays videos with libmpv (the same engine as Glance for Windows). mpv draws through OpenGL into
@@ -379,6 +380,7 @@ final class VideoView: NSView {
         controls.isMuted = mpv.flag(handle, "mute") ?? false
         controls.volume = min(max(mpv.double(handle, "volume") ?? 100, 0), 100)
         controls.showBar = !controls.isHidden
+        controls.isFullScreen = delegate?.videoViewIsFullScreen ?? false
         if (controls.hovering || scrubbing) && duration > 0 {
             let at = time(atX: controls.hoverPoint.x)
             controls.hoverTime = at
@@ -458,6 +460,9 @@ final class VideoView: NSView {
         pressedOnPicture = false
         if !controls.isHidden {
             if controls.playRect.contains(point) { togglePause(); return }
+            if controls.previousRect.contains(point) { delegate?.videoView(self, goToFile: -1); return }
+            if controls.nextRect.contains(point) { delegate?.videoView(self, goToFile: 1); return }
+            if controls.fullScreenRect.contains(point) { delegate?.videoViewToggleFullScreen(self); return }
             if controls.muteRect.contains(point) { toggleMute(); return }
             if controls.ccRect.contains(point) { showTrackMenu(); return }
             if controls.volumeRect.contains(point) {
@@ -896,6 +901,7 @@ final class VideoControlsView: NSView {
     var isMuted = false
     var volume = 100.0
     var showBar = false
+    var isFullScreen = false
     var hovering = false
     var hoverPoint = NSPoint.zero
     var hoverTime: Double?
@@ -904,6 +910,9 @@ final class VideoControlsView: NSView {
 
     private(set) var barRect = NSRect.zero
     private(set) var playRect = NSRect.zero
+    private(set) var previousRect = NSRect.zero
+    private(set) var nextRect = NSRect.zero
+    private(set) var fullScreenRect = NSRect.zero
     private(set) var muteRect = NSRect.zero
     private(set) var ccRect = NSRect.zero
     private(set) var volumeRect = NSRect.zero
@@ -923,12 +932,16 @@ final class VideoControlsView: NSView {
         let timeWidth: CGFloat = duration >= 3600 ? 64 : 48
         barRect = NSRect(x: margin, y: bounds.height - margin - barHeight, width: bounds.width - 2 * margin, height: barHeight)
         let middle = barRect.midY
-        playRect = NSRect(x: barRect.minX + 4, y: middle - button / 2, width: button, height: button)
-        // Volume: a short slider at the right-hand end, the speaker (mute) just before it.
-        volumeRect = NSRect(x: barRect.maxX - 14 - 80, y: barRect.minY, width: 80, height: barRect.height)
+        // Previous file, play/pause, next file on the left; full screen at the right-hand end.
+        previousRect = NSRect(x: barRect.minX + 4, y: middle - button / 2, width: button, height: button)
+        playRect = previousRect.offsetBy(dx: button, dy: 0)
+        nextRect = playRect.offsetBy(dx: button, dy: 0)
+        fullScreenRect = NSRect(x: barRect.maxX - 4 - button, y: middle - button / 2, width: button, height: button)
+        // Volume: a short slider before that, the speaker (mute) just before it.
+        volumeRect = NSRect(x: fullScreenRect.minX - 10 - 80, y: barRect.minY, width: 80, height: barRect.height)
         muteRect = NSRect(x: volumeRect.minX - 6 - button, y: middle - button / 2, width: button, height: button)
         ccRect = muteRect.offsetBy(dx: -button, dy: 0)
-        let nowRight = playRect.maxX + timeWidth
+        let nowRight = nextRect.maxX + timeWidth
         let totalLeft = ccRect.minX - timeWidth
         trackRect = NSRect(x: nowRight + 8, y: middle - 2, width: max(totalLeft - 8 - (nowRight + 8), 0), height: 4)
     }
@@ -962,6 +975,9 @@ final class VideoControlsView: NSView {
             panel.setFill()
             NSBezierPath(roundedRect: barRect, xRadius: 10, yRadius: 10).fill()
             symbol(isPaused ? "play.fill" : "pause.fill", in: playRect)
+            symbol("backward.end.fill", in: previousRect)
+            symbol("forward.end.fill", in: nextRect)
+            symbol(isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", in: fullScreenRect)
             symbol("captions.bubble", in: ccRect)
             // The speaker shows the level: muted, then one to three waves.
             let speaker = isMuted || volume < 1 ? "speaker.slash.fill"
@@ -977,7 +993,7 @@ final class VideoControlsView: NSView {
             NSBezierPath(roundedRect: level, xRadius: 2, yRadius: 2).fill()
             NSBezierPath(ovalIn: NSRect(x: level.maxX - 5, y: slider.midY - 5, width: 10, height: 10)).fill()
             let timeWidth: CGFloat = duration >= 3600 ? 64 : 48
-            centred(VideoView.clock(position), in: NSRect(x: playRect.maxX, y: barRect.minY, width: timeWidth, height: barRect.height), white)
+            centred(VideoView.clock(position), in: NSRect(x: nextRect.maxX, y: barRect.minY, width: timeWidth, height: barRect.height), white)
             centred(VideoView.clock(duration), in: NSRect(x: ccRect.minX - timeWidth, y: barRect.minY, width: timeWidth, height: barRect.height), soft)
 
             // Timeline: thicker under the pointer, played part solid, a knob at the playhead.

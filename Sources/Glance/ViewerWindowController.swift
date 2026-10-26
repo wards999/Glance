@@ -661,7 +661,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     func imageViewMouseMoved(_ view: ImageView, at point: NSPoint) {
-        setControlsVisible(settings.showControls && point.y < 110)
+        // A video has its own bar (with Previous File and Next File); this one would cover it.
+        setControlsVisible(settings.showControls && !showingVideo && point.y < 110)
         controlsHideTimer?.invalidate()
         controlsHideTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             guard let self, let window = self.window else { return }
@@ -1440,6 +1441,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     func videoViewToggleFullScreen(_ view: VideoView) { toggleFullScreenMode(nil) }
 
     func videoViewDidLoadFile(_ view: VideoView) { updateTitle() }
+
+    func videoView(_ view: VideoView, goToFile delta: Int) { goToFile(delta) }
 
     func videoView(_ view: VideoView, scrollWheel event: NSEvent) {
         // Mouse wheels only: trackpad scrolling does nothing on a video.

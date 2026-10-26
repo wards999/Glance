@@ -493,7 +493,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
 
     case WM_SIZE:
         if (wParam != SIZE_MINIMIZED) {
-            if (video_) video_->layout();
+            if (video_) {
+                video_->setFullScreen(fullScreen_);
+                video_->layout();
+            }
             resize();
             if (zoomMode_ != ZoomMode::Custom) applyZoomMode(); else clampCenter();
             render();
@@ -571,6 +574,22 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             // else plays or pauses, on release, so a double-click can mean full screen instead.
             SetCapture(hwnd_);
             if (!(video_ && video_->mouseDown(p))) videoPressed_ = true;
+            // The bar's file and full screen buttons.
+            switch (video_ ? video_->takeAction() : VideoPlayer::Action::None) {
+            case VideoPlayer::Action::PreviousFile:
+                ReleaseCapture();
+                goToFile(-1);
+                return 0;
+            case VideoPlayer::Action::NextFile:
+                ReleaseCapture();
+                goToFile(1);
+                return 0;
+            case VideoPlayer::Action::FullScreen:
+                ReleaseCapture();
+                setFullScreen(!fullScreen_);
+                return 0;
+            default: break;
+            }
             syncVideoControls();
             return 0;
         }
@@ -2168,6 +2187,7 @@ void Viewer::leaveVideo() {
 void Viewer::syncVideoControls() {
     if (!showingVideo_ || !video_) return;
     const bool busy = video_->scrubbing() || video_->paused() || video_->overControls(lastMouse_);
+    video_->setFullScreen(fullScreen_);
     video_->setControlsVisible(settings_.showControls && (barVisible_ || busy));
 }
 
