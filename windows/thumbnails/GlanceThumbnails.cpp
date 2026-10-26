@@ -3,8 +3,10 @@
 // Install for the current user only (no administrator rights):  regsvr32 GlanceThumbnails.dll
 // Remove:                                                         regsvr32 /u GlanceThumbnails.dll
 //
-// Explorer runs thumbnail handlers in a separate process (dllhost), so a damaged PDF can't take
-// Explorer down, and it caches the pictures, so each file is rendered once.
+// Windows' isolated thumbnail process only uses handlers registered for all users, so this one
+// runs inside Explorer (DisableProcessIsolation). A crash inside PDFium is caught rather than
+// taking Explorer down, and turns PDF thumbnails off until Explorer restarts. Explorer caches the
+// pictures, so each file is rendered once.
 
 #include <windows.h>
 #include <shlobj.h>
@@ -110,6 +112,63 @@ int readBlock(void* param, unsigned long position, unsigned char* buffer, unsign
     return 1;
 }
 
+/// The first page, `side` pixels on its longer edge, on white. Call with g_pdfium held.
+HRESULT renderFirstPage(const Api* pdf, FileAccess* access, UINT side, HBITMAP* result) {
+    Document document = pdf->loadCustomDocument(access, nullptr);
+    if (!document) return E_FAIL;  // damaged, or locked with a password
+    HRESULT hr = E_FAIL;
+    if (Page page = pdf->loadPage(document, 0)) {
+        const double width = pdf->pageWidth(page), height = pdf->pageHeight(page);
+        side = std::min(side, kMaxSide);
+        if (width > 0 && height > 0 && side > 0) {
+            const double scale = side / std::max(width, height);
+            const int w = std::max(1, static_cast<int>(width * scale + 0.5));
+            const int h = std::max(1, static_cast<int>(height * scale + 0.5));
+            BITMAPINFO info{};
+            info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            info.bmiHeader.biWidth = w;
+            info.bmiHeader.biHeight = -h;  // top-down, as PDFium draws
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            info.bmiHeader.biCompression = BI_RGB;
+            void* bits = nullptr;
+            HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+            if (bitmap && bits) {
+                // PDFium draws straight into the bitmap Explorer gets: white paper, then the page.
+                std::memset(bits, 0xFF, size_t(w) * h * 4);
+                if (Bitmap target = pdf->createBitmap(w, h, kBitmapBGRA, bits, w * 4)) {
+                    pdf->renderPage(target, page, 0, 0, w, h, 0, kRenderAnnotations);
+                    pdf->destroyBitmap(target);
+                    *result = bitmap;
+                    hr = S_OK;
+                }
+            }
+            if (FAILED(hr) && bitmap) DeleteObject(bitmap);
+        }
+        pdf->closePage(page);
+    }
+    pdf->closeDocument(document);
+    return hr;
+}
+
+/// Set once PDFium has crashed in this process: its state can't be trusted after that.
+bool g_faulted = false;
+
+/// Runs inside Explorer, so a crash in PDFium on a damaged file is caught instead of ending
+/// Explorer. No C++ objects here, so structured exception handling is allowed.
+HRESULT guardedRender(const Api* pdf, FileAccess* access, UINT side, HBITMAP* result) {
+#ifdef _MSC_VER
+    __try {
+        return renderFirstPage(pdf, access, side, result);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_faulted = true;
+        return E_FAIL;
+    }
+#else
+    return renderFirstPage(pdf, access, side, result);
+#endif
+}
+
 class ThumbnailProvider : public IInitializeWithStream, public IThumbnailProvider {
 public:
     ThumbnailProvider() { ++g_references; }
@@ -146,44 +205,12 @@ public:
         if (FAILED(stream_->Stat(&stat, STATFLAG_NONAME)) || stat.cbSize.QuadPart > 0xFFFFFFFFull) return E_FAIL;
 
         std::lock_guard lock(g_pdfium);
+        if (g_faulted) return E_FAIL;
         const Api* pdf = api();
         if (!pdf) return E_FAIL;
         FileAccess access{static_cast<unsigned long>(stat.cbSize.QuadPart), readBlock, stream_};
-        Document document = pdf->loadCustomDocument(&access, nullptr);
-        if (!document) return E_FAIL;  // damaged, or locked with a password
-        HRESULT hr = E_FAIL;
-        if (Page page = pdf->loadPage(document, 0)) {
-            const double width = pdf->pageWidth(page), height = pdf->pageHeight(page);
-            side = std::min(side, kMaxSide);
-            if (width > 0 && height > 0 && side > 0) {
-                const double scale = side / std::max(width, height);
-                const int w = std::max(1, static_cast<int>(width * scale + 0.5));
-                const int h = std::max(1, static_cast<int>(height * scale + 0.5));
-                BITMAPINFO info{};
-                info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-                info.bmiHeader.biWidth = w;
-                info.bmiHeader.biHeight = -h;  // top-down, as PDFium draws
-                info.bmiHeader.biPlanes = 1;
-                info.bmiHeader.biBitCount = 32;
-                info.bmiHeader.biCompression = BI_RGB;
-                void* bits = nullptr;
-                HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
-                if (bitmap && bits) {
-                    // PDFium draws straight into the bitmap Explorer gets: white paper, then the page.
-                    std::memset(bits, 0xFF, size_t(w) * h * 4);
-                    if (Bitmap target = pdf->createBitmap(w, h, kBitmapBGRA, bits, w * 4)) {
-                        pdf->renderPage(target, page, 0, 0, w, h, 0, kRenderAnnotations);
-                        pdf->destroyBitmap(target);
-                        *result = bitmap;
-                        *alpha = WTSAT_RGB;
-                        hr = S_OK;
-                    }
-                }
-                if (FAILED(hr) && bitmap) DeleteObject(bitmap);
-            }
-            pdf->closePage(page);
-        }
-        pdf->closeDocument(document);
+        const HRESULT hr = guardedRender(pdf, &access, side, result);
+        if (SUCCEEDED(hr)) *alpha = WTSAT_RGB;
         return hr;
     }
 
@@ -251,9 +278,12 @@ STDAPI DllRegisterServer() {
     const DWORD length = GetModuleFileNameW(g_module, path, static_cast<DWORD>(std::size(path)));
     const std::wstring dll(path, length);
     const std::wstring server = std::wstring(kClsidKey) + L"\\InprocServer32";
+    // The isolated thumbnail process ignores per-user handlers; see the top of this file.
+    const DWORD kOne = 1;
     if (setString(HKEY_CURRENT_USER, kClsidKey, nullptr, L"Glance PDF thumbnails") ||
         setString(HKEY_CURRENT_USER, server.c_str(), nullptr, dll) ||
         setString(HKEY_CURRENT_USER, server.c_str(), L"ThreadingModel", L"Apartment") ||
+        RegSetKeyValueW(HKEY_CURRENT_USER, kClsidKey, L"DisableProcessIsolation", REG_DWORD, &kOne, sizeof(kOne)) ||
         setString(HKEY_CURRENT_USER, kThumbnailHandlerKey, nullptr, kClsidString)) {
         return SELFREG_E_CLASS;
     }
