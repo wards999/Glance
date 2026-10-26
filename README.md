@@ -19,17 +19,53 @@ there's nothing to install. Run `Glance.exe`. The app isn't code-signed, so the 
 Windows may say it protected your PC: click **More info**, then **Run anyway**. `pdfium.dll` is
 only needed for PDFs; keep it next to `Glance.exe` (delete it if you only view photos). To make
 Glance the default viewer, right-click an image ▸ Open with ▸ Choose another app ▸ More apps ▸
-Look for another app on this PC, pick `Glance.exe`, and tick "Always use this app".
+Look for another app on this PC, pick `Glance.exe`, and tick "Always use this app". Do the same
+with a PDF to read PDFs in Glance.
 
-**PDF thumbnails in Explorer** (optional, Windows): Windows doesn't show PDF pages as thumbnails
-on its own. `GlanceThumbnails.dll` adds that, using the same PDFium. Keep it next to `Glance.exe`
-and turn it on with right-click ▸ PDF pages ▸ **Show PDF covers in Explorer** (choose it again to
-turn it off). Windows asks for administrator permission, because Explorer only uses thumbnail
-handlers registered for all users. It works whichever app opens PDFs, and runs in Windows'
-isolated thumbnail process, so a damaged PDF can't affect Explorer. Updating it later is just
-replacing the file; turn it on again only if you move the folder.
+## Reading PDFs
 
-The same from a PowerShell window, if you prefer (`'/u', ` before the path removes it):
+Glance reads PDFs as well as pictures, and is built for magazines: pages are sharp at any zoom,
+and the next pages are rendered ahead while you read, so turning a page is instant. (The Mac uses
+macOS's own PDF engine; Windows uses PDFium, Chrome's PDF engine, in `pdfium.dll`.)
+
+**Layout.** A magazine opens as its cover on its own, then two-page spreads, as in print. Change
+this under right-click ▸ PDF pages (Windows) or Settings ▸ PDF: automatic, single page, two pages,
+or two pages with cover, plus **right to left** for manga and other right-to-left books.
+
+**Turning pages.** Pages turn before Glance moves on to the next file in the folder.
+
+| | Next page | Previous page |
+|---|---|---|
+| Keys | Space, Page Down | Page Up; Backspace (Windows) or Delete (Mac) |
+| Arrow keys (when the whole page fits) | → or ↓ | ← or ↑ |
+| Mouse wheel (when set to change images) | Down | Up |
+| Windows also | `]`, or Next on the button bar | `[`, or Previous on the button bar |
+
+**Zooming in to read.** Double-click a spot to see it at 100%; double-click again (or press 0)
+to see the whole page. While zoomed in, drag or use the arrow keys to move around the page, and
+turn pages with Space / Page Down (or the wheel). The zoom is kept: the next page opens at the same
+size at its top-left corner, where you'd start reading (top-right for right to left), and going
+back opens the previous page at its bottom corner.
+
+**Hold to zoom.** Press and hold on a page to magnify the part under the pointer, move to look
+around, and let go to return. Choose the magnification, or turn it on for pictures as well, in
+Settings.
+
+**Also:**
+
+- Password-protected PDFs ask for their password. It's kept in memory only, until Glance closes.
+- When you browse a folder of photos, PDFs in it are skipped unless you turn on "Include PDFs
+  when browsing folders" in Settings. Opening a PDF directly always works.
+- Glance never changes a PDF. Save As exports the page or spread on screen as an image.
+
+**PDF covers in Explorer (Windows).** Windows doesn't show PDF pages as thumbnails on its own.
+`GlanceThumbnails.dll` adds that: Explorer shows each PDF's first page, whichever app opens PDFs.
+Keep it next to `Glance.exe` and turn it on with right-click ▸ PDF pages ▸ **Show PDF covers in
+Explorer** (choose it again to turn it off). Windows asks for administrator permission, because
+Explorer only uses thumbnail handlers registered for all users. It runs in Windows' isolated
+thumbnail process, so a damaged PDF can't affect Explorer. Updating it later is just replacing the
+file; turn it on again only if you move the folder. The same from a PowerShell window, if you
+prefer (`'/u', ` before the path removes it):
 
 ```powershell
 Start-Process regsvr32 -Verb RunAs -ArgumentList '"C:\Utilities\Glance\GlanceThumbnails.dll"'
