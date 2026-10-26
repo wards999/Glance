@@ -1,11 +1,14 @@
 #include "SettingsDialog.h"
 
+#include "Video.h"
+
 #include <commctrl.h>
 #include <commdlg.h>
 
 #include <algorithm>
 #include <initializer_list>
 #include <iterator>
+#include <vector>
 
 namespace {
 
@@ -43,6 +46,8 @@ enum Id {
     IdVideoAutoplay,
     IdVideoPreviews,
     IdVideoLoopShort,
+    IdSubtitleMode,
+    IdSubtitleLanguage,
     IdClose,
 };
 
@@ -77,7 +82,7 @@ struct Column {
     }
     void endGroup() { y += 18; }
     void label(const wchar_t* text) { make(L"STATIC", text, SS_RIGHT, labelX(), y + 4, 150, 20); }
-    void combo(int id, const wchar_t* text, std::initializer_list<const wchar_t*> items, int selected, int w = 0) {
+    void combo(int id, const wchar_t* text, const std::vector<const wchar_t*>& items, int selected, int w = 0) {
         label(text);
         HWND box = make(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, controlX(), y,
                         w ? w : controlWidth(), 260, id);
@@ -134,11 +139,15 @@ SIZE build() {
     left.checkbox(IdControls, L"Show buttons when the mouse nears the bottom", s.showControls);
     left.checkbox(IdHideCursor, L"Hide the mouse pointer in full screen", s.hideCursor);
     left.endGroup();
-    left.group(L"Video", 4);
+    left.group(L"Video", 6);
     left.checkbox(IdIncludeVideos, L"Include videos when browsing folders", s.includeVideos);
     left.checkbox(IdVideoAutoplay, L"Play videos when you stop on them", s.videoAutoplay);
     left.checkbox(IdVideoPreviews, L"Show pictures above the timeline as you hover", s.videoPreviews);
     left.checkbox(IdVideoLoopShort, L"Loop silent clips under 30 seconds", s.videoLoopShort);
+    left.combo(IdSubtitleMode, L"Subtitles:", {L"Only forced (foreign dialogue)", L"Always"}, s.subtitleMode);
+    std::vector<const wchar_t*> languages;
+    for (const auto& language : Video::languages()) languages.push_back(language.name);
+    left.combo(IdSubtitleLanguage, L"Language:", languages, s.subtitleLanguage);
     left.endGroup();
 
     Column right{544, 500};
@@ -225,6 +234,8 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case IdVideoAutoplay: s.videoAutoplay = checked; break;
         case IdVideoPreviews: s.videoPreviews = checked; break;
         case IdVideoLoopShort: s.videoLoopShort = checked; break;
+        case IdSubtitleMode: if (picked) s.subtitleMode = selection; break;
+        case IdSubtitleLanguage: if (picked) s.subtitleLanguage = selection; break;
         case IdHoldToZoom: s.holdToZoom = selection; break;
         case IdHoldZoom: s.holdZoomPercent = pick(kHoldZoom, selection, 250); break;
         default: return 0;

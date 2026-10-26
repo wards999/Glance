@@ -5,7 +5,11 @@
 #include "../third_party/mpv/client.h"
 #include "../third_party/mpv/render.h"
 
+#include <commdlg.h>
+
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -185,6 +189,21 @@ const std::vector<std::wstring>& extensions() {
     return list;
 }
 
+const std::vector<Language>& languages() {
+    static const std::vector<Language> list = {
+        {L"English", {"en", "eng", "english"}},       {L"French", {"fr", "fre", "fra", "french"}},
+        {L"German", {"de", "ger", "deu", "german"}},  {L"Spanish", {"es", "spa", "spanish"}},
+        {L"Italian", {"it", "ita", "italian"}},       {L"Dutch", {"nl", "dut", "nld", "dutch"}},
+        {L"Portuguese", {"pt", "por", "portuguese"}}, {L"Swedish", {"sv", "swe", "swedish"}},
+        {L"Danish", {"da", "dan", "danish"}},         {L"Norwegian", {"no", "nor", "nob", "norwegian"}},
+        {L"Finnish", {"fi", "fin", "finnish"}},       {L"Polish", {"pl", "pol", "polish"}},
+        {L"Greek", {"el", "gre", "ell", "greek"}},    {L"Russian", {"ru", "rus", "russian"}},
+        {L"Japanese", {"ja", "jpn", "japanese"}},     {L"Korean", {"ko", "kor", "korean"}},
+        {L"Chinese", {"zh", "chi", "zho", "chinese"}}, {L"Arabic", {"ar", "ara", "arabic"}},
+    };
+    return list;
+}
+
 bool isVideo(const std::wstring& path) {
     const std::wstring extension = Navigator::extensionOf(path);
     for (const auto& known : extensions()) {
@@ -254,7 +273,11 @@ bool VideoPlayer::start() {
                 {"ytdl", "no"},
                 {"terminal", "no"},
                 {"config", "no"},
-                {"audio-display", "no"}});
+                {"audio-display", "no"},
+                // Subtitle files beside the video load even when named "Movie.en.srt" and the
+                // like, or kept in a Subs folder. Which one shows is Glance's choice (chooseSubtitles).
+                {"sub-auto", "fuzzy"},
+                {"sub-file-paths", "subs;Subs;subtitles;Subtitles"}});
     if (mpv->initialize(handle) < 0) {
         mpv->terminateDestroy(handle);
         return false;
@@ -368,6 +391,8 @@ bool VideoPlayer::handleEvents() {
             }
             // Warm the picture decoder, so the first hover over the timeline is quick too.
             if (options_.previews && duration_ > 0) requestPreview(duration_ / 2);
+            chooseSubtitles();
+            placeSubtitles();
             titleChanged = true;
             drawControls();
             break;
@@ -386,7 +411,12 @@ void VideoPlayer::tick() {
     if (!open_) return;
     int eof = 0;
     if (api()->getProperty(static_cast<mpv_handle*>(mpv_), "eof-reached", MPV_FORMAT_FLAG, &eof) >= 0) ended_ = eof != 0;
-    if (controlsVisible_) drawControls();
+    if (!toast_.empty() && GetTickCount64() >= toastUntil_) {
+        toast_.clear();
+        drawControls();
+    } else if (controlsVisible_) {
+        drawControls();
+    }
 }
 
 bool VideoPlayer::paused() const {
@@ -459,6 +489,7 @@ void VideoPlayer::setControlsVisible(bool visible) {
     if (visible == controlsVisible_) return;
     controlsVisible_ = visible;
     if (!visible) hovering_ = false;
+    placeSubtitles();
     drawControls();
 }
 
@@ -503,6 +534,8 @@ bool VideoPlayer::mouseDown(POINT point) {
         togglePause();
     } else if (PtInRect(&muteRect_, point)) {
         toggleMute();
+    } else if (PtInRect(&ccRect_, point)) {
+        showTrackMenu();
     } else if (PtInRect(&hit, point)) {
         scrubbing_ = true;
         hover_ = point;
@@ -658,7 +691,7 @@ void VideoPlayer::previewWorker() {
 
 void VideoPlayer::drawControls() {
     if (!overlay_) return;
-    if (!controlsVisible_ || !open_) {
+    if ((!controlsVisible_ && toast_.empty()) || !open_) {
         ShowWindow(overlay_, SW_HIDE);
         return;
     }
@@ -731,7 +764,8 @@ void VideoPlayer::drawControls() {
     muteRect_ = RECT{barRect_.right - static_cast<int>(4 * s) - button, middle - button / 2, barRect_.right - static_cast<int>(4 * s),
                      middle + button / 2};
     const RECT nowRect{playRect_.right, barRect_.top, playRect_.right + timeWidth, barRect_.bottom};
-    const RECT totalRect{muteRect_.left - timeWidth, barRect_.top, muteRect_.left, barRect_.bottom};
+    ccRect_ = RECT{muteRect_.left - button, muteRect_.top, muteRect_.left, muteRect_.bottom};
+    const RECT totalRect{ccRect_.left - timeWidth, barRect_.top, ccRect_.left, barRect_.bottom};
     trackRect_ = RECT{nowRect.right + static_cast<int>(8 * s), middle - static_cast<int>(2 * s), totalRect.left - static_cast<int>(8 * s),
                       middle + static_cast<int>(2 * s)};
 
@@ -754,12 +788,17 @@ void VideoPlayer::drawControls() {
     target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.3f), dim.put());
     target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.12f), accent.put());
 
+    if (controlsVisible_) {
     target_->FillRoundedRectangle(D2D1::RoundedRect(local(barRect_), 10 * s, 10 * s), panel.get());
     if (hovering_ && PtInRect(&playRect_, hover_)) target_->FillRoundedRectangle(D2D1::RoundedRect(local(playRect_), 6 * s, 6 * s), accent.get());
     const wchar_t* playGlyph = isPaused || ended_ ? L"\xE768" : L"\xE769";
     target_->DrawText(playGlyph, 1, iconFormat_.get(), local(playRect_), white.get());
     const wchar_t* muteGlyph = muted ? L"\xE74F" : L"\xE767";
     target_->DrawText(muteGlyph, 1, iconFormat_.get(), local(muteRect_), white.get());
+    for (const RECT* button : {&muteRect_, &ccRect_}) {
+        if (hovering_ && PtInRect(button, hover_)) target_->FillRoundedRectangle(D2D1::RoundedRect(local(*button), 6 * s, 6 * s), accent.get());
+    }
+    target_->DrawText(L"\xE7F0", 1, iconFormat_.get(), local(ccRect_), white.get());  // subtitles and audio
     const std::wstring now = clock(shownTime), total = clock(duration_);
     target_->DrawText(now.c_str(), static_cast<UINT32>(now.size()), textFormat_.get(), local(nowRect), white.get());
     ComPtr<ID2D1SolidColorBrush> soft;
@@ -815,6 +854,16 @@ void VideoPlayer::drawControls() {
         const D2D1_RECT_F labelRect{frame.left, frame.bottom - labelHeight, frame.right, frame.bottom};
         target_->DrawText(label.c_str(), static_cast<UINT32>(label.size()), textFormat_.get(), labelRect, white.get());
     }
+    }  // controls
+
+    // A moment's message ("Subtitles: English") above the bar.
+    if (!toast_.empty()) {
+        const float boxWidth = std::min(float(width) - 2 * margin, 420 * s), boxHeight = 34 * s;
+        const float x = (width - boxWidth) / 2, bottomY = float(barRect_.top - top) - 18 * s - (hovering_ ? 170 * s : 0);
+        const D2D1_RECT_F box{x, bottomY - boxHeight, x + boxWidth, bottomY};
+        target_->FillRoundedRectangle(D2D1::RoundedRect(box, 8 * s, 8 * s), panel.get());
+        target_->DrawText(toast_.c_str(), static_cast<UINT32>(toast_.size()), textFormat_.get(), box, white.get());
+    }
     target_->EndDraw();
 
     POINT source{0, 0};
@@ -824,4 +873,304 @@ void VideoPlayer::drawControls() {
     if (!IsWindowVisible(overlay_)) {
         SetWindowPos(overlay_, HWND_TOP, 0, top, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
+}
+
+// MARK: - Subtitles and audio tracks
+
+namespace {
+
+std::wstring wide(const std::string& text) {
+    if (text.empty()) return {};
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    std::wstring result(size, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size);
+    return result;
+}
+
+std::string lower(std::string text) {
+    for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return text;
+}
+
+bool saysHearingImpaired(const std::string& title) {
+    const std::string text = lower(title);
+    return text.find("sdh") != std::string::npos || text.find("hearing") != std::string::npos ||
+           text.find("(cc)") != std::string::npos || text == "cc";
+}
+
+constexpr int kMenuOff = 0;
+constexpr int kMenuFirstSubtitle = 1;
+constexpr int kMenuLoadFile = 250;
+constexpr int kMenuFirstAudio = 300;
+constexpr int kMenuEnd = 500;
+
+}  // namespace
+
+std::vector<VideoPlayer::Track> VideoPlayer::tracks() const {
+    std::vector<Track> list;
+    if (!open_) return list;
+    const int count = std::atoi(stringProperty("track-list/count").c_str());
+    for (int i = 0; i < count; ++i) {
+        auto field = [&](const char* name) {
+            return stringProperty(("track-list/" + std::to_string(i) + "/" + name).c_str());
+        };
+        const std::string type = field("type");
+        if (type != "sub" && type != "audio") continue;
+        Track track;
+        track.subtitle = type == "sub";
+        track.id = std::atoi(field("id").c_str());
+        track.lang = lower(field("lang"));
+        track.title = field("title");
+        track.codec = field("codec");
+        track.file = field("external-filename");
+        track.external = field("external") == "yes";
+        track.forced = field("forced") == "yes";
+        track.isDefault = field("default") == "yes";
+        track.hearingImpaired = field("hearing-impaired") == "yes" || saysHearingImpaired(track.title);
+        track.selected = field("selected") == "yes";
+        list.push_back(std::move(track));
+    }
+    return list;
+}
+
+bool VideoPlayer::matchesLanguage(const Track& track) const {
+    if (track.lang.empty()) return false;
+    const auto& list = Video::languages();
+    const auto& codes = list[std::clamp<size_t>(options_.subtitleLanguage, 0, list.size() - 1)].codes;
+    return std::find(codes.begin(), codes.end(), track.lang) != codes.end();
+}
+
+/// "English - British | SDH", "French (forced)", or the file name of an .srt.
+std::wstring VideoPlayer::label(const Track& track) const {
+    std::wstring name;
+    for (const auto& language : Video::languages()) {
+        if (std::find(language.codes.begin(), language.codes.end(), track.lang) != language.codes.end()) name = language.name;
+    }
+    if (name.empty()) name = wide(track.lang);
+    std::wstring detail = wide(track.title);
+    if (track.external && !track.file.empty()) {
+        detail = wide(track.file);
+        const size_t slash = detail.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) detail = detail.substr(slash + 1);
+    }
+    std::wstring text = name;
+    if (!detail.empty() && lowercase(detail) != lowercase(name)) text += (text.empty() ? L"" : L" - ") + detail;
+    if (text.empty()) text = (track.subtitle ? L"Subtitles " : L"Audio ") + std::to_wstring(track.id);
+    if (track.forced && lower(track.title).find("forced") == std::string::npos) text += L" (forced)";
+    if (track.hearingImpaired && !saysHearingImpaired(track.title)) text += L" (SDH)";
+    return text;
+}
+
+void VideoPlayer::chooseSubtitles() {
+    std::vector<Track> subtitles;
+    for (auto& track : tracks()) {
+        if (track.subtitle) subtitles.push_back(track);
+    }
+    auto first = [&](auto wanted) -> const Track* {
+        for (const auto& track : subtitles) {
+            if (wanted(track)) return &track;
+        }
+        return nullptr;
+    };
+    auto mine = [&](const Track& track) { return matchesLanguage(track); };
+    // A subtitle file put beside the film is there to be read, unless it is in another language.
+    const Track* pick = first([&](const Track& t) { return t.external && (t.lang.empty() || mine(t)); });
+    if (!pick && options_.alwaysSubtitles) {
+        pick = first([&](const Track& t) { return mine(t) && !t.forced && !t.hearingImpaired; });
+        if (!pick) pick = first([&](const Track& t) { return mine(t) && !t.forced; });
+    }
+    // Forced subtitles translate dialogue in other languages; they belong on either way.
+    if (!pick) pick = first([&](const Track& t) { return t.forced && (mine(t) || t.lang.empty()); });
+    selectSubtitle(pick ? pick->id : 0);
+    lastSubtitle_ = pick ? pick->id : 0;
+}
+
+void VideoPlayer::selectSubtitle(int id) {
+    if (!mpv_) return;
+    auto* handle = static_cast<mpv_handle*>(mpv_);
+    api()->setPropertyString(handle, "sid", id ? std::to_string(id).c_str() : "no");
+    api()->setPropertyString(handle, "sub-visibility", "yes");
+}
+
+void VideoPlayer::cycleSubtitles(bool forward) {
+    if (!open_) return;
+    std::vector<Track> subtitles;
+    for (auto& track : tracks()) {
+        if (track.subtitle) subtitles.push_back(track);
+    }
+    if (subtitles.empty()) {
+        flash(L"No subtitles for this video");
+        return;
+    }
+    // Off, then each track in turn.
+    const int current = std::atoi(stringProperty("sid").c_str());
+    const int count = static_cast<int>(subtitles.size()) + 1;
+    int index = 0;
+    for (int i = 0; i < static_cast<int>(subtitles.size()); ++i) {
+        if (subtitles[i].id == current) index = i + 1;
+    }
+    index = (index + (forward ? 1 : count - 1)) % count;
+    if (index == 0) {
+        selectSubtitle(0);
+        flash(L"Subtitles off");
+    } else {
+        selectSubtitle(subtitles[index - 1].id);
+        lastSubtitle_ = subtitles[index - 1].id;
+        flash(L"Subtitles: " + label(subtitles[index - 1]));
+    }
+}
+
+void VideoPlayer::toggleSubtitles() {
+    if (!open_) return;
+    const int current = std::atoi(stringProperty("sid").c_str());
+    if (current) {
+        lastSubtitle_ = current;
+        selectSubtitle(0);
+        flash(L"Subtitles off");
+        return;
+    }
+    const auto list = tracks();
+    const Track* pick = nullptr;
+    for (const auto& track : list) {
+        if (track.subtitle && track.id == lastSubtitle_) pick = &track;
+    }
+    // Nothing chosen before: your language, plain before SDH, else whatever there is.
+    for (int pass = 0; pass < 3 && !pick; ++pass) {
+        for (const auto& track : list) {
+            if (!track.subtitle) continue;
+            const bool ok = pass == 0   ? matchesLanguage(track) && !track.forced && !track.hearingImpaired
+                            : pass == 1 ? matchesLanguage(track)
+                                        : true;
+            if (ok) {
+                pick = &track;
+                break;
+            }
+        }
+    }
+    if (!pick) {
+        flash(L"No subtitles for this video");
+        return;
+    }
+    selectSubtitle(pick->id);
+    lastSubtitle_ = pick->id;
+    flash(L"Subtitles: " + label(*pick));
+}
+
+void VideoPlayer::fillTrackMenus(HMENU subtitles, HMENU audio) {
+    const auto list = tracks();
+    const int current = std::atoi(stringProperty("sid").c_str());
+    AppendMenuW(subtitles, MF_STRING | (current == 0 ? MF_CHECKED : 0), kTrackMenuBase + kMenuOff, L"Off\tV");
+    int index = 0;
+    for (const auto& track : list) {
+        if (!track.subtitle || index >= kMenuLoadFile - kMenuFirstSubtitle) continue;
+        AppendMenuW(subtitles, MF_STRING | (track.id == current ? MF_CHECKED : 0), kTrackMenuBase + kMenuFirstSubtitle + index,
+                    label(track).c_str());
+        ++index;
+    }
+    AppendMenuW(subtitles, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(subtitles, MF_STRING, kTrackMenuBase + kMenuLoadFile, L"Load subtitle file...");
+    if (!audio) return;
+    index = 0;
+    for (const auto& track : list) {
+        if (track.subtitle || index >= kMenuEnd - kMenuFirstAudio) continue;
+        AppendMenuW(audio, MF_STRING | (track.selected ? MF_CHECKED : 0), kTrackMenuBase + kMenuFirstAudio + index, label(track).c_str());
+        ++index;
+    }
+}
+
+void VideoPlayer::appendTrackMenus(HMENU menu) {
+    if (!open_) return;
+    int audioTracks = 0;
+    for (const auto& track : tracks()) audioTracks += track.subtitle ? 0 : 1;
+    HMENU subtitles = CreatePopupMenu();
+    HMENU audio = audioTracks > 1 ? CreatePopupMenu() : nullptr;
+    fillTrackMenus(subtitles, audio);
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(subtitles), L"Subtitles");
+    if (audio) AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(audio), L"Audio track");
+}
+
+void VideoPlayer::showTrackMenu() {
+    int audioTracks = 0;
+    for (const auto& track : tracks()) audioTracks += track.subtitle ? 0 : 1;
+    HMENU menu = CreatePopupMenu();
+    HMENU audio = audioTracks > 1 ? CreatePopupMenu() : nullptr;
+    fillTrackMenus(menu, audio);  // subtitles straight in the menu, audio tracks below
+    if (audio) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(audio), L"Audio track");
+    }
+    POINT corner{ccRect_.left, ccRect_.top};
+    ClientToScreen(parent_, &corner);
+    const int chosen = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RIGHTBUTTON, corner.x,
+                                      corner.y, 0, parent_, nullptr);
+    DestroyMenu(menu);
+    if (chosen) trackCommand(chosen);
+}
+
+bool VideoPlayer::trackCommand(int id) {
+    if (id < kTrackMenuBase || id >= kTrackMenuBase + kMenuEnd) return false;
+    if (!open_) return true;
+    const int item = id - kTrackMenuBase;
+    if (item == kMenuOff) {
+        const int current = std::atoi(stringProperty("sid").c_str());
+        if (current) lastSubtitle_ = current;
+        selectSubtitle(0);
+        flash(L"Subtitles off");
+    } else if (item == kMenuLoadFile) {
+        loadSubtitleFile();
+    } else {
+        const bool subtitle = item < kMenuLoadFile;
+        int index = item - (subtitle ? kMenuFirstSubtitle : kMenuFirstAudio);
+        for (const auto& track : tracks()) {
+            if (track.subtitle != subtitle || index-- != 0) continue;
+            if (subtitle) {
+                selectSubtitle(track.id);
+                lastSubtitle_ = track.id;
+                flash(L"Subtitles: " + label(track));
+            } else {
+                api()->setPropertyString(static_cast<mpv_handle*>(mpv_), "aid", std::to_string(track.id).c_str());
+                flash(L"Audio: " + label(track));
+            }
+            break;
+        }
+    }
+    drawControls();
+    return true;
+}
+
+void VideoPlayer::loadSubtitleFile() {
+    wchar_t file[MAX_PATH * 4] = L"";
+    const std::wstring folder = Navigator::folderOf(path_);
+    OPENFILENAMEW dialog{sizeof(dialog)};
+    dialog.hwndOwner = parent_;
+    dialog.lpstrFilter = L"Subtitles\0*.srt;*.ass;*.ssa;*.vtt;*.sub;*.idx;*.sup\0All files\0*.*\0";
+    dialog.lpstrFile = file;
+    dialog.nMaxFile = static_cast<DWORD>(std::size(file));
+    dialog.lpstrInitialDir = folder.c_str();
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&dialog)) return;
+    const std::string chosen = utf8(file);
+    run(api(), static_cast<mpv_handle*>(mpv_), {"sub-add", chosen.c_str(), "select"});
+    lastSubtitle_ = std::atoi(stringProperty("sid").c_str());
+    const std::wstring name(file);
+    flash(L"Subtitles: " + name.substr(name.find_last_of(L"\\/") + 1));
+}
+
+void VideoPlayer::placeSubtitles() {
+    if (!mpv_ || !open_) return;
+    RECT client{};
+    GetClientRect(parent_, &client);
+    // mpv measures the margin in pixels of a 720-pixel-high window; 22 is its own default.
+    int margin = 22;
+    if (controlsVisible_ && client.bottom > 0) {
+        const double covered = (16 + 44 + 14) * GetDpiForWindow(parent_) / 96.0;
+        margin = std::max(22, static_cast<int>(covered / client.bottom * 720 + 0.5));
+    }
+    api()->setPropertyString(static_cast<mpv_handle*>(mpv_), "sub-margin-y", std::to_string(margin).c_str());
+}
+
+void VideoPlayer::flash(const std::wstring& text) {
+    toast_ = text;
+    toastUntil_ = GetTickCount64() + 1800;
+    drawControls();
 }

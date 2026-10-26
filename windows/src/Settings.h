@@ -47,6 +47,8 @@ struct Settings {
     bool videoAutoplay = true;    // start playing when you stop on a video
     bool videoPreviews = true;    // pictures above the timeline as you hover along it
     bool videoLoopShort = true;   // loop silent clips under 30 seconds, like GIFs
+    int subtitleMode = 0;         // 0 only forced (foreign dialogue), 1 always
+    int subtitleLanguage = 0;     // index into Video::languages(); 0 English
 
     // Window position, remembered between runs (empty: centred, 80% of the screen)
     RECT windowRect{};

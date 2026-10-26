@@ -876,6 +876,10 @@ void Viewer::showContextMenu(int x, int y) {
 
     // Laid out like JPEGView's menu.
     HMENU menu = CreatePopupMenu();
+    if (showingVideo_ && video_) {
+        video_->appendTrackMenus(menu);  // Subtitles, and Audio track when there's a choice
+        separator(menu);
+    }
     add(menu, CmdOpen, L"Open image...\tCtrl+O");
     add(menu, CmdSaveAs, L"Save processed image...\tCtrl+S", hasImage);
     add(menu, CmdReload, L"Reload image\tCtrl+R", hasFile);
@@ -993,6 +997,7 @@ void Viewer::showContextMenu(int x, int y) {
 }
 
 void Viewer::command(int id) {
+    if (video_ && video_->trackCommand(id)) return;
     if (id >= CmdSortBase && id < CmdSortBase + 5) {
         settings_.sortOrder = static_cast<SortOrder>(id - CmdSortBase);
         settings_.save();
@@ -2061,6 +2066,8 @@ VideoPlayer::Options Viewer::videoOptions() const {
     options.autoplay = settings_.videoAutoplay;
     options.previews = settings_.videoPreviews;
     options.loopShort = settings_.videoLoopShort;
+    options.alwaysSubtitles = settings_.subtitleMode == 1;
+    options.subtitleLanguage = settings_.subtitleLanguage;
     return options;
 }
 
@@ -2122,6 +2129,11 @@ bool Viewer::videoKey(WPARAM key, bool control, bool shift) {
     case VK_UP: video_->changeVolume(5); break;
     case VK_DOWN: video_->changeVolume(-5); break;
     case 'M': video_->toggleMute(); break;
+    case 'J': video_->cycleSubtitles(!shift); break;  // as in mpv
+    case 'V':
+        if (control) return false;  // Ctrl+V is still Paste
+        video_->toggleSubtitles();
+        break;
     case VK_OEM_COMMA: video_->frameStep(false); break;   // ,
     case VK_OEM_PERIOD: video_->frameStep(true); break;   // .
     default: return false;

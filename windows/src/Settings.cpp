@@ -70,6 +70,8 @@ Settings Settings::load() {
     s.videoAutoplay = flag(L"VideoAutoplay", s.videoAutoplay);
     s.videoPreviews = flag(L"VideoPreviews", s.videoPreviews);
     s.videoLoopShort = flag(L"VideoLoopShort", s.videoLoopShort);
+    s.subtitleMode = std::clamp(number(L"SubtitleMode", s.subtitleMode), 0, 1);
+    s.subtitleLanguage = std::max(0, number(L"SubtitleLanguage", s.subtitleLanguage));
     s.holdToZoom = std::clamp(number(L"HoldToZoom", s.holdToZoom), 0, 2);
     s.holdZoomPercent = std::clamp(number(L"HoldZoomPercent", s.holdZoomPercent), 150, 400);
     s.windowRect = {number(L"WindowLeft", 0), number(L"WindowTop", 0), number(L"WindowRight", 0), number(L"WindowBottom", 0)};
@@ -112,6 +114,8 @@ void Settings::save() const {
     put(L"VideoAutoplay", videoAutoplay);
     put(L"VideoPreviews", videoPreviews);
     put(L"VideoLoopShort", videoLoopShort);
+    put(L"SubtitleMode", subtitleMode);
+    put(L"SubtitleLanguage", subtitleLanguage);
     put(L"HoldToZoom", holdToZoom);
     put(L"HoldZoomPercent", holdZoomPercent);
     put(L"WindowLeft", windowRect.left);

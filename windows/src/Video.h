@@ -29,6 +29,13 @@ bool available();
 bool isVideo(const std::wstring& path);
 const std::vector<std::wstring>& extensions();
 
+/// Subtitle languages Glance can prefer: a name for menus, and the codes files use for it.
+struct Language {
+    const wchar_t* name;
+    std::vector<std::string> codes;  // lowercase: "en", "eng", "english"
+};
+const std::vector<Language>& languages();
+
 }  // namespace Video
 
 class VideoPlayer {
@@ -37,7 +44,12 @@ public:
         bool autoplay = true;
         bool previews = true;
         bool loopShort = true;
+        bool alwaysSubtitles = false;  // otherwise only forced ones (for foreign-language dialogue)
+        int subtitleLanguage = 0;      // index into Video::languages()
     };
+
+    /// Command IDs for the subtitle and audio menus start here (the CC button and right-click).
+    static constexpr int kTrackMenuBase = 1000;
 
     /// `eventMessage` is posted to `parent` when mpv has news (handleEvents), `previewMessage`
     /// when a timeline picture is ready (takePreview).
@@ -70,6 +82,14 @@ public:
     void changeVolume(int delta);
     void toggleMute();
 
+    // Subtitles and audio tracks
+    void cycleSubtitles(bool forward);  // J / Shift+J, through every track and Off
+    void toggleSubtitles();             // V
+    /// Adds "Subtitles" and "Audio" submenus (IDs from kTrackMenuBase) when the video has them.
+    void appendTrackMenus(HMENU menu);
+    /// A command from those menus; false if the ID isn't one of them.
+    bool trackCommand(int id);
+
     // Controls, in the parent's client coordinates
     void setControlsVisible(bool visible);
     bool controlsVisible() const { return controlsVisible_; }
@@ -86,6 +106,27 @@ public:
     std::wstring describe() const;
 
 private:
+    struct Track {
+        bool subtitle = false;  // otherwise audio
+        int id = 0;             // mpv's sid / aid
+        std::string lang, title, codec, file;
+        bool external = false, forced = false, isDefault = false, hearingImpaired = false, selected = false;
+    };
+    std::vector<Track> tracks() const;
+    std::wstring label(const Track& track) const;
+    bool matchesLanguage(const Track& track) const;
+    /// After a file loads: the subtitle the settings ask for (an .srt you put there, else forced
+    /// dialogue, or with "always" a full track in your language).
+    void chooseSubtitles();
+    void selectSubtitle(int id);  // 0: off
+    void loadSubtitleFile();
+    void showTrackMenu();
+    void fillTrackMenus(HMENU subtitles, HMENU audio);
+    /// Keeps subtitles above the controls while they show.
+    void placeSubtitles();
+    /// A short message over the video ("Subtitles: English"), for a moment.
+    void flash(const std::wstring& text);
+
     struct Preview {
         UINT width = 0, height = 0;
         std::vector<uint8_t> pixels;  // BGRA, opaque
@@ -121,7 +162,10 @@ private:
     bool scrubbing_ = false;
     bool hovering_ = false;
     POINT hover_{};
-    RECT barRect_{}, trackRect_{}, playRect_{}, muteRect_{};
+    RECT barRect_{}, trackRect_{}, playRect_{}, muteRect_{}, ccRect_{};
+    std::wstring toast_;
+    ULONGLONG toastUntil_ = 0;
+    int lastSubtitle_ = 0;  // what V turns back on
     ComPtr<ID2D1Factory> d2d_;
     ComPtr<IDWriteFactory> dwrite_;
     ComPtr<ID2D1DCRenderTarget> target_;
