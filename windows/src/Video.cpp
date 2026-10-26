@@ -964,7 +964,7 @@ void VideoPlayer::drawControls() {
             if (std::abs(it->first - bucket) <= 8) picture = &it->second;
         }
         // The exact frame wins whenever it's nearer the pointer than the one made ahead.
-        if (options_.previews && exactTime_ >= 0 &&
+        if (options_.previews && exactTime_ >= 0 && std::abs(bucketFor(exactTime_) - bucketFor(at)) <= 8 &&
             (!picture || std::abs(exactTime_ - at) < std::abs(picture->time - at))) {
             picture = &exact_;
         }

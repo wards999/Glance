@@ -518,7 +518,8 @@ final class VideoView: NSView {
             best = pictures[nearest]
         }
         // The exact frame wins whenever it's nearer the pointer.
-        if let exactPicture, best.map({ abs(exactPicture.time - time) < abs($0.time - time) }) ?? true {
+        if let exactPicture, abs(bucket(for: exactPicture.time) - wanted) <= 8,
+           best.map({ abs(exactPicture.time - time) < abs($0.time - time) }) ?? true {
             best = exactPicture
         }
         return best?.image
