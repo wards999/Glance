@@ -101,13 +101,28 @@ on one (holding a key down skims straight past). Short silent clips loop like GI
 | , / . | Previous / next frame (while paused) |
 | ↑ / ↓, Ctrl+wheel | Volume |
 | M | Mute |
+| J / Shift+J | Next / previous subtitle track (and off) |
+| V | Subtitles off / back on |
 | Page Down / Page Up, wheel | Next / previous file |
 | Double-click | Full screen |
 
-Moving the mouse shows the controls: play/pause, the time, the timeline and mute. Click or drag
-along the timeline to jump; hover over it to see a picture from that moment, made by a second,
-silent decoder that reads only the nearest keyframe (typically 10–20 ms each). Settings ▸ Video
-turns autoplay, timeline pictures, looping short clips, and listing videos when browsing on or off.
+Moving the mouse shows the controls: play/pause, the time, the timeline, subtitles (CC) and mute.
+Click or drag along the timeline to jump; hover over it to see a picture from that moment, made by
+a second, silent decoder that reads only the nearest keyframe (typically 10–20 ms each).
+
+**Subtitles and audio tracks.** The CC button (and the right-click menu) lists every subtitle track
+by language and name, plus Off and "Load subtitle file…", and the audio tracks when there's a
+choice. A subtitle file beside the video loads by itself, including names like `Movie.en.srt` or
+files in a `Subs` folder. When a film opens, Glance shows that file if there is one; otherwise only
+forced subtitles (the ones translating dialogue in another language), or with Settings ▸ Video ▸
+Subtitles set to Always, a full track in your language (English unless you choose another).
+Subtitles move up while the controls show, so they're never hidden.
+
+Settings ▸ Video also turns autoplay, timeline pictures, looping short clips, and listing videos
+when browsing on or off.
+
+The right-click menu changes with what's on screen: the full JPEGView-style menu for pictures,
+pages and layout for PDFs, and playback, subtitles and audio for videos.
 
 ## Build the Mac version
 
