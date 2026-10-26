@@ -746,6 +746,7 @@ void VideoPlayer::previewWorker() {
         }
         // A frame mpv drew before this seek mustn't be taken for the new one, and old events
         // (seeks and restarts) are of no interest.
+        const auto t0 = std::chrono::steady_clock::now();
         if (mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) renderInto(scratch, 16, 16);
         while (mpv->waitEvent(handle, 0)->event_id != MPV_EVENT_NONE) {
         }
@@ -753,12 +754,14 @@ void VideoPlayer::previewWorker() {
         snprintf(at, sizeof(at), "%.3f", time);
         const auto started = std::chrono::steady_clock::now();
         run(mpv, handle, {"seek", at, exact ? "absolute+exact" : "absolute+keyframes"});
+        const auto t1 = std::chrono::steady_clock::now();
         // Take the frame the moment it's decoded. (Not "playback restarted": with this renderer mpv
         // only reports that once the frame has been drawn, so waiting for it costs ~200 ms each.)
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
         while (!(mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) && std::chrono::steady_clock::now() < deadline) {
             Sleep(1);
         }
+        const auto t2 = std::chrono::steady_clock::now();
         double shown = time;
         mpv->getProperty(handle, "time-pos", MPV_FORMAT_DOUBLE, &shown);  // where a keyframe seek landed
         double w = 16, h = 9;
@@ -774,9 +777,10 @@ void VideoPlayer::previewWorker() {
         renderInto(result->pixels, static_cast<int>(width), height);
         for (size_t i = 3; i < result->pixels.size(); i += 4) result->pixels[i] = 255;  // bgr0 -> opaque BGRA
         {
-            char line[96];
-            snprintf(line, sizeof(line), "preview %s %.1f s: %.0f ms", exact ? "exact" : "ahead", time,
-                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+            auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+            char line[160];
+            snprintf(line, sizeof(line), "preview %s %.1f s: drain %.0f, seek %.0f, frame %.0f, draw %.0f ms", exact ? "exact" : "ahead",
+                     time, ms(t0, started), ms(started, t1), ms(t1, t2), ms(t2, std::chrono::steady_clock::now()));
             trace(line);
         }
         PostMessageW(parent_, previewMessage_, 0, reinterpret_cast<LPARAM>(result.release()));
