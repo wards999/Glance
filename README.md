@@ -77,6 +77,33 @@ prefer (`'/u', ` before the path removes it):
 Start-Process regsvr32 -Verb RunAs -ArgumentList '"C:\Utilities\Glance\GlanceThumbnails.dll"'
 ```
 
+## Watching videos (Windows)
+
+With `libmpv-2.dll` next to `Glance.exe`, Glance plays videos too: MP4, MKV, WebM, MOV, AVI and
+more, in practically any codec (H.264, HEVC, AV1, VP9, ProRes…), decoded on the GPU. The DLL is
+mpv's player engine, built on FFmpeg (from shinchiro/mpv-winbuild-cmake). It's optional and big
+(about 120 MB), but it's only loaded when you open a video: launch and photo speed are unchanged,
+and without it Glance simply doesn't list videos.
+
+Videos sit in a folder alongside your pictures. Browsing doesn't slow down for them: they aren't
+decoded ahead, the first frame shows the moment you arrive, and playback starts once you've stopped
+on one (holding a key down skims straight past). Short silent clips loop like GIFs.
+
+| | |
+|---|---|
+| Space, or click the picture | Play / pause |
+| ← / → | Back / forward 5 seconds (Shift: 30 s, Ctrl: 1 s) |
+| , / . | Previous / next frame (while paused) |
+| ↑ / ↓, Ctrl+wheel | Volume |
+| M | Mute |
+| Page Down / Page Up, wheel | Next / previous file |
+| Double-click | Full screen |
+
+Moving the mouse shows the controls: play/pause, the time, the timeline and mute. Click or drag
+along the timeline to jump; hover over it to see a picture from that moment, made by a second,
+silent decoder that reads only the nearest keyframe (typically 10–20 ms each). Settings ▸ Video
+turns autoplay, timeline pictures, looping short clips, and listing videos when browsing on or off.
+
 ## Build the Mac version
 
 Requires macOS 13 or later and Xcode 15 or later (or the matching Command Line Tools).
