@@ -734,6 +734,12 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
 
 bool Viewer::onKey(WPARAM key, bool control, bool shift) {
     if (showingVideo_ && videoKey(key, control, shift)) return true;
+    if (control && (key == VK_NEXT || key == VK_PRIOR)) {
+        // Straight to the next or previous file, even from the middle of a PDF.
+        goToFile(key == VK_NEXT ? 1 : -1);
+        render();
+        return true;
+    }
     double width, height;
     viewSize(width, height);
     const double step = std::max(width, height) * 0.15;
@@ -966,8 +972,8 @@ void Viewer::showContextMenu(int x, int y) {
     } else if (kind == Kind::Pdf) {
         add(menu, CmdNext, L"Next page\tSpace", true);
         add(menu, CmdPrevious, L"Previous page\tBackspace", true);
-        add(menu, CmdNextFile, L"Next document", severalFiles);
-        add(menu, CmdPreviousFile, L"Previous document", severalFiles);
+        add(menu, CmdNextFile, L"Next document\tCtrl+PgDn", severalFiles);
+        add(menu, CmdPreviousFile, L"Previous document\tCtrl+PgUp", severalFiles);
         navigationMenu(menu, L"First document\tHome", L"Last document\tEnd");
         separator(menu);
         HMENU pages = CreatePopupMenu();

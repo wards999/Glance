@@ -674,6 +674,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     func imageView(_ view: ImageView, handleKeyDown event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
+        if modifiers == .option, let key = event.charactersIgnoringModifiers?.unicodeScalars.first.map({ Int($0.value) }) {
+            // ⌥ Page Down / ⌥↓: straight to the next file, even from the middle of a PDF.
+            switch key {
+            case NSPageDownFunctionKey, NSDownArrowFunctionKey:
+                goToFile(1)
+                return true
+            case NSPageUpFunctionKey, NSUpArrowFunctionKey:
+                goToFile(-1)
+                return true
+            default:
+                break
+            }
+        }
         guard modifiers.isEmpty, let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first else { return false }
         keyRepeating = event.isARepeat
         defer { keyRepeating = false }

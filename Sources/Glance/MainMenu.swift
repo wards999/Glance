@@ -115,8 +115,8 @@ enum MainMenu {
                 [
                     item("Next Page", #selector(C.nextImage(_:)), ""),
                     item("Previous Page", #selector(C.previousImage(_:)), ""),
-                    item("Next Document", #selector(C.nextDocument(_:)), ""),
-                    item("Previous Document", #selector(C.previousDocument(_:)), ""),
+                    item("Next Document  (⌥↓)", #selector(C.nextDocument(_:)), ""),
+                    item("Previous Document  (⌥↑)", #selector(C.previousDocument(_:)), ""),
                 ] + browsing,
                 [submenu("Page Layout", pdfItems()), submenu("Zoom", zoomItems())],
                 [
