@@ -1,9 +1,15 @@
 # Glance
 
-A fast image viewer for **macOS and Windows**, modeled on JPEGView: minimal UI, keyboard driven,
-and built to put pixels on screen as fast as possible, including very large files. Each version is
-native to its platform: Swift with AppKit, ImageIO, Core Animation and Core Image on the Mac; C++
-with Win32, WIC and Direct2D on Windows. Both read PDFs too, with magazine-style two-page spreads.
+A fast picture and **PDF** viewer for **macOS and Windows**, modeled on JPEGView: minimal UI,
+keyboard driven, and built to put pixels on screen as fast as possible, including very large
+files. It opens **JPEG, PNG, GIF (animated), TIFF (multi-page), BMP, WebP, HEIC/HEIF, AVIF,
+camera RAW** and more (on the Mac also JPEG XL and PSD), and reads **PDFs** like a magazine: cover
+first, then two-page spreads, with pages turned instantly and hold to zoom. Each version is native
+to its platform: Swift with AppKit, ImageIO, Core Animation and Core Image on the Mac; C++ with
+Win32, WIC and Direct2D on Windows.
+
+On Windows, Glance opens every format Windows itself can decode; WebP, HEIC, AVIF and RAW need
+Microsoft's free image extensions from the Microsoft Store if they aren't already installed.
 
 ## Download
 
