@@ -100,7 +100,7 @@ public:
     bool mouseDown(POINT point);
     void mouseUp(POINT point);
     void mouseLeave();
-    bool scrubbing() const { return scrubbing_; }
+    bool scrubbing() const { return scrubbing_ || volumeDragging_; }  // dragging the timeline or volume
 
     /// "1920 x 1080  -  1:32:10" for the title bar.
     std::wstring describe() const;
@@ -163,7 +163,9 @@ private:
     bool scrubbing_ = false;
     bool hovering_ = false;
     POINT hover_{};
-    RECT barRect_{}, trackRect_{}, playRect_{}, muteRect_{}, ccRect_{};
+    RECT barRect_{}, trackRect_{}, playRect_{}, muteRect_{}, ccRect_{}, volumeRect_{};
+    bool volumeDragging_ = false;
+    void setVolumeAt(int x);
     std::wstring toast_;
     ULONGLONG toastUntil_ = 0;
     int lastSubtitle_ = 0;  // what V turns back on

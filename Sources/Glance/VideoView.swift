@@ -40,6 +40,7 @@ final class VideoView: NSView {
     private var lastSubtitle = 0
     private var pressedOnPicture = false
     private var scrubbing = false
+    private var draggingVolume = false
     private var hideTimer: Timer?
     private var tickTimer: Timer?
     private var toastTimer: Timer?
@@ -244,6 +245,16 @@ final class VideoView: NSView {
         flash("Volume \(Int(mpv.double(handle, "volume") ?? 100))%")
     }
 
+    /// Clicking or dragging along the volume slider: left is silent, right is full volume.
+    private func setVolume(atX x: CGFloat) {
+        let slider = controls.volumeRect
+        guard slider.width > 0 else { return }
+        let volume = Int((min(max((x - slider.minX) / slider.width, 0), 1) * 100).rounded())
+        mpv.set(handle, "volume", "\(volume)")
+        mpv.set(handle, "mute", "no")
+        flash("Volume \(volume)%")
+    }
+
     func toggleMute() {
         guard isOpen else { return }
         mpv.run(handle, ["cycle", "mute"])
@@ -324,7 +335,7 @@ final class VideoView: NSView {
         hideTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             guard let self, self.isOpen else { return }
             let mouse = self.convert(self.window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
-            if self.scrubbing || self.isPaused || self.controls.barRect.insetBy(dx: 0, dy: -8).contains(mouse) { return }
+            if self.scrubbing || self.draggingVolume || self.isPaused || self.controls.barRect.insetBy(dx: 0, dy: -8).contains(mouse) { return }
             self.setControlsVisible(false)
             if self.delegate?.videoViewIsFullScreen == true && Settings.shared.hideCursorInFullScreen {
                 NSCursor.setHiddenUntilMouseMoves(true)
@@ -343,6 +354,7 @@ final class VideoView: NSView {
         controls.position = scrubbing ? time(atX: controls.hoverPoint.x) : position
         controls.isPaused = isPaused || ended
         controls.isMuted = mpv.flag(handle, "mute") ?? false
+        controls.volume = min(max(mpv.double(handle, "volume") ?? 100, 0), 100)
         controls.showBar = !controls.isHidden
         if (controls.hovering || scrubbing) && duration > 0 {
             let at = time(atX: controls.hoverPoint.x)
@@ -425,6 +437,11 @@ final class VideoView: NSView {
             if controls.playRect.contains(point) { togglePause(); return }
             if controls.muteRect.contains(point) { toggleMute(); return }
             if controls.ccRect.contains(point) { showTrackMenu(); return }
+            if controls.volumeRect.contains(point) {
+                draggingVolume = true
+                setVolume(atX: point.x)
+                return
+            }
             if controls.timelineHitRect.contains(point) {
                 scrubbing = true
                 controls.hoverPoint = point
@@ -438,8 +455,12 @@ final class VideoView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard scrubbing else { return }
         let point = convert(event.locationInWindow, from: nil)
+        if draggingVolume {
+            setVolume(atX: point.x)
+            return
+        }
+        guard scrubbing else { return }
         controls.hoverPoint = point
         let at = time(atX: point.x)
         mpv.run(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])  // keyframes while dragging: instant
@@ -449,7 +470,9 @@ final class VideoView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if scrubbing {
+        if draggingVolume {
+            draggingVolume = false
+        } else if scrubbing {
             scrubbing = false
             mpv.run(handle, ["seek", String(format: "%.3f", time(atX: point.x)), "absolute+exact"])
             ended = false
@@ -813,6 +836,7 @@ final class VideoControlsView: NSView {
     var position = 0.0
     var isPaused = true
     var isMuted = false
+    var volume = 100.0
     var showBar = false
     var hovering = false
     var hoverPoint = NSPoint.zero
@@ -824,6 +848,7 @@ final class VideoControlsView: NSView {
     private(set) var playRect = NSRect.zero
     private(set) var muteRect = NSRect.zero
     private(set) var ccRect = NSRect.zero
+    private(set) var volumeRect = NSRect.zero
     private(set) var trackRect = NSRect.zero
     var timelineHitRect: NSRect { NSRect(x: trackRect.minX, y: barRect.minY, width: trackRect.width, height: barRect.height) }
 
@@ -841,7 +866,9 @@ final class VideoControlsView: NSView {
         barRect = NSRect(x: margin, y: bounds.height - margin - barHeight, width: bounds.width - 2 * margin, height: barHeight)
         let middle = barRect.midY
         playRect = NSRect(x: barRect.minX + 4, y: middle - button / 2, width: button, height: button)
-        muteRect = NSRect(x: barRect.maxX - 4 - button, y: middle - button / 2, width: button, height: button)
+        // Volume: a short slider at the right-hand end, the speaker (mute) just before it.
+        volumeRect = NSRect(x: barRect.maxX - 14 - 80, y: barRect.minY, width: 80, height: barRect.height)
+        muteRect = NSRect(x: volumeRect.minX - 6 - button, y: middle - button / 2, width: button, height: button)
         ccRect = muteRect.offsetBy(dx: -button, dy: 0)
         let nowRight = playRect.maxX + timeWidth
         let totalLeft = ccRect.minX - timeWidth
@@ -878,7 +905,19 @@ final class VideoControlsView: NSView {
             NSBezierPath(roundedRect: barRect, xRadius: 10, yRadius: 10).fill()
             symbol(isPaused ? "play.fill" : "pause.fill", in: playRect)
             symbol("captions.bubble", in: ccRect)
-            symbol(isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill", in: muteRect)
+            // The speaker shows the level: muted, then one to three waves.
+            let speaker = isMuted || volume < 1 ? "speaker.slash.fill"
+                : volume < 34 ? "speaker.wave.1.fill" : volume < 67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
+            symbol(speaker, in: muteRect)
+            // The volume slider: a thin track, filled to the level (dimmed while muted), with a knob.
+            let slider = NSRect(x: volumeRect.minX, y: volumeRect.midY - 2, width: volumeRect.width, height: 4)
+            NSColor.white.withAlphaComponent(0.3).setFill()
+            NSBezierPath(roundedRect: slider, xRadius: 2, yRadius: 2).fill()
+            var level = slider
+            level.size.width = slider.width * CGFloat(volume / 100)
+            (isMuted ? NSColor.white.withAlphaComponent(0.3) : NSColor.white).setFill()
+            NSBezierPath(roundedRect: level, xRadius: 2, yRadius: 2).fill()
+            NSBezierPath(ovalIn: NSRect(x: level.maxX - 5, y: slider.midY - 5, width: 10, height: 10)).fill()
             let timeWidth: CGFloat = duration >= 3600 ? 64 : 48
             centred(VideoView.clock(position), in: NSRect(x: playRect.maxX, y: barRect.minY, width: timeWidth, height: barRect.height), white)
             centred(VideoView.clock(duration), in: NSRect(x: ccRect.minX - timeWidth, y: barRect.minY, width: timeWidth, height: barRect.height), soft)

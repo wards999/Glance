@@ -475,7 +475,17 @@ void VideoPlayer::changeVolume(int delta) {
     snprintf(amount, sizeof(amount), "%d", delta);
     command({"add", "volume", amount});
     command({"set", "mute", "no"});
-    drawControls();
+    flash(L"Volume " + std::to_wstring(static_cast<int>(std::lround(property("volume", 100)))) + L"%");
+}
+
+/// Clicking or dragging along the volume slider: left is silent, right is full volume.
+void VideoPlayer::setVolumeAt(int x) {
+    const int width = volumeRect_.right - volumeRect_.left;
+    if (width <= 0) return;
+    const int volume = static_cast<int>(std::lround(std::clamp(double(x - volumeRect_.left) / width, 0.0, 1.0) * 100));
+    command({"set", "volume", std::to_string(volume).c_str()});
+    command({"set", "mute", "no"});
+    flash(L"Volume " + std::to_wstring(volume) + L"%");
 }
 
 void VideoPlayer::toggleMute() {
@@ -525,6 +535,10 @@ double VideoPlayer::timeAt(int x) const {
 
 void VideoPlayer::mouseMove(POINT point) {
     if (!open_) return;
+    if (volumeDragging_) {
+        setVolumeAt(point.x);
+        return;
+    }
     RECT hit = trackRect_;
     hit.top = barRect_.top;
     hit.bottom = barRect_.bottom;
@@ -553,6 +567,9 @@ bool VideoPlayer::mouseDown(POINT point) {
         toggleMute();
     } else if (PtInRect(&ccRect_, point)) {
         showTrackMenu();
+    } else if (PtInRect(&volumeRect_, point)) {
+        volumeDragging_ = true;
+        setVolumeAt(point.x);
     } else if (PtInRect(&hit, point)) {
         scrubbing_ = true;
         hover_ = point;
@@ -564,6 +581,11 @@ bool VideoPlayer::mouseDown(POINT point) {
 }
 
 void VideoPlayer::mouseUp(POINT point) {
+    if (volumeDragging_) {
+        volumeDragging_ = false;
+        drawControls();
+        return;
+    }
     if (!scrubbing_) return;
     scrubbing_ = false;
     char at[32];
@@ -778,7 +800,11 @@ void VideoPlayer::drawControls() {
     const int middle = (barRect_.top + barRect_.bottom) / 2;
     playRect_ = RECT{barRect_.left + static_cast<int>(4 * s), middle - button / 2, barRect_.left + static_cast<int>(4 * s) + button,
                      middle + button / 2};
-    muteRect_ = RECT{barRect_.right - static_cast<int>(4 * s) - button, middle - button / 2, barRect_.right - static_cast<int>(4 * s),
+    // Volume: a short slider at the right-hand end, the speaker (mute) just before it.
+    const int volumeWidth = static_cast<int>(80 * s);
+    volumeRect_ = RECT{barRect_.right - static_cast<int>(14 * s) - volumeWidth, barRect_.top, barRect_.right - static_cast<int>(14 * s),
+                       barRect_.bottom};
+    muteRect_ = RECT{volumeRect_.left - static_cast<int>(6 * s) - button, middle - button / 2, volumeRect_.left - static_cast<int>(6 * s),
                      middle + button / 2};
     const RECT nowRect{playRect_.right, barRect_.top, playRect_.right + timeWidth, barRect_.bottom};
     ccRect_ = RECT{muteRect_.left - button, muteRect_.top, muteRect_.left, muteRect_.bottom};
@@ -790,6 +816,7 @@ void VideoPlayer::drawControls() {
     const double shownTime = scrubbing_ ? timeAt(hover_.x) : position;
     int muted = 0;
     api()->getProperty(static_cast<mpv_handle*>(mpv_), "mute", MPV_FORMAT_FLAG, &muted);
+    const double volume = std::clamp(property("volume", 100), 0.0, 100.0);
     const bool isPaused = paused();
 
     auto local = [&](const RECT& r) {
@@ -836,8 +863,22 @@ void VideoPlayer::drawControls() {
     if (hovering_ && PtInRect(&playRect_, hover_)) target_->FillRoundedRectangle(D2D1::RoundedRect(local(playRect_), 6 * s, 6 * s), accent.get());
     const wchar_t* playGlyph = isPaused || ended_ ? L"\xE768" : L"\xE769";
     target_->DrawText(playGlyph, 1, iconFormat_.get(), local(playRect_), white.get());
-    const wchar_t* muteGlyph = muted ? L"\xE74F" : L"\xE767";
+    // The speaker shows the level: muted, then one to three waves.
+    const wchar_t* muteGlyph = muted || volume < 1 ? L"\xE74F" : volume < 34 ? L"\xE993" : volume < 67 ? L"\xE994" : L"\xE995";
     target_->DrawText(muteGlyph, 1, iconFormat_.get(), local(muteRect_), white.get());
+    {
+        // The volume slider: a thin track, filled to the level (dimmed while muted), with a knob.
+        D2D1_RECT_F slider = local(volumeRect_);
+        const float middleY = (slider.top + slider.bottom) / 2;
+        slider.top = middleY - 2 * s;
+        slider.bottom = middleY + 2 * s;
+        target_->FillRoundedRectangle(D2D1::RoundedRect(slider, 2 * s, 2 * s), dim.get());
+        D2D1_RECT_F level = slider;
+        level.right = slider.left + float((slider.right - slider.left) * (volume / 100));
+        ID2D1SolidColorBrush* fill = muted ? dim.get() : white.get();
+        target_->FillRoundedRectangle(D2D1::RoundedRect(level, 2 * s, 2 * s), fill);
+        target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(level.right, middleY), 5 * s, 5 * s), fill);
+    }
     for (const RECT* button : {&muteRect_, &ccRect_}) {
         if (hovering_ && PtInRect(button, hover_)) target_->FillRoundedRectangle(D2D1::RoundedRect(local(*button), 6 * s, 6 * s), accent.get());
     }
