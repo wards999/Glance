@@ -39,6 +39,7 @@ final class VideoView: NSView {
     private(set) var videoSize = CGSize.zero
     private var lastSubtitle = 0
     private var pressedOnPicture = false
+    private var lastPosition = 0.0  // shown while mpv has no position (during a seek)
     private var scrubbing = false
     private var draggingVolume = false
     private var hideTimer: Timer?
@@ -82,6 +83,7 @@ final class VideoView: NSView {
     }
 
     deinit {
+        CGLSetCurrentContext(surface.mpvLayer.glContext)
         if let renderContext { mpv.renderFree(renderContext) }
         if let handle { mpv.terminateDestroy(handle) }
     }
@@ -130,6 +132,8 @@ final class VideoView: NSView {
             let view = Unmanaged<VideoView>.fromOpaque(context).takeUnretainedValue()
             DispatchQueue.main.async { view.handleEvents() }
         }, Unmanaged.passUnretained(self).toOpaque())
+        // mpv's video output is set up when a file loads, so the OpenGL link must exist first.
+        glContextReady(surface.mpvLayer.glContext)
         return true
     }
 
@@ -140,6 +144,7 @@ final class VideoView: NSView {
         isOpen = true
         ended = false
         duration = 0
+        lastPosition = 0
         videoSize = .zero
         pictures = [:]
         exactPicture = nil
@@ -354,7 +359,8 @@ final class VideoView: NSView {
             controls.needsDisplay = true
             return
         }
-        let position = min(max(mpv.double(handle, "time-pos") ?? 0, 0), max(duration, 0))
+        let position = min(max(mpv.double(handle, "time-pos") ?? lastPosition, 0), max(duration, 0))
+        lastPosition = position
         controls.name = url.map { $0.deletingPathExtension().lastPathComponent } ?? ""
         controls.duration = duration
         controls.position = scrubbing ? time(atX: controls.hoverPoint.x) : position
@@ -762,12 +768,17 @@ enum VideoLanguages {
 // MARK: - The OpenGL surface mpv draws into
 
 final class MPVSurfaceView: NSView {
+    /// Made up front (not when AppKit first draws), so its OpenGL context exists before mpv opens
+    /// a file: mpv sets up its video output when a file loads and needs the context then.
+    let mpvLayer = MPVLayer()
+
     weak var owner: VideoView? {
-        didSet { (layer as? MPVLayer)?.owner = owner }
+        didSet { mpvLayer.owner = owner }
     }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        layer = mpvLayer  // layer-hosting: the layer is ours, AppKit doesn't draw into it
         wantsLayer = true
     }
 
@@ -775,21 +786,15 @@ final class MPVSurfaceView: NSView {
         fatalError("init(coder:) is not supported")
     }
 
-    override func makeBackingLayer() -> CALayer {
-        let layer = MPVLayer()
-        layer.owner = owner
-        return layer
-    }
-
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        (layer as? MPVLayer)?.owner = owner
-        layer?.contentsScale = window?.backingScaleFactor ?? 2
+        mpvLayer.contentsScale = window?.backingScaleFactor ?? 2
+        mpvLayer.setNeedsDisplay()
     }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        layer?.contentsScale = window?.backingScaleFactor ?? 2
+        mpvLayer.contentsScale = window?.backingScaleFactor ?? 2
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }  // VideoView takes the mouse
@@ -797,24 +802,11 @@ final class MPVSurfaceView: NSView {
 
 final class MPVLayer: CAOpenGLLayer {
     weak var owner: VideoView?
+    /// Glance's own OpenGL context for mpv, created with the layer and handed to Core Animation.
+    let glPixelFormat: CGLPixelFormatObj
+    let glContext: CGLContextObj
 
-    override init() {
-        super.init()
-        isAsynchronous = false
-        needsDisplayOnBoundsChange = true
-        backgroundColor = NSColor.black.cgColor
-    }
-
-    override init(layer: Any) {
-        super.init(layer: layer)
-        if let other = layer as? MPVLayer { owner = other.owner }
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
-    }
-
-    override func copyCGLPixelFormat(forDisplayMask mask: UInt32) -> CGLPixelFormatObj {
+    private static func makePixelFormat() -> CGLPixelFormatObj? {
         let attributes: [CGLPixelFormatAttribute] = [
             kCGLPFAOpenGLProfile, CGLPixelFormatAttribute(UInt32(kCGLOGLPVersion_3_2_Core.rawValue)),
             kCGLPFADoubleBuffer, kCGLPFAAccelerated, kCGLPFAAllowOfflineRenderers,
@@ -823,13 +815,51 @@ final class MPVLayer: CAOpenGLLayer {
         var format: CGLPixelFormatObj?
         var count: GLint = 0
         CGLChoosePixelFormat(attributes, &format, &count)
-        return format ?? super.copyCGLPixelFormat(forDisplayMask: mask)
+        if format == nil {
+            // Without "accelerated", for odd setups.
+            let fallback: [CGLPixelFormatAttribute] = [
+                kCGLPFAOpenGLProfile, CGLPixelFormatAttribute(UInt32(kCGLOGLPVersion_3_2_Core.rawValue)),
+                kCGLPFADoubleBuffer, _CGLPixelFormatAttribute(rawValue: 0),
+            ]
+            CGLChoosePixelFormat(fallback, &format, &count)
+        }
+        return format
+    }
+
+    override init() {
+        let format = Self.makePixelFormat()!
+        var context: CGLContextObj?
+        CGLCreateContext(format, nil, &context)
+        glPixelFormat = format
+        glContext = context!
+        var swapInterval: GLint = 1
+        CGLSetParameter(glContext, kCGLCPSwapInterval, &swapInterval)
+        super.init()
+        isAsynchronous = false
+        needsDisplayOnBoundsChange = true
+        backgroundColor = NSColor.black.cgColor
+    }
+
+    override init(layer: Any) {
+        let other = layer as! MPVLayer
+        glPixelFormat = other.glPixelFormat
+        glContext = other.glContext
+        owner = other.owner
+        super.init(layer: layer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func copyCGLPixelFormat(forDisplayMask mask: UInt32) -> CGLPixelFormatObj {
+        CGLRetainPixelFormat(glPixelFormat)
+        return glPixelFormat
     }
 
     override func copyCGLContext(forPixelFormat format: CGLPixelFormatObj) -> CGLContextObj {
-        let context = super.copyCGLContext(forPixelFormat: format)
-        owner?.glContextReady(context)
-        return context
+        CGLRetainContext(glContext)
+        return glContext
     }
 
     override func canDraw(inCGLContext context: CGLContextObj, pixelFormat: CGLPixelFormatObj,

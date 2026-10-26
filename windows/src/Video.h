@@ -157,6 +157,7 @@ private:
     bool firstFrame_ = false;  // for the trace log
     std::wstring path_;
     double duration_ = 0;
+    double lastPosition_ = 0;  // shown while mpv has no position (during a seek)
     int videoWidth_ = 0, videoHeight_ = 0;
 
     // Controls

@@ -316,6 +316,7 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
     ended_ = false;
     path_ = path;
     duration_ = 0;
+    lastPosition_ = 0;
     videoWidth_ = videoHeight_ = 0;
     previews_.clear();
     exactTime_ = -1;
@@ -872,7 +873,9 @@ void VideoPlayer::drawControls() {
     trackRect_ = RECT{nowRect.right + static_cast<int>(8 * s), middle - static_cast<int>(2 * s), totalRect.left - static_cast<int>(8 * s),
                       middle + static_cast<int>(2 * s)};
 
-    const double position = std::clamp(property("time-pos"), 0.0, std::max(duration_, 0.0));
+    // While a seek is under way mpv briefly has no position: keep showing the last one.
+    const double position = std::clamp(property("time-pos", lastPosition_), 0.0, std::max(duration_, 0.0));
+    lastPosition_ = position;
     const double shownTime = scrubbing_ ? timeAt(hover_.x) : position;
     int muted = 0;
     api()->getProperty(static_cast<mpv_handle*>(mpv_), "mute", MPV_FORMAT_FLAG, &muted);
