@@ -322,6 +322,8 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
     mpv->setPropertyString(handle, "loop-file", "no");
     const std::string file = utf8(path);
     run(mpv, handle, {"loadfile", file.c_str(), "replace"});
+    trace("video loadfile");
+    firstFrame_ = false;
     {
         std::lock_guard lock(previewLock_);
         previewPath_ = options_.previews ? path : std::wstring();
@@ -391,6 +393,7 @@ bool VideoPlayer::handleEvents() {
         if (!open_) continue;
         switch (event->event_id) {
         case MPV_EVENT_FILE_LOADED: {
+            trace("video file loaded");
             duration_ = property("duration");
             videoWidth_ = static_cast<int>(property("width"));
             videoHeight_ = static_cast<int>(property("height"));
@@ -408,6 +411,10 @@ bool VideoPlayer::handleEvents() {
             break;
         }
         case MPV_EVENT_PLAYBACK_RESTART:
+            if (!firstFrame_) {
+                firstFrame_ = true;
+                trace("video first frame");
+            }
             drawControls();
             break;
         default:

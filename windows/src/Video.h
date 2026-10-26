@@ -153,6 +153,7 @@ private:
     std::atomic<bool> wakePending_{false};
     bool open_ = false;
     bool ended_ = false;
+    bool firstFrame_ = false;  // for the trace log
     std::wstring path_;
     double duration_ = 0;
     int videoWidth_ = 0, videoHeight_ = 0;
