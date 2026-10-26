@@ -316,7 +316,11 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         // Swap to GPU drawing; the picture doesn't move, only the drawing path changes.
         if (!context_ && initGraphics()) {
             if (current_) shown_ = gpuFor(currentKey_, current_);
-            render();
+            if (animation_) {
+                showAnimationFrame();  // a GIF's frames can be ready before the GPU is
+            } else {
+                render();
+            }
         }
         return 0;
 
