@@ -504,7 +504,8 @@ final class VideoView: NSView {
 
     private func nearestPicture(to time: Double) -> CGImage? {
         let wanted = bucket(for: time)
-        guard let nearest = pictures.keys.min(by: { abs($0 - wanted) < abs($1 - wanted) }), abs(nearest - wanted) <= 3 else { return nil }
+        // The nearest made so far (until the exact one arrives), but not a far-away one.
+        guard let nearest = pictures.keys.min(by: { abs($0 - wanted) < abs($1 - wanted) }), abs(nearest - wanted) <= 8 else { return nil }
         return pictures[nearest]
     }
 
@@ -1028,12 +1029,42 @@ final class PreviewMaker {
         if start { queue.async { self.work() } }
     }
 
+    // Pictures made ahead across the whole timeline once a video opens, coarse to fine (8 evenly
+    // spaced, then 16, 32, ... up to 128), so hovering finds one nearby straight away. What you
+    // hover over is always made first. Owned by `queue`.
+    private var ahead: [Double] = []
+    private var nextAhead = 0
+
+    private static func aheadTimes(duration: Double) -> [Double] {
+        // About one every 2 seconds for short clips, at most 128.
+        let count = min(max(Int(duration / 2), 0), 128)
+        guard count > 0 else { return [] }
+        var taken = [Bool](repeating: false, count: count)
+        var times: [Double] = []
+        var stride = 16
+        while stride >= 1 {
+            var i = 0
+            while i < count {
+                if !taken[i] {
+                    taken[i] = true
+                    times.append((Double(i) + 0.5) * duration / Double(count))
+                }
+                i += max(1, count / (128 / stride))
+            }
+            stride /= 2
+        }
+        for i in 0..<count where !taken[i] { times.append((Double(i) + 0.5) * duration / Double(count)) }
+        return times
+    }
+
     private func work() {
         while true {
             lock.lock()
-            let url = wantedURL, time = wantedTime, width = wantedWidth, generation = wantedGeneration
+            let url = wantedURL, width = wantedWidth, generation = wantedGeneration
+            var time = wantedTime
             wantedTime = nil
-            if url == loaded && time == nil {
+            let moreAhead = url != nil && url == loaded && nextAhead < ahead.count
+            if url == loaded && time == nil && !moreAhead {
                 working = false
                 lock.unlock()
                 return
@@ -1046,13 +1077,22 @@ final class PreviewMaker {
                 return
             }
             if url != loaded {
+                ahead = []
+                nextAhead = 0
                 if let url {
                     mpv?.run(handle, ["loadfile", url.path, "replace"])
                     loaded = (mpv?.wait(handle, for: MPV_EVENT_FILE_LOADED, timeout: 10) ?? false) ? url : nil
+                    if loaded != nil, let duration = mpv?.double(handle, "duration") {
+                        ahead = Self.aheadTimes(duration: duration)
+                    }
                 } else {
                     mpv?.run(handle, ["stop"])
                     loaded = nil
                 }
+            }
+            if time == nil, url != nil, url == loaded, nextAhead < ahead.count {
+                time = ahead[nextAhead]
+                nextAhead += 1
             }
             guard let time, let url, url == loaded, let image = picture(at: time, width: width) else { continue }
             DispatchQueue.main.async { self.onPicture?(generation, time, image) }

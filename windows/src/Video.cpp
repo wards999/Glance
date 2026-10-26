@@ -329,6 +329,7 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
         previewPath_ = options_.previews ? path : std::wstring();
         previewTime_ = -1;
         previewGeneration_ = generation_;
+        previewWidth_ = MulDiv(kPreviewWidth, GetDpiForWindow(parent_), 96);
     }
     previewWake_.notify_all();
     layout();
@@ -669,6 +670,11 @@ void VideoPlayer::previewWorker() {
     };
 
     std::wstring loaded;
+    // Pictures made ahead across the whole timeline once a video opens, coarse to fine (8 evenly
+    // spaced, then 16, 32, ... up to 128), so hovering finds one nearby straight away. What you
+    // hover over is always made first.
+    std::vector<double> ahead;
+    size_t nextAhead = 0;
     while (true) {
         std::wstring path;
         double time;
@@ -676,7 +682,10 @@ void VideoPlayer::previewWorker() {
         UINT width;
         {
             std::unique_lock lock(previewLock_);
-            previewWake_.wait(lock, [&] { return previewQuit_ || previewTime_ >= 0 || previewPath_ != loaded; });
+            previewWake_.wait(lock, [&] {
+                return previewQuit_ || previewTime_ >= 0 || previewPath_ != loaded ||
+                       (!previewPath_.empty() && nextAhead < ahead.size());
+            });
             if (previewQuit_) break;
             path = previewPath_;
             time = previewTime_;
@@ -687,20 +696,41 @@ void VideoPlayer::previewWorker() {
         if (path.empty()) {
             if (!loaded.empty()) run(mpv, handle, {"stop"});
             loaded.clear();
+            ahead.clear();
             continue;
         }
         if (path != loaded) {
             const std::string file = utf8(path);
             run(mpv, handle, {"loadfile", file.c_str(), "replace"});
             loaded = path;
+            ahead.clear();
+            nextAhead = 0;
             if (!waitFor(mpv, handle, MPV_EVENT_FILE_LOADED, 10)) {
                 loaded.clear();  // can't decode it; don't keep trying
                 std::lock_guard lock(previewLock_);
                 if (previewPath_ == path) previewPath_.clear();
                 continue;
             }
+            double duration = 0;
+            mpv->getProperty(handle, "duration", MPV_FORMAT_DOUBLE, &duration);
+            // About one every 2 seconds for short clips, at most 128.
+            const int count = std::clamp(static_cast<int>(duration / 2), 0, 128);
+            std::vector<bool> taken(count, false);
+            for (int stride = 16; stride >= 1; stride /= 2) {
+                for (int i = 0; i < count; i += std::max(1, count / (128 / stride))) {
+                    if (taken[i]) continue;
+                    taken[i] = true;
+                    ahead.push_back((i + 0.5) * duration / count);
+                }
+            }
+            for (int i = 0; i < count; ++i) {
+                if (!taken[i]) ahead.push_back((i + 0.5) * duration / count);
+            }
         }
-        if (time < 0) continue;
+        if (time < 0) {
+            if (nextAhead >= ahead.size()) continue;
+            time = ahead[nextAhead++];
+        }
         // A frame mpv drew before this seek mustn't be taken for the new one.
         if (mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) renderInto(scratch, 16, 16);
         char at[32];
@@ -914,7 +944,8 @@ void VideoPlayer::drawControls() {
             if (it == previews_.end() || (it != previews_.begin() && std::abs(std::prev(it)->first - bucket) < std::abs(it->first - bucket))) {
                 --it;
             }
-            if (std::abs(it->first - bucket) <= 3) picture = &it->second;  // don't show a far-away one
+            // The nearest made so far (until the exact one arrives), but not a far-away one.
+            if (std::abs(it->first - bucket) <= 8) picture = &it->second;
         }
         const float boxWidth = picture ? float(picture->width) : 70 * s;
         const float boxHeight = picture ? float(picture->height) : 0;
