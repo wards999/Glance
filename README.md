@@ -122,11 +122,15 @@ and the window always agree.
 
 `windows/` is a native C++ port: Win32, WIC decoding (with JPEG decoded directly at 1/2, 1/4 or
 1/8 size), Direct2D on the GPU, the same decode-ahead pipeline, and no runtime to install (about
-480 KB). It has the viewer (folder navigation, zoom, pan, drag-to-zoom, borderless full screen,
-slideshow, info overlay), a JPEGView-style right-click menu, a Settings dialog, GPU adjustments
-(brightness, contrast, saturation, gamma, sharpen, colour balance, auto correction), crop
-(Ctrl+drag, Enter), Save processed image (Ctrl+S), lossless JPEG rotation, and PDF reading with
-magazine spreads, right to left, hold to zoom and zoom kept across page turns. PDFs are rendered
+540 KB). It has the viewer (folder navigation, zoom, pan, drag-to-zoom, borderless full screen,
+slideshow, info overlay, a button bar that appears when the mouse nears the bottom, pointer hidden
+in full screen when idle), animated GIF playback, multi-page TIFF pages (`[` and `]`), a
+JPEGView-style right-click menu, a Settings dialog, GPU adjustments (brightness, contrast,
+saturation, gamma, sharpen, colour balance, auto correction) that can be saved per picture (Save
+parameters to DB), crop (Ctrl+drag, Enter), Save processed image (Ctrl+S), lossless JPEG rotation,
+Print (Ctrl+P), Paste (Ctrl+V), Copy original size (Ctrl+X), Set modification date, and PDF reading
+with magazine spreads, right to left, hold to zoom, zoom kept across page turns and
+password-protected files. Animated WebP shows its first frame only. PDFs are rendered
 by PDFium (Chrome's engine, `pdfium.dll` from bblanchon/pdfium-binaries build 8076, pinned by
 hash), which is loaded only when the first PDF opens. On a 132-page magazine it renders the
 heaviest pages about 3× faster than Windows' built-in PDF engine, and re-renders open pages
