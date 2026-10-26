@@ -23,6 +23,21 @@ Corresponding source:
 - The build scripts, which fetch and record the exact versions of FFmpeg and every other library
   included: <https://github.com/shinchiro/mpv-winbuild-cmake> (release `20261021`)
 
-## mpv client API headers (`windows/third_party/mpv/`)
+## libmpv for the Mac (`Glance.app/Contents/Frameworks/`)
 
-`client.h` and `render.h` from mpv, under the ISC licence stated at the top of each file.
+libmpv 0.41.0 with FFmpeg and the other libraries it uses (44 files, universal: Apple Silicon and
+Intel), as prebuilt and published by [IINA](https://iina.io) at <https://iina.io/dylibs/universal/>
+on 2026-10-26. Glance keeps its own copy as the `mac-deps-20261026` release asset
+(SHA-256 `07ba5b95e191c530f87282562b360e6070502182b8905e1303eb63868b5cc9e6`, with per-file hashes
+inside), and the Mac build checks it. These libraries are under the GNU GPL and LGPL.
+
+Corresponding source:
+
+- mpv 0.41.0: <https://github.com/mpv-player/mpv/tree/v0.41.0>
+- FFmpeg and the other libraries, and how IINA builds them: <https://github.com/iina/iina> (see
+  `other/download_libs.sh` and IINA's build documentation) and each library's own project.
+
+## mpv client API headers (`windows/third_party/mpv/`, `Sources/CMpv/include/mpv/`)
+
+`client.h`, `render.h` and `render_gl.h` from mpv, under the ISC licence stated at the top of each
+file.

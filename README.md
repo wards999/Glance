@@ -82,17 +82,20 @@ prefer (`'/u', ` before the path removes it):
 Start-Process regsvr32 -Verb RunAs -ArgumentList '"C:\Utilities\Glance\GlanceThumbnails.dll"'
 ```
 
-## Watching videos (Windows)
+## Watching videos
 
-With `libmpv-2.dll` next to `Glance.exe`, Glance plays videos too: MP4, MKV, WebM, MOV, AVI and
-more, in practically any codec (H.264, HEVC, AV1, VP9, ProRes…), decoded on the GPU. The DLL is
-mpv's player engine, built on FFmpeg (from shinchiro/mpv-winbuild-cmake). It's optional and big
-(about 120 MB), but it's only loaded when you open a video: launch and photo speed are unchanged,
-and without it Glance simply doesn't list videos.
+Glance plays videos too: MP4, MKV, WebM, MOV, AVI and more, in practically any codec (H.264,
+HEVC, AV1, VP9, ProRes…), decoded on the GPU. Both versions use libmpv, mpv's player engine built
+on FFmpeg, which is only loaded when you open a video: launch and photo speed are unchanged.
+
+- **Windows:** the optional video add-on, `libmpv-2.dll` next to `Glance.exe` (about 120 MB, from
+  shinchiro/mpv-winbuild-cmake). Without it Glance simply doesn't list videos.
+- **Mac:** built into the app (libmpv 0.41.0 and its libraries, for Apple Silicon and Intel, as
+  published by IINA), drawn through OpenGL with hardware decoding (VideoToolbox).
 
 Videos sit in a folder alongside your pictures. Browsing doesn't slow down for them: they aren't
-decoded ahead, the first frame shows the moment you arrive, and playback starts once you've stopped
-on one (holding a key down skims straight past). Short silent clips loop like GIFs.
+decoded ahead, and a video starts playing as soon as you arrive (holding a key down to skim, it
+waits until you stop). Short silent clips loop like GIFs.
 
 | | |
 |---|---|
