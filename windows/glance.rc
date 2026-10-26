@@ -3,6 +3,9 @@
 // Per-monitor DPI awareness and modern controls come from the manifest.
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "glance.manifest"
 
+// The app icon (drawn by scripts/make-icons.ps1). The first icon resource is the one Explorer shows.
+1 ICON "glance.ico"
+
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION 0,1,0,0
 PRODUCTVERSION 0,1,0,0

@@ -181,7 +181,11 @@ bool Viewer::create() {
     wc.lpfnWndProc = windowProc;
     wc.hInstance = instance_;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    // glance.ico (resource 1): large for Alt+Tab, small for the title bar and taskbar.
+    wc.hIcon = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON),
+                                             GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                               GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     // Black from the very first frame, before anything is drawn.
     wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = kClassName;
