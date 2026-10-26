@@ -229,6 +229,8 @@ Viewer::Viewer(HINSTANCE instance) : instance_(instance), settings_(Settings::lo
     appliedSort_ = settings_.sortOrder;
     appliedDescending_ = settings_.descending;
     appliedPdfLayout_ = pdfLayout();
+    appliedIncludePdfs_ = settings_.includePdfs;
+    appliedIncludeVideos_ = settings_.includeVideos;
     navigator_.wraps = settings_.loop;
 }
 
@@ -1233,6 +1235,12 @@ void Viewer::applySettings() {
         appliedSort_ = settings_.sortOrder;
         appliedDescending_ = settings_.descending;
         navigator_.sort(settings_.sortOrder, settings_.descending);
+    }
+    if (settings_.includePdfs != appliedIncludePdfs_ || settings_.includeVideos != appliedIncludeVideos_) {
+        // Which files the folder lists changed: list it again, staying on the file you're viewing.
+        appliedIncludePdfs_ = settings_.includePdfs;
+        appliedIncludeVideos_ = settings_.includeVideos;
+        if (const std::wstring* path = navigator_.current()) scanFolder(Navigator::folderOf(*path), *path);
     }
     if (pdfLayout() != appliedPdfLayout_) {
         appliedPdfLayout_ = pdfLayout();

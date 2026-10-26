@@ -41,6 +41,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var settingsObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
     private var appliedPDFLayout = PDFLayout()
+    private var appliedIncludes: (pdfs: Bool, videos: Bool)?
     /// Core Image work (adjustments, crop, save) runs here, one job at a time.
     private let renderQueue = DispatchQueue(label: "glance.render", qos: .userInitiated)
 
@@ -122,6 +123,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             navigator.resort()
             updateTitle()
         }
+        let includes = (settings.includePDFsInFolders, settings.includeVideosInFolders)
+        if let applied = appliedIncludes, applied != includes, let current = navigator.current {
+            // Which files the folder lists changed: list it again, staying on the file you're viewing.
+            scanFolder(current.deletingLastPathComponent(), keeping: current)
+        }
+        appliedIncludes = includes
         navigator.wraps = settings.loop
         if slideshowInterval != settings.slideshowInterval {
             slideshowInterval = settings.slideshowInterval

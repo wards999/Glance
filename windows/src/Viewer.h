@@ -172,6 +172,8 @@ private:
     SortOrder appliedSort_ = SortOrder::Name;
     bool appliedDescending_ = false;
     int appliedPdfLayout_ = 0;
+    bool appliedIncludePdfs_ = false;
+    bool appliedIncludeVideos_ = true;
     /// Creating the Direct3D device loads the GPU driver, which is slow; it starts on another
     /// thread the moment the app does, in parallel with the window and the first decode.
     std::future<ComPtr<ID3D11Device>> pendingDevice_;
