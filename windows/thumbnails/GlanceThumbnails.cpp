@@ -1,12 +1,15 @@
 // Explorer thumbnails for PDFs: the first page, drawn by PDFium (the pdfium.dll beside this DLL).
 //
-// Install for the current user only (no administrator rights):  regsvr32 GlanceThumbnails.dll
-// Remove:                                                         regsvr32 /u GlanceThumbnails.dll
+// Install from an administrator prompt:  regsvr32 GlanceThumbnails.dll
+// Remove (also as administrator):        regsvr32 /u GlanceThumbnails.dll
 //
-// Windows' isolated thumbnail process only uses handlers registered for all users, so this one
-// runs inside Explorer (DisableProcessIsolation). A crash inside PDFium is caught rather than
-// taking Explorer down, and turns PDF thumbnails off until Explorer restarts. Explorer caches the
-// pictures, so each file is rendered once.
+// Explorer makes thumbnails in Windows' isolated thumbnail process (dllhost), and that process
+// only uses handlers registered for all users, hence administrator. Isolation also means a damaged
+// PDF can't take Explorer down. Explorer caches the pictures, so each file is rendered once.
+//
+// Run without administrator rights it registers for the current user only and runs inside the
+// asking process (DisableProcessIsolation), with PDFium crashes caught. Explorer won't use that,
+// but other programs and file dialogs that ask for thumbnails can.
 
 #include <windows.h>
 #include <shlobj.h>
@@ -272,19 +275,49 @@ STDAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void** object) {
 
 STDAPI DllCanUnloadNow() { return g_references == 0 ? S_OK : S_FALSE; }
 
-/// Registers for the current user only (HKEY_CURRENT_USER), so no administrator rights are needed.
+namespace {
+
+bool elevated() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD size = 0;
+    const bool result = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) && elevation.TokenIsElevated;
+    CloseHandle(token);
+    return result;
+}
+
+void removeFrom(HKEY root) {
+    // Only remove the PDF handler entry if it's still ours.
+    wchar_t current[64] = L"";
+    DWORD size = sizeof(current);
+    if (RegGetValueW(root, kThumbnailHandlerKey, nullptr, RRF_RT_REG_SZ, nullptr, current, &size) == ERROR_SUCCESS &&
+        _wcsicmp(current, kClsidString) == 0) {
+        RegDeleteKeyW(root, kThumbnailHandlerKey);
+    }
+    RegDeleteTreeW(root, kClsidKey);
+}
+
+}  // namespace
+
+/// From an administrator prompt: for all users, run in Windows' isolated thumbnail process (the
+/// one Explorer uses). Otherwise: for this user only, run inside the asking process; Explorer
+/// itself only uses isolated handlers, but other programs and file dialogs can use this.
 STDAPI DllRegisterServer() {
     wchar_t path[MAX_PATH * 4];
     const DWORD length = GetModuleFileNameW(g_module, path, static_cast<DWORD>(std::size(path)));
     const std::wstring dll(path, length);
     const std::wstring server = std::wstring(kClsidKey) + L"\\InprocServer32";
-    // The isolated thumbnail process ignores per-user handlers; see the top of this file.
+    const bool allUsers = elevated();
+    const HKEY root = allUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+    // A per-user entry would hide the machine-wide one, so installing for everyone replaces it.
+    if (allUsers) removeFrom(HKEY_CURRENT_USER);
     const DWORD kOne = 1;
-    if (setString(HKEY_CURRENT_USER, kClsidKey, nullptr, L"Glance PDF thumbnails") ||
-        setString(HKEY_CURRENT_USER, server.c_str(), nullptr, dll) ||
-        setString(HKEY_CURRENT_USER, server.c_str(), L"ThreadingModel", L"Apartment") ||
-        RegSetKeyValueW(HKEY_CURRENT_USER, kClsidKey, L"DisableProcessIsolation", REG_DWORD, &kOne, sizeof(kOne)) ||
-        setString(HKEY_CURRENT_USER, kThumbnailHandlerKey, nullptr, kClsidString)) {
+    if (setString(root, kClsidKey, nullptr, L"Glance PDF thumbnails") ||
+        setString(root, server.c_str(), nullptr, dll) ||
+        setString(root, server.c_str(), L"ThreadingModel", L"Apartment") ||
+        (!allUsers && RegSetKeyValueW(root, kClsidKey, L"DisableProcessIsolation", REG_DWORD, &kOne, sizeof(kOne))) ||
+        setString(root, kThumbnailHandlerKey, nullptr, kClsidString)) {
         return SELFREG_E_CLASS;
     }
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);  // Explorer picks it up now
@@ -292,14 +325,8 @@ STDAPI DllRegisterServer() {
 }
 
 STDAPI DllUnregisterServer() {
-    // Only remove the PDF handler entry if it's still ours.
-    wchar_t current[64] = L"";
-    DWORD size = sizeof(current);
-    if (RegGetValueW(HKEY_CURRENT_USER, kThumbnailHandlerKey, nullptr, RRF_RT_REG_SZ, nullptr, current, &size) == ERROR_SUCCESS &&
-        _wcsicmp(current, kClsidString) == 0) {
-        RegDeleteKeyW(HKEY_CURRENT_USER, kThumbnailHandlerKey);
-    }
-    RegDeleteTreeW(HKEY_CURRENT_USER, kClsidKey);
+    removeFrom(HKEY_CURRENT_USER);
+    if (elevated()) removeFrom(HKEY_LOCAL_MACHINE);
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     return S_OK;
 }
