@@ -1,12 +1,29 @@
 # Glance
 
-A native macOS image viewer modeled on JPEGView: minimal UI, keyboard driven, and built to put
-pixels on screen as fast as possible, including very large files. It's written in Swift with AppKit,
-ImageIO, Core Animation and Core Image, and has no dependencies.
+A fast image viewer for **macOS and Windows**, modeled on JPEGView: minimal UI, keyboard driven,
+and built to put pixels on screen as fast as possible, including very large files. Each version is
+native to its platform: Swift with AppKit, ImageIO, Core Animation and Core Image on the Mac; C++
+with Win32, WIC and Direct2D on Windows. Both read PDFs too, with magazine-style two-page spreads.
+
+## Download
+
+Get the latest version from [Releases](https://github.com/wards999/Glance/releases/latest).
+
+**Mac** (macOS 13 Ventura or later, Apple Silicon): download **Glance.dmg**, open it and drag
+Glance to Applications. The app isn't signed with an Apple developer certificate, so the first
+time, right-click Glance in Applications, choose **Open**, then **Open** again. If macOS says the
+app is damaged, run `xattr -dr com.apple.quarantine /Applications/Glance.app` once in Terminal.
+
+**Windows** (Windows 10 or 11, 64-bit): download **Glance-windows.zip** and unzip it anywhere;
+there's nothing to install. Run `Glance.exe`. The app isn't code-signed, so the first time
+Windows may say it protected your PC: click **More info**, then **Run anyway**. `pdfium.dll` is
+only needed for PDFs; keep it next to `Glance.exe` (delete it if you only view photos). To make
+Glance the default viewer, right-click an image ▸ Open with ▸ Choose another app ▸ More apps ▸
+Look for another app on this PC, pick `Glance.exe`, and tick "Always use this app".
+
+## Build the Mac version
 
 Requires macOS 13 or later and Xcode 15 or later (or the matching Command Line Tools).
-
-## Build and run
 
 ```sh
 ./scripts/bundle.sh            # release build -> build/Glance.app
@@ -23,7 +40,7 @@ Always use a release build when judging speed; debug builds are much slower.
 To make Glance the default viewer, select an image in Finder, choose Get Info, set "Open with"
 to Glance, and click "Change All…".
 
-## Why it's fast
+## Why it's fast (Mac)
 
 | Technique | Where |
 |---|---|
@@ -39,7 +56,7 @@ to Glance, and click "Change All…".
 | **LRU memory cache** sized to ¼ of RAM (4 GB max). | `ImagePipeline` |
 | Opens the file **before** listing the folder; the folder scan runs in the background. | `ViewerWindowController.open` |
 
-## Features compared with JPEGView
+## Features compared with JPEGView (Mac)
 
 Included:
 
@@ -66,7 +83,7 @@ Not included yet:
 - Perspective correction and JPEGView's "local density correction" (auto correction uses Core Image's auto-adjust instead)
 - Histogram, lossless JPEG *crop* (crops re-encode), batch rename and copy/move to folder, "movie" folder playback
 
-## Settings
+## Settings (Mac)
 
 JPEGView keeps most of its options in an INI file. Glance has a **Settings window** instead
 (⌘, or Glance ▸ Settings…). Changes apply immediately and are saved automatically (in
@@ -81,7 +98,7 @@ and the window always agree.
 | Saving | JPEG/HEIC quality, ask before re-encoding the original |
 | Performance | How many images to decode ahead (0–8), memory cache size |
 
-## Keyboard
+## Keyboard (Mac)
 
 | Key | Action |
 |---|---|
@@ -122,7 +139,7 @@ and the window always agree.
 
 `windows/` is a native C++ port: Win32, WIC decoding (with JPEG decoded directly at 1/2, 1/4 or
 1/8 size), Direct2D on the GPU, the same decode-ahead pipeline, and no runtime to install (about
-540 KB). It has the viewer (folder navigation, zoom, pan, drag-to-zoom, borderless full screen,
+580 KB). It has the viewer (folder navigation, zoom, pan, drag-to-zoom, borderless full screen,
 slideshow, info overlay, a button bar that appears when the mouse nears the bottom, pointer hidden
 in full screen when idle), animated GIF playback, multi-page TIFF pages (`[` and `]`), a
 JPEGView-style right-click menu, a Settings dialog, GPU adjustments (brightness, contrast,
@@ -136,8 +153,40 @@ hash), which is loaded only when the first PDF opens. On a 132-page magazine it 
 heaviest pages about 3× faster than Windows' built-in PDF engine, and re-renders open pages
 (zoom, hold to zoom) in well under 0.1 s.
 
+Settings are in a Settings dialog (right-click ▸ Settings…) and saved to
+`%APPDATA%\Glance\Glance.ini`; adjustments saved per picture go to `Parameters.ini` beside it.
+
+| Key | Action |
+|---|---|
+| Space, Page Down, → / ↓ | Next image or PDF page (arrows pan instead when zoomed in) |
+| Backspace, Page Up, ← / ↑ | Previous image or page |
+| Home / End | First / last image |
+| Mouse wheel | Next / previous image (Ctrl+wheel zooms; or set the wheel to zoom in Settings) |
+| ] / [ | Next / previous page of a multi-page TIFF or PDF |
+| + / − | Zoom in / out |
+| 0, 1 | Fit, 100% |
+| Double-click | Toggle fit / 100% at the cursor |
+| Drag | Pan when zoomed in; draw a rectangle to zoom into when the image fits |
+| Ctrl+drag | Select a crop area. Enter crops |
+| R / L | Rotate right / left |
+| E | Adjustments |
+| F5 / F4 | Auto correction / keep adjustments for next images |
+| F2 / Ctrl+F2 | Info overlay / file name |
+| F, F11, Alt+Enter | Full screen. Esc leaves it, or closes Glance if Settings says so (JPEGView style) |
+| S | Slideshow |
+| Ctrl+O / Ctrl+S | Open / Save As |
+| Ctrl+C / Ctrl+X / Ctrl+Shift+C | Copy image / copy at original size / copy file path |
+| Ctrl+V | Paste (opens copied files or a copied picture) |
+| Ctrl+P | Print |
+| Ctrl+R | Reload |
+| Ctrl+N | Button bar on/off |
+| W | Show in Explorer |
+| Delete | Move to Recycle Bin |
+| Right-click | Menu with every command |
+
 It builds on GitHub's Windows machines (the **Build Windows** workflow) with MSVC, or locally with
-`windows/build.sh` (MinGW) or CMake.
+`windows/build.sh` (MinGW) or CMake. The app icon for both platforms is drawn by
+`scripts/make-icons.ps1`, which writes `Resources/Glance.icns` and `windows/glance.ico`.
 
 Measured against JPEGView 1.4 on an i5-14500T with an RTX 4070, both windowed at 1600×1000,
 with 12 and 24 MP JPEGs and 12 MP PNGs (`windows/tools/ui_bench.py`, which watches the screen):
@@ -166,4 +215,12 @@ Sources/Glance/
   AdjustmentsPanel.swift           slider panel
   ControlBar.swift                 hover button strip
   InfoFormatter.swift              EXIF overlay text
+
+windows/src/
+  main.cpp, Viewer.cpp             window, drawing (Direct2D), input, menu, commands
+  Decoder.cpp, Pdf.cpp             WIC decoding and metadata; PDFium pages and spreads
+  Pipeline.cpp, Navigator.cpp      background decoding, cache, prefetch; folder listing
+  Adjustments.cpp, Editing.cpp     adjustments, crop, saving, lossless rotation
+  Settings.cpp, SettingsDialog.cpp preferences (INI) and the Settings dialog
+  AdjustmentsDialog.cpp, PasswordDialog.cpp, ParameterStore.cpp
 ```
