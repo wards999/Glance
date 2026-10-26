@@ -1461,7 +1461,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             tracks = videoView.trackMenuItems(target: self, subtitleAction: #selector(chooseSubtitle(_:)),
                                               audioAction: #selector(chooseAudioTrack(_:)), loadAction: #selector(loadSubtitleFile(_:)))
         }
-        MainMenu.contextItems(for: kind, tracks: tracks).forEach { menu.addItem($0) }
+        let hasPages = (current?.info.pageCount ?? 0) > 1 && current?.info.isAnimated == false && current?.info.pdf == nil
+        MainMenu.contextItems(for: kind, hasPages: hasPages, tracks: tracks).forEach { menu.addItem($0) }
     }
 
     // MARK: - Menu validation
@@ -1539,7 +1540,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return (current?.info.pageCount ?? 0) > 1 && current?.info.isAnimated == false
         case #selector(saveImage(_:)), #selector(resetEdits(_:)):
             return hasImage && hasEdits
-        case #selector(nextImage(_:)), #selector(previousImage(_:)), #selector(firstImage(_:)), #selector(lastImage(_:)):
+        case #selector(nextImage(_:)), #selector(previousImage(_:)):
+            return navigator.count > 1 || (currentPDF?.info.pageCount ?? 0) > 1  // in a PDF they turn pages
+        case #selector(firstImage(_:)), #selector(lastImage(_:)):
             return navigator.count > 1
         default:
             return hasImage

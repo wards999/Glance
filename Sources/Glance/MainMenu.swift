@@ -56,112 +56,118 @@ enum MainMenu {
         case picture, pdf, video
     }
 
-    /// The right-click menu's items for what's on screen: JPEGView's full menu for pictures, pages
-    /// and layout for PDFs, playback, subtitles and audio for videos. It's the only menu in full
-    /// screen, so everything that applies is here.
-    static func contextItems(for kind: ContextKind, tracks: (subtitles: [NSMenuItem], audio: [NSMenuItem])?) -> [NSMenuItem] {
-        let tail: [[NSMenuItem]] = [
-            [item("Enter Full Screen", #selector(C.toggleFullScreenMode(_:)), "f", [.command, .control])],
-            [
-                item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
-                item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
-            ],
-            [
-                item("Move to Trash", #selector(C.moveToTrash(_:)), "\u{8}"),
-                item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q"),
-            ],
-        ]
-        let browsing: [NSMenuItem] = [
+    /// The right-click menu. One layout for every kind of file, so things are always in the same
+    /// place: moving between files first, then what's particular to pictures, PDFs or videos, then
+    /// the file itself, the clipboard, display, and Glance. It's the only menu in full screen.
+    static func contextItems(for kind: ContextKind, hasPages: Bool = false,
+                             tracks: (subtitles: [NSMenuItem], audio: [NSMenuItem])?) -> [NSMenuItem] {
+        // 1. Moving between files (in a PDF, Page Down turns pages; these always change file).
+        let moving: [NSMenuItem] = [
+            item("Next File", #selector(C.nextDocument(_:)), ""),
+            item("Previous File", #selector(C.previousDocument(_:)), ""),
             submenu("Navigation", [
-                item(kind == .pdf ? "First Document" : "First Image", #selector(C.firstImage(_:)), ""),
-                item(kind == .pdf ? "Last Document" : "Last Image", #selector(C.lastImage(_:)), ""),
+                item("First File", #selector(C.firstImage(_:)), ""),
+                item("Last File", #selector(C.lastImage(_:)), ""),
                 .separator(),
                 item("Loop Through Folder", #selector(C.toggleLoop(_:)), ""),
             ]),
             submenu("Display Order", displayOrderItems()),
-            submenu(kind == .pdf ? "Turn Pages as a Slideshow" : "Slideshow", slideshowItems()),
+            submenu("Slideshow", slideshowItems()),
         ]
+
+        // 2. What's particular to this kind of file.
+        var particular: [NSMenuItem]
         switch kind {
         case .video:
-            var playback = [
+            particular = [
                 item("Play/Pause", #selector(C.togglePlayPause(_:)), ""),
                 item("Mute", #selector(C.toggleVideoMute(_:)), ""),
             ]
             if let tracks {
-                playback.append(submenu("Subtitles", tracks.subtitles))
-                if !tracks.audio.isEmpty { playback.append(submenu("Audio Track", tracks.audio)) }
+                particular.append(submenu("Subtitles", tracks.subtitles))
+                if !tracks.audio.isEmpty { particular.append(submenu("Audio Track", tracks.audio)) }
             }
-            var groups: [[NSMenuItem]] = [
-                playback,
-                [
-                    item("Open…", #selector(C.openDocument(_:)), "o"),
-                    item("Reveal in Finder", #selector(C.revealInFinder(_:)), "r", [.command, .shift]),
-                    item("Copy File Path", #selector(C.copyFilePath(_:)), "c", [.command, .shift]),
-                    submenu("Set Modification Date", [item("To Now", #selector(C.setModificationDateToNow(_:)), "")]),
-                ],
-                [
-                    item("Next File", #selector(C.nextImage(_:)), "]"),
-                    item("Previous File", #selector(C.previousImage(_:)), "["),
-                ] + browsing,
-                [
-                    item("Show Filename", #selector(C.toggleFilename(_:)), ""),
-                    item("Show Controls", #selector(C.toggleNavigationControls(_:)), ""),
-                ],
-            ]
-            groups.append(contentsOf: tail)
-            return sections(groups)
         case .pdf:
-            var groups: [[NSMenuItem]] = [
-                [
-                    item("Next Page", #selector(C.nextImage(_:)), ""),
-                    item("Previous Page", #selector(C.previousImage(_:)), ""),
-                    item("Next Document  (⌥↓)", #selector(C.nextDocument(_:)), ""),
-                    item("Previous Document  (⌥↑)", #selector(C.previousDocument(_:)), ""),
-                ] + browsing,
-                [submenu("Page Layout", pdfItems()), submenu("Zoom", zoomItems())],
-                [
-                    item("Open…", #selector(C.openDocument(_:)), "o"),
-                    item("Save Page as Image…", #selector(C.saveImageAs(_:)), "s", [.command, .shift]),
-                    item("Print Page…", #selector(C.printImage(_:)), "p"),
-                    item("Reload Document", #selector(C.reloadImage(_:)), ""),
-                    item("Reveal in Finder", #selector(C.revealInFinder(_:)), "r", [.command, .shift]),
-                ],
-                [
-                    item("Copy Page", #selector(C.copy(_:)), "c"),
-                    item("Copy File Path", #selector(C.copyFilePath(_:)), "c", [.command, .shift]),
-                ],
-                [
-                    item("Show Filename", #selector(C.toggleFilename(_:)), ""),
-                    item("Show Navigation Controls", #selector(C.toggleNavigationControls(_:)), ""),
-                ],
+            particular = [
+                item("Next Page", #selector(C.nextImage(_:)), ""),
+                item("Previous Page", #selector(C.previousImage(_:)), ""),
+                submenu("Page Layout", pdfItems()),
+                submenu("Zoom", zoomItems()),
             ]
-            groups.append(contentsOf: tail)
-            return sections(groups)
         case .picture:
-            let navigation = navigationItems().filter {
-                $0.action != #selector(C.nextImage(_:)) && $0.action != #selector(C.previousImage(_:))
-            }
-            var groups: [[NSMenuItem]] = [
-                fileItems(),
-                clipboardItems(),
-                overlayItems(),
-                [
-                    item("Next Image", #selector(C.nextImage(_:)), "]"),
-                    item("Previous Image", #selector(C.previousImage(_:)), "["),
-                    submenu("Navigation", navigation),
-                    submenu("Display Order", displayOrderItems()),
-                    submenu("Slideshow", slideshowItems()),
-                ],
-                [
-                    submenu("Transform Image", transformItems()),
-                    submenu("Lossless Transformations", losslessItems()),
-                ] + adjustmentItems(),
-                parameterItems(),
-                [submenu("Zoom", zoomItems()), submenu("Auto Zoom Mode", autoZoomItems())],
-            ]
-            groups.append(contentsOf: tail)
-            return sections(groups)
+            particular = hasPages ? [
+                item("Next Page", #selector(C.nextPage(_:)), ""),
+                item("Previous Page", #selector(C.previousPage(_:)), ""),
+            ] : []
+            particular += [
+                submenu("Zoom", zoomItems()),
+                submenu("Auto Zoom Mode", autoZoomItems()),
+                submenu("Transform Image", transformItems()),
+                submenu("Lossless Transformations", losslessItems()),
+            ] + adjustmentItems() + parameterItems()
         }
+
+        // 3. The file itself.
+        var file: [NSMenuItem] = [item("Open…", #selector(C.openDocument(_:)), "o")]
+        switch kind {
+        case .picture:
+            file += [
+                item("Save", #selector(C.saveImage(_:)), "s"),
+                item("Save Processed Image…", #selector(C.saveImageAs(_:)), "s", [.command, .shift]),
+                item("Print Image…", #selector(C.printImage(_:)), "p"),
+            ]
+        case .pdf:
+            file += [
+                item("Save Page as Image…", #selector(C.saveImageAs(_:)), "s", [.command, .shift]),
+                item("Print Page…", #selector(C.printImage(_:)), "p"),
+            ]
+        case .video:
+            break
+        }
+        if kind != .video { file.append(item("Reload", #selector(C.reloadImage(_:)), "")) }
+        file.append(item("Reveal in Finder", #selector(C.revealInFinder(_:)), "r", [.command, .shift]))
+        var dates = [item("To Now", #selector(C.setModificationDateToNow(_:)), "")]
+        if kind == .picture { dates.append(item("To Date Taken", #selector(C.setModificationDateToDateTaken(_:)), "")) }
+        file.append(submenu("Set Modification Date", dates))
+        if kind == .picture { file.append(item("Set as Desktop Picture", #selector(C.setAsDesktopPicture(_:)), "")) }
+
+        // 4. Clipboard.
+        var clipboard: [NSMenuItem] = []
+        if kind == .picture {
+            clipboard += [
+                item("Copy", #selector(C.copy(_:)), "c"),
+                item("Copy Original Size Image", #selector(C.copyOriginalSize(_:)), "c", [.command, .option]),
+            ]
+        }
+        if kind == .pdf { clipboard.append(item("Copy Page", #selector(C.copy(_:)), "c")) }
+        clipboard += [
+            item("Copy File Path", #selector(C.copyFilePath(_:)), "c", [.command, .shift]),
+            item("Paste", #selector(C.paste(_:)), "v"),
+        ]
+
+        // 5. Display.
+        var display: [NSMenuItem] = []
+        if kind != .video { display.append(item("Show Picture Info (EXIF)", #selector(C.toggleInfo(_:)), "i")) }
+        display += [
+            item("Show Filename", #selector(C.toggleFilename(_:)), ""),
+            item("Show Controls", #selector(C.toggleNavigationControls(_:)), ""),
+            item("Enter Full Screen", #selector(C.toggleFullScreenMode(_:)), "f", [.command, .control]),
+        ]
+
+        // 6. Glance.
+        return sections([
+            moving,
+            particular,
+            file,
+            clipboard,
+            display,
+            [item("Move to Trash", #selector(C.moveToTrash(_:)), "\u{8}")],
+            [
+                item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
+                item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+            ],
+            [item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q")],
+        ])
     }
 
     /// Joins groups of items with separators between them.
