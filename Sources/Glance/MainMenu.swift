@@ -14,6 +14,7 @@ enum MainMenu {
             item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
             .separator(),
             item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
+            item("Make Glance the Default App…", #selector(AppDelegate.makeGlanceDefault(_:)), ""),
             .separator(),
             item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
@@ -164,6 +165,7 @@ enum MainMenu {
             [item("Move to Trash", #selector(C.moveToTrash(_:)), "\u{8}")],
             [
                 item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
+                item("Make Glance the Default App…", #selector(AppDelegate.makeGlanceDefault(_:)), ""),
                 item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
             ],
             [item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q")],

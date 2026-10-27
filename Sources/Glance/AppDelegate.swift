@@ -45,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindowController.shared.showWindow(nil)
     }
 
+    @objc func makeGlanceDefault(_ sender: Any?) {
+        DefaultApp.makeDefault()
+    }
+
     @discardableResult
     private func showViewer() -> ViewerWindowController {
         if let viewer { return viewer }
