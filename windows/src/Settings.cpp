@@ -4,25 +4,61 @@
 
 #include <algorithm>
 #include <cwchar>
+#include <iterator>
 #include <map>
 
 namespace {
 
 constexpr wchar_t kSection[] = L"Glance";
 
-std::wstring settingsPath(bool createFolder) {
+std::wstring settingsPath(bool) { return dataFile(L"Glance.ini"); }
+
+std::wstring appDataFolder() {
     PWSTR appData = nullptr;
     std::wstring path;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appData))) {
         path = std::wstring(appData) + L"\\Glance";
         CoTaskMemFree(appData);
-        if (createFolder) CreateDirectoryW(path.c_str(), nullptr);
-        path += L"\\Glance.ini";
     }
     return path;
 }
 
+/// Decided once: beside Glance.exe when Glance can write there, else %APPDATA%\Glance. Files an
+/// older Glance left in %APPDATA%\Glance move across the first time.
+const std::wstring& dataFolder() {
+    static const std::wstring folder = [] {
+        wchar_t exe[MAX_PATH * 4];
+        const DWORD length = GetModuleFileNameW(nullptr, exe, static_cast<DWORD>(std::size(exe)));
+        std::wstring beside(exe, length);
+        beside.resize(beside.find_last_of(L"\\/"));
+        const std::wstring appData = appDataFolder();
+        HANDLE probe = CreateFileW((beside + L"\\Glance.write-test").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                   FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+        if (probe == INVALID_HANDLE_VALUE) {
+            if (!appData.empty()) CreateDirectoryW(appData.c_str(), nullptr);
+            return appData;
+        }
+        CloseHandle(probe);
+        if (!appData.empty()) {
+            for (const wchar_t* name : {L"Glance.ini", L"Parameters.ini", L"Pages.ini"}) {
+                const std::wstring from = appData + L"\\" + name, to = beside + L"\\" + name;
+                if (GetFileAttributesW(to.c_str()) == INVALID_FILE_ATTRIBUTES) {
+                    MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_COPY_ALLOWED);
+                }
+            }
+            RemoveDirectoryW(appData.c_str());  // only if that left it empty
+        }
+        return beside;
+    }();
+    return folder;
+}
+
 }  // namespace
+
+std::wstring dataFile(const wchar_t* name) {
+    const std::wstring& folder = dataFolder();
+    return folder.empty() ? std::wstring() : folder + L"\\" + name;
+}
 
 Settings Settings::load() {
     Settings s;

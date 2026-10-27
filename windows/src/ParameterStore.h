@@ -6,7 +6,7 @@
 #include <string>
 
 /// Adjustments remembered per file (JPEGView's "Save parameters to DB"), reapplied whenever
-/// that file is opened. Stored in %APPDATA%\Glance\Parameters.ini.
+/// that file is opened. Stored in Parameters.ini, beside Glance.ini (see dataFile in Settings.h).
 namespace ParameterStore {
 
 std::optional<Adjustments> load(const std::wstring& path);
@@ -15,7 +15,7 @@ void clear(const std::wstring& path);
 
 }  // namespace ParameterStore
 
-/// Where you were in each PDF, so it opens there next time. Stored in %APPDATA%\Glance\Pages.ini.
+/// Where you were in each PDF, so it opens there next time. Stored in Pages.ini, beside Glance.ini.
 namespace PdfPlaces {
 
 struct Place {

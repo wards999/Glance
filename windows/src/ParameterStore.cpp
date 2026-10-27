@@ -1,6 +1,7 @@
 #include "ParameterStore.h"
 
 #include "Common.h"
+#include "Settings.h"
 
 #include <shlobj.h>
 
@@ -13,18 +14,7 @@ namespace {
 
 constexpr wchar_t kSection[] = L"Parameters";
 
-std::wstring file(bool createFolder, const wchar_t* name = L"Parameters.ini") {
-    PWSTR appData = nullptr;
-    std::wstring path;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appData))) {
-        path = std::wstring(appData) + L"\\Glance";
-        CoTaskMemFree(appData);
-        if (createFolder) CreateDirectoryW(path.c_str(), nullptr);
-        path += L"\\";
-        path += name;
-    }
-    return path;
-}
+std::wstring file(bool, const wchar_t* name = L"Parameters.ini") { return dataFile(name); }
 
 /// INI keys can't contain '=' (or start with ';' or '['), which file names can.
 std::wstring keyFor(const std::wstring& path) {

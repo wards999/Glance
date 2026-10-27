@@ -284,7 +284,10 @@ heaviest pages about 3× faster than Windows' built-in PDF engine, and re-render
 the first time, then Explorer's cache.
 
 Settings are in a Settings dialog (right-click ▸ Settings…) and saved to
-`%APPDATA%\Glance\Glance.ini`; adjustments saved per picture go to `Parameters.ini` beside it.
+`Glance.ini` beside `Glance.exe`, so copying the folder takes your settings along; adjustments
+saved per picture go to `Parameters.ini` and the page you were on in each PDF to `Pages.ini`, in
+the same folder. If Glance's folder can't be written to (under Program Files, say), they go to
+`%APPDATA%\Glance` instead.
 
 | Key | Action |
 |---|---|

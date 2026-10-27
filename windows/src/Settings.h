@@ -6,7 +6,12 @@
 
 enum class SortOrder { Name = 0, Modified, Created, Size, Random };
 
-/// Preferences, edited in the Settings dialog. Stored in %APPDATA%\Glance\Glance.ini, which is
+/// Where Glance keeps a file of its own (Glance.ini, Parameters.ini, Pages.ini): beside
+/// Glance.exe, so the folder is all there is to Glance and copying it takes your settings along.
+/// If that folder can't be written to (Program Files, say), %APPDATA%\Glance instead.
+std::wstring dataFile(const wchar_t* name);
+
+/// Preferences, edited in the Settings dialog. Stored in Glance.ini (see dataFile), which is
 /// only an implementation detail: nobody needs to edit it by hand.
 struct Settings {
     // General
