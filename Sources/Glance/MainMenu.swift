@@ -11,7 +11,7 @@ enum MainMenu {
     static func build() -> NSMenu {
         let main = NSMenu()
         main.addItem(submenu(appName, [
-            item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+            item("About \(appName)", #selector(AppDelegate.showAbout(_:)), ""),
             .separator(),
             item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
             item("Make Glance the Default App…", #selector(AppDelegate.makeGlanceDefault(_:)), ""),
@@ -166,7 +166,7 @@ enum MainMenu {
             [
                 item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
                 item("Make Glance the Default App…", #selector(AppDelegate.makeGlanceDefault(_:)), ""),
-                item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+                item("About \(appName)", #selector(AppDelegate.showAbout(_:)), ""),
             ],
             [item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q")],
         ])

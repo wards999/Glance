@@ -1,5 +1,7 @@
 #include <windows.h>
 
+#include "src/Version.h"
+
 // Per-monitor DPI awareness and modern controls come from the manifest.
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "glance.manifest"
 
@@ -11,17 +13,17 @@ CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "glance.manifest"
 4 ICON "video.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,5,1,0
-PRODUCTVERSION 0,5,1,0
+FILEVERSION GLANCE_VERSION_MAJOR,GLANCE_VERSION_MINOR,GLANCE_VERSION_PATCH,0
+PRODUCTVERSION GLANCE_VERSION_MAJOR,GLANCE_VERSION_MINOR,GLANCE_VERSION_PATCH,0
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "Glance image viewer"
+            VALUE "FileDescription", "Glance picture, PDF and video viewer"
             VALUE "ProductName", "Glance"
-            VALUE "FileVersion", "0.5.1"
-            VALUE "ProductVersion", "0.5.1"
+            VALUE "FileVersion", GLANCE_VERSION_TEXT
+            VALUE "ProductVersion", GLANCE_VERSION_TEXT
         END
     END
     BLOCK "VarFileInfo"

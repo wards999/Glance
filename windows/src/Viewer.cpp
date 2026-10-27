@@ -7,6 +7,7 @@
 #include "PasswordDialog.h"
 #include "Pdf.h"
 #include "SettingsDialog.h"
+#include "Version.h"
 
 #include <commdlg.h>
 #include <d2d1effects.h>
@@ -1248,10 +1249,24 @@ void Viewer::command(int id) {
     case CmdSettings:
         SettingsDialog::show(hwnd_, &settings_, [this] { applySettings(); });
         break;
-    case CmdAbout:
-        MessageBoxW(hwnd_, L"Glance 0.1\nA fast image viewer.\n\nhttps://github.com/wards999/Glance", L"About Glance",
-                    MB_OK | MB_ICONINFORMATION);
+    case CmdAbout: {
+        // With Glance's own icon. What's included depends on the DLLs beside Glance.exe.
+        std::wstring text = L"Glance " L"" GLANCE_VERSION_TEXT L"\n"
+                            L"Fast picture, PDF and video viewer, modeled on JPEGView.\n\n"
+                            L"Free software under the GNU General Public License, version 3.\n";
+        if (Pdf::available()) text += L"PDFs are read by PDFium (BSD licence).\n";
+        if (Video::available()) text += L"Videos are played by libmpv and FFmpeg (GPL).\n";
+        text += L"\nhttps://github.com/wards999/Glance";
+        MSGBOXPARAMSW box{sizeof(box)};
+        box.hwndOwner = hwnd_;
+        box.hInstance = GetModuleHandleW(nullptr);
+        box.lpszText = text.c_str();
+        box.lpszCaption = L"About Glance";
+        box.dwStyle = MB_OK | MB_USERICON;
+        box.lpszIcon = MAKEINTRESOURCEW(1);
+        MessageBoxIndirectW(&box);
         break;
+    }
     case CmdExit: DestroyWindow(hwnd_); break;
     }
 }

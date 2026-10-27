@@ -45,6 +45,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindowController.shared.showWindow(nil)
     }
 
+    /// The standard About panel (name, version and icon from Info.plist), with what Glance is.
+    @objc func showAbout(_ sender: Any?) {
+        let credits = NSMutableAttributedString(
+            string: "Fast picture, PDF and video viewer, modeled on JPEGView.
+
+"
+                + (MPV.available ? "Videos are played by libmpv and FFmpeg (GPL and LGPL).
+" : ""),
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.labelColor])
+        credits.append(NSAttributedString(string: "github.com/wards999/Glance", attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .link: URL(string: "https://github.com/wards999/Glance")!,
+        ]))
+        let centred = NSMutableParagraphStyle()
+        centred.alignment = .center
+        credits.addAttribute(.paragraphStyle, value: centred, range: NSRange(location: 0, length: credits.length))
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     @objc func makeGlanceDefault(_ sender: Any?) {
         DefaultApp.makeDefault()
     }
