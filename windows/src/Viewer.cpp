@@ -1304,17 +1304,33 @@ void Viewer::setSlideshow(bool on) {
     else KillTimer(hwnd_, kSlideshowTimer);
 }
 
-void Viewer::openDialog() {
+bool Viewer::openDialog() {
     wchar_t buffer[32768] = L"";
+    // Everything Glance can open: pictures WIC decodes, plus PDFs and videos when they're there.
+    std::vector<std::wstring> sorted;
+    for (const std::wstring& extension : supportedExtensions(true, true)) sorted.push_back(extension);
+    std::sort(sorted.begin(), sorted.end());
+    std::wstring patterns;
+    for (const std::wstring& extension : sorted) patterns += (patterns.empty() ? L"*." : L";*.") + extension;
+    const wchar_t* name = Video::available() ? (Pdf::available() ? L"Pictures, PDFs and videos" : L"Pictures and videos")
+                                             : (Pdf::available() ? L"Pictures and PDFs" : L"Pictures");
+    std::wstring filter = name;
+    filter.push_back(L'\0');
+    filter += patterns;
+    filter.push_back(L'\0');
+    filter += L"All files";
+    filter.push_back(L'\0');
+    filter += L"*.*";
+    filter.push_back(L'\0');
     OPENFILENAMEW ofn{sizeof(ofn)};
     ofn.hwndOwner = hwnd_;
-    ofn.lpstrFilter = Pdf::available()
-        ? L"Images and PDFs\0*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.jxr;*.ico;*.dng;*.cr2;*.cr3;*.nef;*.arw;*.orf;*.rw2;*.pdf\0All files\0*.*\0"
-        : L"Images\0*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.bmp;*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.jxr;*.ico;*.dng;*.cr2;*.cr3;*.nef;*.arw;*.orf;*.rw2\0All files\0*.*\0";
+    ofn.lpstrFilter = filter.c_str();
     ofn.lpstrFile = buffer;
     ofn.nMaxFile = static_cast<DWORD>(std::size(buffer));
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
-    if (GetOpenFileNameW(&ofn)) open({buffer});
+    if (!GetOpenFileNameW(&ofn)) return false;
+    open({buffer});
+    return true;
 }
 
 // MARK: - File commands

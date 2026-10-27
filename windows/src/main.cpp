@@ -32,7 +32,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         // is set up while the decode is still running.
         viewer.open(paths);
         viewer.show(showCommand);
-        if (paths.empty()) viewer.openDialog();
+        // Started without a file: ask for one, and if you'd rather not, there's nothing to show.
+        if (paths.empty() && !viewer.openDialog()) viewer.close();
 
         MSG message;
         while (GetMessageW(&message, nullptr, 0, 0) > 0) {

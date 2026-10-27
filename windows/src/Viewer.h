@@ -44,7 +44,9 @@ public:
     /// Starts decoding straight away, before the window is shown or the GPU is set up.
     void open(const std::vector<std::wstring>& paths);
     void show(int showCommand);
-    void openDialog();
+    /// The Open dialog. False if it was cancelled.
+    bool openDialog();
+    void close() { PostMessageW(hwnd_, WM_CLOSE, 0, 0); }
 
 private:
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
