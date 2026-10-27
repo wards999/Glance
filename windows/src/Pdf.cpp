@@ -14,6 +14,7 @@
 #include <mutex>
 #include <new>
 #include <string>
+#include <thread>
 #include <type_traits>
 
 namespace Pdf {
@@ -65,53 +66,81 @@ constexpr int kRenderAnnotations = 0x01;  // FPDF_ANNOT: draw form fields and st
 constexpr size_t kOpenDocuments = 4;
 constexpr size_t kOpenPages = 6;   // open pages keep their decoded images: re-rendering is fast
 
-/// PDFium isn't safe to call from several threads, so every call goes through this.
-std::mutex g_pdfium;
+struct OpenDocument {
+    std::wstring path;
+    Document document = nullptr;
+    std::vector<SizeF> sizes;  // per page, in points, after the page's own rotation
+    HANDLE file = INVALID_HANDLE_VALUE;
+    std::unique_ptr<FileAccess> access;  // PDFium keeps a pointer to it, so it never moves
+};
+
+struct OpenPage {
+    Document document;
+    int index;
+    Page page;
+};
+
+/// One copy of PDFium. PDFium isn't safe to call from several threads, so each copy is used by
+/// one thread at a time; Glance loads two (pdfium.dll, and the same file under a second name, which
+/// Windows loads as a separate copy) so the two pages of a spread are drawn at the same time.
+///
 /// Some pages take PDFium seconds (DeviceN-coloured photos: a colour formula per pixel). The page
 /// you're waiting for shouldn't queue behind one being drawn ahead, so work is taken one page at
 /// a time and decoding ahead waits while anything urgent is queued.
-std::condition_variable g_turnFree;
-std::atomic<int> g_urgentWaiting{0};
+struct Engine {
+    std::mutex lock;
+    std::condition_variable turnFree;
+    std::atomic<int> urgentWaiting{0};
+    Api api{};
+    bool loaded = false;
+    bool loadFailed = false;
+    std::list<OpenDocument> documents;  // most recent first
+    std::list<OpenPage> pages;          // most recent first
+};
 
-/// Holds g_pdfium for one step of work.
+constexpr int kEngines = 2;
+Engine g_engines[kEngines];
+
+/// Holds an engine for one step of work.
 class Turn {
 public:
-    explicit Turn(bool urgent) : lock_(g_pdfium), urgent_(urgent) {
-        if (urgent_) return;
-        g_turnFree.wait(lock_, [] { return g_urgentWaiting == 0; });
+    Turn(Engine& engine, bool urgent) : engine_(engine), lock_(engine.lock) {
+        if (urgent) return;
+        engine_.turnFree.wait(lock_, [this] { return engine_.urgentWaiting == 0; });
     }
     ~Turn() {
         lock_.unlock();
-        g_turnFree.notify_all();
+        engine_.turnFree.notify_all();
     }
 
 private:
+    Engine& engine_;
     std::unique_lock<std::mutex> lock_;
-    bool urgent_;
 };
 
-/// Marks an urgent request as queued for as long as it exists, before it takes its turn.
+/// Marks an urgent request as queued (on every engine) for as long as it exists.
 class UrgentClaim {
 public:
     // Counted straight away, without waiting for the lock, so work ahead can't slip in first.
     explicit UrgentClaim(bool urgent) : urgent_(urgent) {
-        if (urgent_) ++g_urgentWaiting;
+        if (!urgent_) return;
+        for (Engine& engine : g_engines) ++engine.urgentWaiting;
     }
     ~UrgentClaim() {
         if (!urgent_) return;
-        {
-            // Under the lock, so work ahead that's about to wait can't miss the wake-up.
-            std::lock_guard lock(g_pdfium);
-            --g_urgentWaiting;
+        for (Engine& engine : g_engines) {
+            {
+                // Under the lock, so work ahead that's about to wait can't miss the wake-up.
+                std::lock_guard lock(engine.lock);
+                --engine.urgentWaiting;
+            }
+            engine.turnFree.notify_all();
         }
-        g_turnFree.notify_all();
     }
 
 private:
     bool urgent_;
 };
-const Api* g_api = nullptr;
-bool g_loadFailed = false;
 
 std::wstring dllPath() {
     wchar_t exe[MAX_PATH * 4];
@@ -119,12 +148,32 @@ std::wstring dllPath() {
     return Navigator::folderOf(std::wstring(exe, length)) + L"\\pdfium.dll";
 }
 
-/// Loads pdfium.dll on first use. Call with g_pdfium held.
-const Api* api() {
-    if (g_api || g_loadFailed) return g_api;
+/// The second engine's DLL: pdfium.dll copied under another name (Windows would hand back the
+/// already-loaded copy for the same file), refreshed whenever pdfium.dll changes.
+std::wstring secondDllPath() {
+    wchar_t folder[MAX_PATH * 4];
+    const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", folder, static_cast<DWORD>(std::size(folder)));
+    if (!length || length >= std::size(folder)) return {};
+    std::wstring path = std::wstring(folder, length) + L"\\Glance";
+    CreateDirectoryW(path.c_str(), nullptr);
+    path += L"\\pdfium-2.dll";
+    WIN32_FILE_ATTRIBUTE_DATA source{}, copy{};
+    if (!GetFileAttributesExW(dllPath().c_str(), GetFileExInfoStandard, &source)) return {};
+    const bool current = GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &copy) &&
+                         copy.nFileSizeLow == source.nFileSizeLow && copy.nFileSizeHigh == source.nFileSizeHigh &&
+                         CompareFileTime(&copy.ftLastWriteTime, &source.ftLastWriteTime) == 0;
+    if (!current && !CopyFileW(dllPath().c_str(), path.c_str(), FALSE)) return {};
+    return path;
+}
+
+/// Loads an engine's DLL on first use. Call with its lock held.
+const Api* api(Engine& engine) {
+    if (engine.loaded || engine.loadFailed) return engine.loaded ? &engine.api : nullptr;
     const double start = nowMs();
-    HMODULE module = LoadLibraryExW(dllPath().c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-    static Api loaded{};
+    const bool first = &engine == &g_engines[0];
+    const std::wstring file = first ? dllPath() : secondDllPath();
+    HMODULE module = file.empty() ? nullptr : LoadLibraryExW(file.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    Api& loaded = engine.api;
     bool ok = module != nullptr;
     auto find = [&](auto& function, const char* name) {
         if (!ok) return;
@@ -143,38 +192,31 @@ const Api* api() {
     find(loaded.destroyBitmap, "FPDFBitmap_Destroy");
     find(loaded.renderPage, "FPDF_RenderPageBitmap");
     if (!ok) {
-        g_loadFailed = true;
-        trace("pdfium.dll missing or unusable");
+        engine.loadFailed = true;
+        trace(first ? "pdfium.dll missing or unusable" : "second PDFium copy unavailable: one page at a time");
         return nullptr;
     }
     loaded.initLibrary();
-    g_api = &loaded;
+    engine.loaded = true;
     char line[64];
-    snprintf(line, sizeof(line), "pdfium.dll loaded in %.0f ms", nowMs() - start);
+    snprintf(line, sizeof(line), "PDFium copy %d loaded in %.0f ms", first ? 1 : 2, nowMs() - start);
     trace(line);
-    return g_api;
+    return &engine.api;
 }
 
-struct OpenDocument {
-    std::wstring path;
-    Document document = nullptr;
-    std::vector<SizeF> sizes;  // per page, in points, after the page's own rotation
-    HANDLE file = INVALID_HANDLE_VALUE;
-    std::unique_ptr<FileAccess> access;  // PDFium keeps a pointer to it, so it never moves
-};
+/// The engine that draws `page` (1-based): left pages on one, right pages on the other, so each
+/// keeps its own pages open. Everything goes to the first if the second can't load.
+Engine& engineFor(int page) {
+    Engine& second = g_engines[1];
+    if (page % 2 == 0) return g_engines[0];
+    {
+        std::lock_guard lock(second.lock);
+        if (api(second)) return second;
+    }
+    return g_engines[0];
+}
 
-void closeDocument(OpenDocument& opened);
-
-struct OpenPage {
-    Document document;
-    int index;
-    Page page;
-};
-
-std::list<OpenDocument> g_documents;  // most recent first
-std::list<OpenPage> g_pages;          // most recent first
-
-// Passwords live apart from g_pdfium so the UI never waits behind a slow page to check them.
+// Passwords live apart from the engines so the UI never waits behind a slow page to check them.
 std::mutex g_passwordLock;
 std::vector<std::pair<std::wstring, std::string>> g_passwords;  // path, UTF-8 password
 std::vector<std::wstring> g_needsPassword;
@@ -196,32 +238,28 @@ void markNeedsPassword(const std::wstring& path, bool needs) {
     if (needs) g_needsPassword.push_back(path);
 }
 
-void closePagesOf(Document document) {
-    for (auto it = g_pages.begin(); it != g_pages.end();) {
-        if (it->document == document) {
-            g_api->closePage(it->page);
-            it = g_pages.erase(it);
+void closeDocument(Engine& engine, OpenDocument& opened) {
+    for (auto it = engine.pages.begin(); it != engine.pages.end();) {
+        if (it->document == opened.document) {
+            engine.api.closePage(it->page);
+            it = engine.pages.erase(it);
         } else {
             ++it;
         }
     }
-}
-
-void closeDocument(OpenDocument& opened) {
-    closePagesOf(opened.document);
-    g_api->closeDocument(opened.document);
+    engine.api.closeDocument(opened.document);
     CloseHandle(opened.file);
 }
 
-/// Keeps the last few PDFs open while you turn their pages. Call with g_pdfium held.
-OpenDocument* open(const std::wstring& path) {
-    for (auto it = g_documents.begin(); it != g_documents.end(); ++it) {
+/// Keeps the last few PDFs open while you turn their pages. Call with the engine's lock held.
+OpenDocument* open(Engine& engine, const std::wstring& path) {
+    for (auto it = engine.documents.begin(); it != engine.documents.end(); ++it) {
         if (samePath(it->path, path)) {
-            g_documents.splice(g_documents.begin(), g_documents, it);
-            return &g_documents.front();
+            engine.documents.splice(engine.documents.begin(), engine.documents, it);
+            return &engine.documents.front();
         }
     }
-    const Api* pdfium = api();
+    const Api* pdfium = api(engine);
     if (!pdfium) return nullptr;
     const double start = nowMs();
     OpenDocument opened;
@@ -251,31 +289,31 @@ OpenDocument* open(const std::wstring& path) {
         pdfium->pageSizeByIndex(opened.document, i, &pageSize);
         opened.sizes.push_back(pageSize);
     }
-    g_documents.push_front(std::move(opened));
-    if (g_documents.size() > kOpenDocuments) {
-        closeDocument(g_documents.back());
-        g_documents.pop_back();
+    engine.documents.push_front(std::move(opened));
+    if (engine.documents.size() > kOpenDocuments) {
+        closeDocument(engine, engine.documents.back());
+        engine.documents.pop_back();
     }
     char line[80];
     snprintf(line, sizeof(line), "PDF loaded: %d pages in %.0f ms", count, nowMs() - start);
     trace(line);
-    return &g_documents.front();
+    return &engine.documents.front();
 }
 
 /// An open page, kept so a second render (zoom, hold to zoom) doesn't decode its images again.
-Page pageOf(Document document, int index) {
-    for (auto it = g_pages.begin(); it != g_pages.end(); ++it) {
+Page pageOf(Engine& engine, Document document, int index) {
+    for (auto it = engine.pages.begin(); it != engine.pages.end(); ++it) {
         if (it->document == document && it->index == index) {
-            g_pages.splice(g_pages.begin(), g_pages, it);
+            engine.pages.splice(engine.pages.begin(), engine.pages, it);
             return it->page;
         }
     }
-    Page page = g_api->loadPage(document, index);
+    Page page = engine.api.loadPage(document, index);
     if (!page) return nullptr;
-    g_pages.push_front(OpenPage{document, index, page});
-    if (g_pages.size() > kOpenPages) {
-        g_api->closePage(g_pages.back().page);
-        g_pages.pop_back();
+    engine.pages.push_front(OpenPage{document, index, page});
+    if (engine.pages.size() > kOpenPages) {
+        engine.api.closePage(engine.pages.back().page);
+        engine.pages.pop_back();
     }
     return page;
 }
@@ -349,21 +387,19 @@ void setPassword(const std::wstring& path, const std::wstring& password) {
 
 std::vector<std::vector<int>> spreads(const std::wstring& path, int layout) {
     UrgentClaim claim(true);
-    Turn turn(true);
-    OpenDocument* opened = open(path);
+    Turn turn(g_engines[0], true);
+    OpenDocument* opened = open(g_engines[0], path);
     return opened ? group(opened->sizes, layout) : std::vector<std::vector<int>>{};
 }
 
 std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const DecodeRequest& request, int layout, bool urgent) {
     UrgentClaim claim(urgent);
     std::vector<SizeF> sizes;
-    Document document = nullptr;
     {
-        Turn turn(urgent);
-        OpenDocument* opened = open(path);
+        Turn turn(g_engines[0], urgent);
+        OpenDocument* opened = open(g_engines[0], path);
         if (!opened) return nullptr;
         sizes = opened->sizes;
-        document = opened->document;
     }
     const auto screens = group(sizes, layout);
     if (index >= screens.size()) return nullptr;
@@ -412,37 +448,51 @@ std::shared_ptr<Decoded> decode(const std::wstring& path, UINT index, const Deco
     if (!result->pixels) return nullptr;
     std::memset(result->pixels.get(), 0xFF, result->bytes());  // white, opaque paper
 
-    const double start = nowMs();
-    UINT left = 0;
-    for (size_t i = 0; i < drawOrder.size(); ++i) {
-        // One turn per page, so urgent work can get in between the two pages of a spread.
-        Turn turn(urgent);
+    // Each page on its engine; the two pages of a spread at the same time when they're on
+    // different engines. One turn per page, so urgent work can get in between pages.
+    auto renderOne = [&](size_t i, UINT left) {
+        Engine& engine = engineFor(drawOrder[i]);
+        Turn turn(engine, urgent);
         // The document may have been closed (evicted) while we waited; reopen if so.
-        OpenDocument* opened = open(path);
-        if (!opened) return nullptr;
-        document = opened->document;
-        Page page = pageOf(document, drawOrder[i] - 1);
+        OpenDocument* opened = open(engine, path);
+        Page page = opened ? pageOf(engine, opened->document, drawOrder[i] - 1) : nullptr;
         // Drawn straight into Glance's own pixels: no copy, no encode and decode in between.
-        Bitmap bitmap = page ? g_api->createBitmap(static_cast<int>(pageWidths[i]), static_cast<int>(outH), kBitmapBGRA,
-                                                   result->pixels.get() + size_t(left) * 4, static_cast<int>(result->stride))
+        Bitmap bitmap = page ? engine.api.createBitmap(static_cast<int>(pageWidths[i]), static_cast<int>(outH), kBitmapBGRA,
+                                                       result->pixels.get() + size_t(left) * 4, static_cast<int>(result->stride))
                              : nullptr;
         if (!bitmap) {
             char line[64];
             snprintf(line, sizeof(line), "PDF page %d FAILED to render", drawOrder[i]);
             trace(line);
-            return nullptr;
+            return false;
         }
         const double pageStart = nowMs();
-        g_api->renderPage(bitmap, page, 0, 0, static_cast<int>(pageWidths[i]), static_cast<int>(outH), 0, kRenderAnnotations);
-        g_api->destroyBitmap(bitmap);
+        engine.api.renderPage(bitmap, page, 0, 0, static_cast<int>(pageWidths[i]), static_cast<int>(outH), 0, kRenderAnnotations);
+        engine.api.destroyBitmap(bitmap);
         if (nowMs() - pageStart > 300) {
             char line[96];
             snprintf(line, sizeof(line), "PDF page %d is slow: %.0f ms (%s)", drawOrder[i], nowMs() - pageStart,
                      urgent ? "waited for" : "ahead");
             trace(line);
         }
-        left += pageWidths[i];
+        return true;
+    };
+    const double start = nowMs();
+    bool ok = true;
+    if (drawOrder.size() == 2 && &engineFor(drawOrder[0]) != &engineFor(drawOrder[1])) {
+        bool secondOk = false;
+        std::thread second([&] { secondOk = renderOne(1, pageWidths[0]); });
+        ok = renderOne(0, 0);
+        second.join();
+        ok = ok && secondOk;
+    } else {
+        UINT left = 0;
+        for (size_t i = 0; i < drawOrder.size() && ok; ++i) {
+            ok = renderOne(i, left);
+            left += pageWidths[i];
+        }
     }
+    if (!ok) return nullptr;
     char line[96];
     snprintf(line, sizeof(line), "PDF pages %d-%d rendered at %ux%u in %.0f ms", pages.front(), pages.back(), outW, outH,
              nowMs() - start);
