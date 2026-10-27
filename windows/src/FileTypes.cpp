@@ -16,6 +16,8 @@ constexpr wchar_t kClasses[] = L"Software\\Classes\\";
 constexpr wchar_t kCapabilities[] = L"Software\\Glance\\Capabilities";
 constexpr wchar_t kRegisteredApplications[] = L"Software\\RegisteredApplications";
 constexpr wchar_t kProgIdPrefix[] = L"Glance.";
+/// Raised when what's registered changes, so a newer Glance registers again.
+constexpr DWORD kVersion = 2;
 
 std::wstring exePath() {
     wchar_t exe[MAX_PATH * 4];
@@ -40,6 +42,9 @@ bool registerExtension(const std::wstring& extension, const std::wstring& descri
     const std::wstring key = kClasses + progId;
     bool ok = setString(key, nullptr, description);
     ok = ok && setString(key + L"\\DefaultIcon", nullptr, L"\"" + exe + L"\",-" + std::to_wstring(icon));
+    // The badge on thumbnails (a PDF's cover, a video's frame). Without it Explorer badges them
+    // with the app's icon, the same for every kind.
+    ok = ok && setString(key, L"TypeOverlay", L"\"" + exe + L"\",-" + std::to_wstring(icon));
     ok = ok && setString(key + L"\\shell\\open\\command", nullptr, L"\"" + exe + L"\" \"%1\"");
     // How Windows' "choose an app" lists it: Glance, with the icon for this kind of file, so it
     // stands apart from a plain Glance.exe chosen earlier with Open with.
@@ -66,7 +71,12 @@ bool registered() {
         ERROR_SUCCESS) {
         return false;
     }
-    return _wcsicmp(value, (L"\"" + exePath() + L"\",0").c_str()) == 0;  // registered from this copy
+    if (_wcsicmp(value, (L"\"" + exePath() + L"\",0").c_str()) != 0) return false;  // from another copy
+    DWORD version = 0;
+    size = sizeof(version);
+    return RegGetValueW(HKEY_CURRENT_USER, kCapabilities, L"Version", RRF_RT_REG_DWORD, nullptr, &version, &size) ==
+               ERROR_SUCCESS &&
+           version == kVersion;
 }
 
 bool registerAll(const std::vector<std::wstring>& pictures, bool pdf, const std::vector<std::wstring>& videos) {
@@ -77,6 +87,7 @@ bool registerAll(const std::vector<std::wstring>& pictures, bool pdf, const std:
     for (const std::wstring& extension : pictures) ok = ok && registerExtension(extension, upper(extension) + L" picture", kPictureIcon);
     if (pdf) ok = ok && registerExtension(L"pdf", L"PDF document", kPdfIcon);
     for (const std::wstring& extension : videos) ok = ok && registerExtension(extension, upper(extension) + L" video", kVideoIcon);
+    ok = ok && RegSetKeyValueW(HKEY_CURRENT_USER, kCapabilities, L"Version", REG_DWORD, &kVersion, sizeof(kVersion)) == ERROR_SUCCESS;
     ok = ok && setString(kRegisteredApplications, L"Glance", kCapabilities);
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);  // Explorer redraws its icons
     return ok;

@@ -17,7 +17,7 @@ constexpr int kPictureIcon = 2;
 constexpr int kPdfIcon = 3;
 constexpr int kVideoIcon = 4;
 
-/// Whether this copy of Glance has registered its file types.
+/// Whether this copy of Glance has registered its file types, as this version registers them.
 bool registered();
 /// Registers the given extensions (lower case, no dot). False if the registry refused.
 bool registerAll(const std::vector<std::wstring>& pictures, bool pdf, const std::vector<std::wstring>& videos);

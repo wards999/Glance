@@ -32,11 +32,12 @@ Windows may say it protected your PC: click **More info**, then **Run anyway**. 
 loaded only when you first open a PDF or a video, so they don't slow Glance down; delete either
 if you don't want PDFs or videos.
 
-To make Glance the default viewer, right-click ▸ **Glance file types and icons…**. It registers
-Glance's file types for your user (no administrator prompt) and opens Settings ▸ Default apps,
-where you choose which kinds of file Glance opens. Those files then show Glance's icons in
-Explorer: the Glance lens tinted green for pictures, red for PDFs and violet for videos. Choose
-the menu item again to remove them.
+When Glance first runs, it registers its file types for your user (no administrator prompt), so
+it's offered in Open with and in Settings ▸ Default apps. Windows doesn't let apps make themselves
+the default, so to choose what Glance opens, right-click ▸ **Make Glance the default app…**: it
+opens Default apps at Glance's page, where you pick Glance for each kind of file. Those files then
+show Glance's icons in Explorer: the Glance lens tinted green for pictures, red for PDFs and violet
+for videos (on thumbnails, as the corner badge).
 
 ## Reading PDFs
 
