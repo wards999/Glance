@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let viewer = showViewer()
         if pendingURLs.isEmpty {
-            viewer.openDocument(nil)
+            viewer.openAtLaunch()
         } else {
             viewer.open(pendingURLs)
             pendingURLs = []

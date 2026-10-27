@@ -376,13 +376,27 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
     }
 
+    /// Started without a file: ask for one, and if you'd rather not, there's nothing to show.
+    func openAtLaunch() {
+        quitIfCancelled = true
+        openDocument(nil)
+    }
+
+    private var quitIfCancelled = false
+
     @objc func openDocument(_ sender: Any?) {
+        let quitIfCancelled = self.quitIfCancelled
+        self.quitIfCancelled = false
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.allowedContentTypes = MPV.available ? [.image, .pdf, .movie, .video] : [.image, .pdf]
         let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard response == .OK else {
+                if quitIfCancelled && self?.navigator.current == nil {
+                    NSApp.terminate(nil)
+                    return
+                }
                 if self?.navigator.current == nil {
                     self?.showMessage("Open an image with ⌘O, or drop one here", duration: nil)
                 }
