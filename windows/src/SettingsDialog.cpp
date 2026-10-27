@@ -130,7 +130,7 @@ SIZE build() {
                indexOf(kSlideshowSeconds, s.slideshowSeconds, 2));
     left.endGroup();
     left.group(L"Display", 8);
-    left.checkbox(IdStartFullScreen, L"Open in full screen", s.startFullScreen);
+    left.combo(IdStartFullScreen, L"Open in:", {L"Full screen", L"A window", L"As you left it"}, s.openIn);
     left.checkbox(IdEnlarge, L"Enlarge small images to fit the window", s.enlargeSmall);
     left.button(IdBackground, L"Background:", L"Choose colour...");
     left.checkbox(IdInfo, L"Show picture info (EXIF)", s.showInfo);
@@ -215,7 +215,7 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case IdWheel: s.wheelNavigates = selection == 0; break;
         case IdEscape: s.escapeCloses = selection == 0; break;
         case IdSlideshow: s.slideshowSeconds = pick(kSlideshowSeconds, selection, 3); break;
-        case IdStartFullScreen: s.startFullScreen = checked; break;
+        case IdStartFullScreen: if (picked) s.openIn = selection; break;
         case IdEnlarge: s.enlargeSmall = checked; break;
         case IdBackground: chooseColour(); break;
         case IdInfo: s.showInfo = checked; break;

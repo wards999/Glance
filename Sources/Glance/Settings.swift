@@ -16,6 +16,11 @@ enum StartZoom: Int {
     }
 }
 
+/// How Glance opens: in full screen, in a window, or the way it was when it last closed.
+enum OpenIn: Int {
+    case fullScreen = 0, window, asLeft
+}
+
 enum FullScreenStyle: Int {
     /// A borderless window covering the screen: appears immediately, no Space switch.
     case instant = 0
@@ -46,7 +51,9 @@ final class Settings {
         static let startZoom = "startZoom"
         static let enlargeSmall = "enlargeSmallImages"
         static let background = "backgroundRGB"
-        static let openFullScreen = "openFullScreen"
+        static let openFullScreen = "openFullScreen"  // before openIn: on or off
+        static let openIn = "openIn"
+        static let wasFullScreen = "wasFullScreen"
         static let fullScreenStyle = "fullScreenStyle"
         static let showInfo = "showInfo"
         static let showFilename = "showFilename"
@@ -181,10 +188,24 @@ final class Settings {
         }
     }
 
-    var openFullScreen: Bool {
-        get { defaults.bool(forKey: Key.openFullScreen) }
-        set { store(newValue, Key.openFullScreen) }
+    var openIn: OpenIn {
+        get {
+            // Until it's chosen, the older on/off setting says which it was.
+            guard defaults.object(forKey: Key.openIn) != nil else {
+                return defaults.bool(forKey: Key.openFullScreen) ? .fullScreen : .window
+            }
+            return OpenIn(rawValue: defaults.integer(forKey: Key.openIn)) ?? .window
+        }
+        set { store(newValue.rawValue, Key.openIn) }
     }
+
+    /// Whether Glance was in full screen when it last closed. Saved quietly.
+    var wasFullScreen: Bool {
+        get { defaults.bool(forKey: Key.wasFullScreen) }
+        set { defaults.set(newValue, forKey: Key.wasFullScreen) }
+    }
+
+    var opensFullScreen: Bool { openIn == .fullScreen || (openIn == .asLeft && wasFullScreen) }
 
     var fullScreenStyle: FullScreenStyle {
         get { FullScreenStyle(rawValue: defaults.integer(forKey: Key.fullScreenStyle)) ?? .instant }

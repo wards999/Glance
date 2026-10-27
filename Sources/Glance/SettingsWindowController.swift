@@ -70,7 +70,7 @@ final class SettingsWindowController: NSWindowController {
         return [
             [label("Open images at:"), popup(["Fit to window", "Fill window", "Actual size (100%)"], { s.startZoom.rawValue }, { s.startZoom = StartZoom(rawValue: $0) ?? .fit })],
             [empty, checkbox("Enlarge small images to fit the window", { s.enlargeSmallImages }, { s.enlargeSmallImages = $0 })],
-            [empty, checkbox("Open in full screen", { s.openFullScreen }, { s.openFullScreen = $0 })],
+            [label("Open in:"), popup(["Full screen", "A window", "As you left it"], { s.openIn.rawValue }, { s.openIn = OpenIn(rawValue: $0) ?? .window })],
             [label("Full screen style:"), popup(
                 ["Instant (covers the screen, no animation)", "macOS full screen (own Space, animated)"],
                 { s.fullScreenStyle.rawValue },

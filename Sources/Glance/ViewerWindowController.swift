@@ -195,7 +195,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// Shows the window at launch, already full screen if that's the setting. Instant full screen
     /// is applied before the window first appears, so there's no windowed frame on the way.
     func showAtLaunch() {
-        let fullScreen = settings.openFullScreen
+        let fullScreen = settings.opensFullScreen
         if fullScreen && settings.fullScreenStyle == .instant {
             enterInstantFullScreen()
         }
@@ -243,6 +243,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// (at launch we set it before the app has finished activating).
     private func applyFullScreenPresentation() {
         NSApp.presentationOptions = [.hideDock, .hideMenuBar]
+    }
+
+    /// For "Open in: as you left it": whether Glance is closing in full screen.
+    func rememberFullScreen() {
+        settings.wasFullScreen = isFullScreen
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        rememberFullScreen()
     }
 
     func windowDidBecomeKey(_ notification: Notification) {

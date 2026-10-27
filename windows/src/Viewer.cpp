@@ -324,7 +324,7 @@ size_t Viewer::cacheLimit() const {
 }
 
 void Viewer::show(int showCommand) {
-    if (settings_.startFullScreen) {
+    if (settings_.startFullScreen()) {
         setFullScreen(true);
     } else {
         ShowWindow(hwnd_, settings_.maximized ? SW_MAXIMIZE : showCommand);
@@ -769,6 +769,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         else GetWindowPlacement(hwnd_, &placement);
         settings_.windowRect = placement.rcNormalPosition;
         settings_.maximized = placement.showCmd == SW_SHOWMAXIMIZED;
+        settings_.wasFullScreen = fullScreen_;  // for "Open in: as you left it"
         if (video_) {
             // The level you left it at, and whether it was muted, for next time.
             settings_.videoVolume = video_->volume();

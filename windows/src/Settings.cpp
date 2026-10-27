@@ -87,7 +87,9 @@ Settings Settings::load() {
     s.wheelNavigates = flag(L"WheelNavigates", s.wheelNavigates);
     s.escapeCloses = flag(L"EscapeCloses", s.escapeCloses);
     s.slideshowSeconds = std::clamp(number(L"SlideshowSeconds", s.slideshowSeconds), 1, 300);
-    s.startFullScreen = flag(L"StartFullScreen", s.startFullScreen);
+    // OpenIn replaced StartFullScreen (on/off); an older Glance.ini still says which it was.
+    s.openIn = std::clamp(number(L"OpenIn", flag(L"StartFullScreen", false) ? 0 : 1), 0, 2);
+    s.wasFullScreen = flag(L"WasFullScreen", s.wasFullScreen);
     s.enlargeSmall = flag(L"EnlargeSmall", s.enlargeSmall);
     s.background = static_cast<COLORREF>(number(L"Background", static_cast<int>(s.background)));
     s.showInfo = flag(L"ShowInfo", s.showInfo);
@@ -133,7 +135,8 @@ void Settings::save() const {
     put(L"WheelNavigates", wheelNavigates);
     put(L"EscapeCloses", escapeCloses);
     put(L"SlideshowSeconds", slideshowSeconds);
-    put(L"StartFullScreen", startFullScreen);
+    put(L"OpenIn", openIn);
+    put(L"WasFullScreen", wasFullScreen);
     put(L"EnlargeSmall", enlargeSmall);
     put(L"Background", static_cast<long long>(background));
     put(L"ShowInfo", showInfo);
