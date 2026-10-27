@@ -2,12 +2,12 @@ import AppKit
 
 /// The button strip that fades in when the mouse nears the bottom of the window, like JPEGView's navigation panel.
 final class ControlBar: NSVisualEffectView {
-    /// Previous File and Next File, either side of the arrows: shown in a PDF, where the arrows
-    /// turn pages.
-    var showsFileButtons = false {
-        didSet { fileButtons.forEach { $0.isHidden = !showsFileButtons } }
+    /// Previous and next file look the same everywhere (|< >|, as on the video bar); in a PDF,
+    /// page arrows show between them.
+    var showsPageButtons = false {
+        didSet { pageButtons.forEach { $0.isHidden = !showsPageButtons } }
     }
-    private var fileButtons: [NSButton] = []
+    private var pageButtons: [NSButton] = []
 
     init(target: AnyObject) {
         super.init(frame: .zero)
@@ -21,8 +21,8 @@ final class ControlBar: NSVisualEffectView {
         typealias C = ViewerWindowController
         let items: [(symbol: String, title: String, action: Selector)] = [
             ("backward.end.fill", "Previous File", #selector(C.previousDocument(_:))),
-            ("chevron.left", "Previous", #selector(C.previousImage(_:))),
-            ("chevron.right", "Next", #selector(C.nextImage(_:))),
+            ("chevron.left", "Previous Page", #selector(C.previousImage(_:))),
+            ("chevron.right", "Next Page", #selector(C.nextImage(_:))),
             ("forward.end.fill", "Next File", #selector(C.nextDocument(_:))),
             ("rotate.left", "Rotate Left", #selector(C.rotateLeft(_:))),
             ("rotate.right", "Rotate Right", #selector(C.rotateRight(_:))),
@@ -51,8 +51,8 @@ final class ControlBar: NSVisualEffectView {
             return button
         }
 
-        fileButtons = [buttons[0], buttons[3]]
-        fileButtons.forEach { $0.isHidden = true }
+        pageButtons = [buttons[1], buttons[2]]
+        pageButtons.forEach { $0.isHidden = true }
 
         let stack = NSStackView(views: buttons)  // hidden buttons take no room
         stack.orientation = .horizontal

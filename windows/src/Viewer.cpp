@@ -1670,16 +1670,16 @@ void Viewer::drawControlBar() {
         const wchar_t* glyph;
         bool text;
     };
+    // Previous and next file look the same everywhere (|< >|, as on the video bar); in a PDF,
+    // page arrows go between them.
     std::vector<Button> buttons = {
-        {CmdPrevious, L"\xE76B", false},  {CmdNext, L"\xE76C", false},       {CmdRotateLeft, L"\xE7A7", false},
+        {CmdPreviousFile, L"\xE892", false}, {CmdNextFile, L"\xE893", false}, {CmdRotateLeft, L"\xE7A7", false},
         {CmdRotateRight, L"\xE7A6", false}, {CmdZoomOut, L"\xE71F", false},   {CmdZoomIn, L"\xE8A3", false},
         {CmdFit, L"\xE9A6", false},       {CmdActual, L"1:1", true},         {CmdInfo, L"\xE946", false},
         {CmdAdjustments, L"\xE9E9", false}, {CmdSlideshow, L"\xE768", false}, {CmdFullScreen, L"\xE740", false},
     };
     if (showingPdf()) {
-        // In a PDF the arrows turn pages, so the files either side get buttons of their own.
-        buttons.insert(buttons.begin() + 2, Button{CmdNextFile, L"\xE893", false});
-        buttons.insert(buttons.begin(), Button{CmdPreviousFile, L"\xE892", false});
+        buttons.insert(buttons.begin() + 1, {Button{CmdPrevious, L"\xE76B", false}, Button{CmdNext, L"\xE76C", false}});
     }
     double width, height;
     viewSize(width, height);
