@@ -1126,15 +1126,16 @@ void Viewer::command(int id) {
     case CmdFileTypes: {
         // For this user only, so no administrator prompt. Windows won't let an app make itself
         // the default, so Default apps opens for you to choose what Glance opens.
-        if (FileTypes::registered()) {
+        const bool already = FileTypes::registered();
+        if (already) {
             const int answer = MessageBoxW(hwnd_,
                                            L"Glance's file types are registered. Choose which ones Glance opens in "
                                            L"Default apps, or remove them?\n\nYes: open Default apps\nNo: remove Glance's file types",
                                            L"Glance", MB_YESNOCANCEL | MB_ICONQUESTION);
-            if (answer == IDYES) FileTypes::openDefaultApps();
             if (answer == IDNO) FileTypes::unregisterAll();
-            break;
+            if (answer != IDYES) break;
         }
+        // Registered afresh each time, so they follow this copy of Glance and what it can open.
         std::vector<std::wstring> pictures, videos;
         for (const std::wstring& extension : Decoder::supportedExtensions()) {
             if (extension != L"pdf") pictures.push_back(extension);
@@ -1144,11 +1145,14 @@ void Viewer::command(int id) {
             MessageBoxW(hwnd_, L"Windows didn't accept Glance's file types.", L"Glance", MB_OK | MB_ICONWARNING);
             break;
         }
-        MessageBoxW(hwnd_,
-                    L"Glance's file types are registered, each with an icon for pictures, PDFs or videos.\n\n"
-                    L"Default apps opens next: choose Glance for the types you want it to open. Their files then "
-                    L"show Glance's icons in Explorer.",
-                    L"Glance", MB_OK | MB_ICONINFORMATION);
+        if (!already) {
+            MessageBoxW(hwnd_,
+                        L"Glance's file types are registered, each with an icon for pictures, PDFs or videos.\n\n"
+                        L"Default apps opens next: click Glance, then choose Glance for each type you want it to "
+                        L"open (the one with the green, red or violet icon). Their files then show Glance's icons "
+                        L"in Explorer.",
+                        L"Glance", MB_OK | MB_ICONINFORMATION);
+        }
         FileTypes::openDefaultApps();
         break;
     }

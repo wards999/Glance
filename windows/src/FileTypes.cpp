@@ -41,6 +41,11 @@ bool registerExtension(const std::wstring& extension, const std::wstring& descri
     bool ok = setString(key, nullptr, description);
     ok = ok && setString(key + L"\\DefaultIcon", nullptr, L"\"" + exe + L"\",-" + std::to_wstring(icon));
     ok = ok && setString(key + L"\\shell\\open\\command", nullptr, L"\"" + exe + L"\" \"%1\"");
+    // How Windows' "choose an app" lists it: Glance, with the icon for this kind of file, so it
+    // stands apart from a plain Glance.exe chosen earlier with Open with.
+    ok = ok && setString(key + L"\\Application", L"ApplicationName", L"Glance");
+    ok = ok && setString(key + L"\\Application", L"ApplicationIcon", L"\"" + exe + L"\",-" + std::to_wstring(icon));
+    ok = ok && setString(key + L"\\Application", L"ApplicationDescription", L"Fast picture, PDF and video viewer");
     ok = ok && RegSetKeyValueW(HKEY_CURRENT_USER, (kClasses + (L"." + extension) + L"\\OpenWithProgids").c_str(),
                                progId.c_str(), REG_NONE, nullptr, 0) == ERROR_SUCCESS;
     ok = ok && setString(std::wstring(kCapabilities) + L"\\FileAssociations", (L"." + extension).c_str(), progId);
