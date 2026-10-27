@@ -9,7 +9,7 @@ Chrome's PDF engine, prebuilt by [bblanchon/pdfium-binaries](https://github.com/
 (build chromium/8076). BSD-3-Clause licence, in `pdfium-LICENSE.txt`; the licences of the
 libraries built into it are in `pdfium-licenses/`. Source: <https://pdfium.googlesource.com/pdfium/>.
 
-## libmpv (`libmpv-2.dll`, Windows video add-on)
+## libmpv (`libmpv-2.dll`, Windows)
 
 mpv's player engine, including FFmpeg and other libraries, prebuilt by
 [shinchiro/mpv-winbuild-cmake](https://github.com/shinchiro/mpv-winbuild-cmake), release

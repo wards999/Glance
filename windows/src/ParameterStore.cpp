@@ -13,14 +13,15 @@ namespace {
 
 constexpr wchar_t kSection[] = L"Parameters";
 
-std::wstring file(bool createFolder) {
+std::wstring file(bool createFolder, const wchar_t* name = L"Parameters.ini") {
     PWSTR appData = nullptr;
     std::wstring path;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appData))) {
         path = std::wstring(appData) + L"\\Glance";
         CoTaskMemFree(appData);
         if (createFolder) CreateDirectoryW(path.c_str(), nullptr);
-        path += L"\\Parameters.ini";
+        path += L"\\";
+        path += name;
     }
     return path;
 }
@@ -37,6 +38,9 @@ std::wstring keyFor(const std::wstring& path) {
 }
 
 }  // namespace
+
+std::wstring placesFile(bool createFolder) { return file(createFolder, L"Pages.ini"); }
+std::wstring placesKey(const std::wstring& path) { return keyFor(path); }
 
 std::optional<Adjustments> load(const std::wstring& path) {
     const std::wstring ini = file(false);
@@ -68,3 +72,31 @@ void clear(const std::wstring& path) {
 }
 
 }  // namespace ParameterStore
+
+namespace PdfPlaces {
+
+constexpr wchar_t kSection[] = L"Pages";
+
+std::optional<Place> load(const std::wstring& path) {
+    const std::wstring ini = ParameterStore::placesFile(false);
+    if (ini.empty()) return std::nullopt;
+    wchar_t value[64] = L"";
+    if (!GetPrivateProfileStringW(kSection, ParameterStore::placesKey(path).c_str(), L"", value, 64, ini.c_str())) {
+        return std::nullopt;
+    }
+    Place place;
+    if (swscanf_s(value, L"%d %d %d", &place.page, &place.screen, &place.layout) != 3 || place.page < 1 || place.screen < 0) {
+        return std::nullopt;
+    }
+    return place;
+}
+
+void save(const std::wstring& path, const Place& place) {
+    const std::wstring ini = ParameterStore::placesFile(place.page > 1);
+    if (ini.empty()) return;
+    wchar_t value[64];
+    swprintf(value, 64, L"%d %d %d", place.page, place.screen, place.layout);
+    WritePrivateProfileStringW(kSection, ParameterStore::placesKey(path).c_str(), place.page > 1 ? value : nullptr, ini.c_str());
+}
+
+}  // namespace PdfPlaces

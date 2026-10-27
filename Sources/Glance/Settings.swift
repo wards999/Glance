@@ -357,6 +357,31 @@ enum ParameterStore {
     }
 }
 
+/// Where you were in each PDF, so it opens there next time.
+enum PDFPlaces {
+    struct Place {
+        var page = 0      // the first page on screen
+        var screen = 0    // which screen (page or spread) that was, in `layout`
+        var layout = ""   // the page layout then: if it's unchanged, `screen` is used directly
+    }
+
+    private static let key = "pdfPlaces"
+
+    static func place(for url: URL) -> Place? {
+        guard let saved = UserDefaults.standard.dictionary(forKey: key)?[url.path] as? [String: Any],
+              let page = saved["page"] as? Int, let screen = saved["screen"] as? Int,
+              let layout = saved["layout"] as? String else { return nil }
+        return Place(page: page, screen: screen, layout: layout)
+    }
+
+    /// The first screen forgets the file (it opens there anyway).
+    static func save(_ place: Place, for url: URL) {
+        var all = UserDefaults.standard.dictionary(forKey: key) ?? [:]
+        all[url.path] = place.screen > 0 ? ["page": place.page, "screen": place.screen, "layout": place.layout] : nil
+        UserDefaults.standard.set(all, forKey: key)
+    }
+}
+
 /// Keeps a closure alive as an AppKit target/action.
 final class ActionHandler: NSObject {
     private let handler: (Any?) -> Void

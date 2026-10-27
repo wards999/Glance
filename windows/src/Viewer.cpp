@@ -2,6 +2,7 @@
 
 #include "AdjustmentsDialog.h"
 #include "Editing.h"
+#include "FileTypes.h"
 #include "ParameterStore.h"
 #include "PasswordDialog.h"
 #include "Pdf.h"
@@ -97,6 +98,7 @@ enum Command {
     CmdClearParameters,
     CmdControls,
     CmdPdfThumbnails,
+    CmdFileTypes,
     CmdPlayPause,
     CmdMute,
     CmdNextFile,
@@ -751,6 +753,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             settings_.videoMuted = video_->muted();
         }
         settings_.save();
+        if (!pdfPath_.empty()) PdfPlaces::save(pdfPath_, pdfPlace_);  // the PDF on screen, too
         video_.reset();     // mpv and its windows first, while the parent still exists
         pipeline_.reset();  // stop the workers before the window goes away
         PostQuitMessage(0);
@@ -1045,6 +1048,7 @@ void Viewer::showContextMenu(int x, int y) {
     add(menu, CmdRecycle, L"Move to Recycle Bin\tDel", hasFile);
     separator(menu);
     add(menu, CmdSettings, L"Settings...");
+    add(menu, CmdFileTypes, L"Glance file types and icons...", true, FileTypes::registered());
     add(menu, CmdAbout, L"About Glance...");
     separator(menu);
     add(menu, CmdExit, settings_.escapeCloses ? L"Exit\tEsc" : L"Exit");
@@ -1117,6 +1121,35 @@ void Viewer::command(int id) {
                          L"medium or larger icons). Press F5 in a folder that's already open."
                        : L"Explorer will no longer show PDF covers.",
                     L"Glance", MB_OK | MB_ICONINFORMATION);
+        break;
+    }
+    case CmdFileTypes: {
+        // For this user only, so no administrator prompt. Windows won't let an app make itself
+        // the default, so Default apps opens for you to choose what Glance opens.
+        if (FileTypes::registered()) {
+            const int answer = MessageBoxW(hwnd_,
+                                           L"Glance's file types are registered. Choose which ones Glance opens in "
+                                           L"Default apps, or remove them?\n\nYes: open Default apps\nNo: remove Glance's file types",
+                                           L"Glance", MB_YESNOCANCEL | MB_ICONQUESTION);
+            if (answer == IDYES) FileTypes::openDefaultApps();
+            if (answer == IDNO) FileTypes::unregisterAll();
+            break;
+        }
+        std::vector<std::wstring> pictures, videos;
+        for (const std::wstring& extension : Decoder::supportedExtensions()) {
+            if (extension != L"pdf") pictures.push_back(extension);
+        }
+        if (Video::available()) videos = Video::extensions();
+        if (!FileTypes::registerAll(pictures, Pdf::available(), videos)) {
+            MessageBoxW(hwnd_, L"Windows didn't accept Glance's file types.", L"Glance", MB_OK | MB_ICONWARNING);
+            break;
+        }
+        MessageBoxW(hwnd_,
+                    L"Glance's file types are registered, each with an icon for pictures, PDFs or videos.\n\n"
+                    L"Default apps opens next: choose Glance for the types you want it to open. Their files then "
+                    L"show Glance's icons in Explorer.",
+                    L"Glance", MB_OK | MB_ICONINFORMATION);
+        FileTypes::openDefaultApps();
         break;
     }
     case CmdCopyPath: copyPath(); break;
@@ -1985,7 +2018,29 @@ void Viewer::showCurrent() {
         return;
     }
     if (showingVideo_) leaveVideo();
-    if (pdfScreens_ && !samePath(*path, pdfPath_)) pdfScreens_ = 0;  // moved on to another file
+    if (!pdfPath_.empty() && !samePath(*path, pdfPath_)) {
+        // Moved on from a PDF: remember where you were in it, for next time.
+        PdfPlaces::save(pdfPath_, pdfPlace_);
+        pdfPath_.clear();
+        pdfScreens_ = 0;
+    }
+    if (pdfPath_.empty() && Pdf::isPdf(*path)) {
+        // Arriving at a PDF: open it where you left it.
+        pdfPath_ = *path;
+        pdfPlace_ = PdfPlaces::load(*path).value_or(PdfPlaces::Place{});
+        frame_ = 0;
+        if (pdfPlace_.page > 1) {
+            if (pdfPlace_.layout == pdfLayout()) {
+                frame_ = static_cast<UINT>(pdfPlace_.screen);
+            } else {
+                // The layout changed since: find the screen that holds that page now.
+                const auto spreads = Pdf::spreads(*path, pdfLayout());
+                for (size_t i = 0; i < spreads.size(); ++i) {
+                    if (std::find(spreads[i].begin(), spreads[i].end(), pdfPlace_.page) != spreads[i].end()) frame_ = static_cast<UINT>(i);
+                }
+            }
+        }
+    }
     DecodeKey key = keyFor(*path, frame_, openingRequest());
     wantedKey_ = key;
     levelKey_ = {};
@@ -2011,6 +2066,7 @@ void Viewer::show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, b
     if (image->info.isPdf) {
         pdfPath_ = image->info.path;
         pdfScreens_ = image->info.frameCount;
+        pdfPlace_ = PdfPlaces::Place{image->info.pdfFirstPage, static_cast<int>(frame_), pdfLayout()};
     }
     if (resetView) stopAnimation();
     shown_ = context_ ? gpuFor(key, image) : nullptr;

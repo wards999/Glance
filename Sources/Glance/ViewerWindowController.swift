@@ -50,6 +50,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// Set after a crop: the picture no longer matches the file, and this is its full-resolution pixels.
     private var editedImage: CGImage?
     private var page = 0
+    private var pdfURL: URL?  // the PDF you're in, once you've arrived (its place is restored once)
     /// Bumped whenever the picture changes, so late results for an old picture are ignored.
     private var generation = 0
     private var direction = 1
@@ -445,12 +446,27 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             updateInfo()
             return
         }
+        if url != pdfURL { pdfURL = nil }
         if VideoFiles.isPlayable(url) {
             showVideo(url)
             return
         }
         if showingVideo { leaveVideo() }
         if !keepPage { page = 0 }
+        if pdfURL == nil, PDFRenderer.isPDF(url) {
+            // Arriving at a PDF: open it where you left it.
+            pdfURL = url
+            if !keepPage, let place = PDFPlaces.place(for: url) {
+                let layout = settings.pdfLayout
+                if place.layout == "\(layout)" {
+                    page = place.screen
+                } else {
+                    // The layout changed since: find the screen that holds that page now.
+                    let spreads = PDFRenderer.spreads(for: url, layout: layout, password: pipeline.password(for: url))
+                    page = spreads.firstIndex { $0.contains(place.page) } ?? 0
+                }
+            }
+        }
         generation += 1
         let gen = generation
         editedImage = nil
@@ -522,6 +538,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func present(_ decoded: DecodedImage, resetView: Bool) {
         current = decoded
+        if let first = decoded.info.pdf?.pages.first {
+            // Where you are in this PDF, for next time.
+            PDFPlaces.save(.init(page: first, screen: decoded.page, layout: "\(settings.pdfLayout)"), for: decoded.info.url)
+        }
         updateHoldToZoom()
         if messageIsSticky { hideMessage() }
         display(decoded.image, resetView: resetView)

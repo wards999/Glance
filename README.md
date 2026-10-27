@@ -27,16 +27,16 @@ Finder, select one, choose Get Info, set "Open with" to Glance, and click "Chang
 
 **Windows** (Windows 10 or 11, 64-bit): download **Glance-windows.zip** and unzip it anywhere;
 there's nothing to install. Run `Glance.exe`. The app isn't code-signed, so the first time
-Windows may say it protected your PC: click **More info**, then **Run anyway**. `pdfium.dll` is
-only needed for PDFs; keep it next to `Glance.exe` (delete it if you only view photos). To make
-Glance the default viewer, right-click an image ▸ Open with ▸ Choose another app ▸ More apps ▸
-Look for another app on this PC, pick `Glance.exe`, and tick "Always use this app". Do the same
-with a PDF to read PDFs in Glance.
+Windows may say it protected your PC: click **More info**, then **Run anyway**. Beside
+`Glance.exe`, `pdfium.dll` reads PDFs and `libmpv-2.dll` (about 120 MB) plays videos. Each is
+loaded only when you first open a PDF or a video, so they don't slow Glance down; delete either
+if you don't want PDFs or videos.
 
-**Video add-on** (optional, Windows): to play videos too, also download
-**Glance-video-addon.zip** and unzip it into the same folder as `Glance.exe`. It adds
-`libmpv-2.dll` (about 120 MB), which is loaded only when you open a video. Set Glance as the
-default for video files the same way as for images. See [Watching videos](#watching-videos).
+To make Glance the default viewer, right-click ▸ **Glance file types and icons…**. It registers
+Glance's file types for your user (no administrator prompt) and opens Settings ▸ Default apps,
+where you choose which kinds of file Glance opens. Those files then show Glance's icons in
+Explorer: the Glance lens tinted green for pictures, red for PDFs and violet for videos. Choose
+the menu item again to remove them.
 
 ## Reading PDFs
 
@@ -97,7 +97,7 @@ Glance plays videos too: MP4, MKV, WebM, MOV, AVI and more, in practically any c
 HEVC, AV1, VP9, ProRes…), decoded on the GPU. Both versions use libmpv, mpv's player engine built
 on FFmpeg, which is only loaded when you open a video: launch and photo speed are unchanged.
 
-- **Windows:** the optional video add-on, `libmpv-2.dll` next to `Glance.exe` (about 120 MB, from
+- **Windows:** `libmpv-2.dll` next to `Glance.exe` (about 120 MB, from
   shinchiro/mpv-winbuild-cmake). Without it Glance simply doesn't list videos.
 - **Mac:** built into the app (libmpv 0.41.0 and its libraries, for Apple Silicon and Intel, as
   published by IINA), drawn through OpenGL with hardware decoding (VideoToolbox).
@@ -271,7 +271,7 @@ saturation, gamma, sharpen, colour balance, auto correction) that can be saved p
 parameters to DB), crop (Ctrl+drag, Enter), Save processed image (Ctrl+S), lossless JPEG rotation,
 Print (Ctrl+P), Paste (Ctrl+V), Copy original size (Ctrl+X), Set modification date, and PDF reading
 with magazine spreads, right to left, hold to zoom, zoom kept across page turns and
-password-protected files, and video playback with the video add-on (mpv draws into its own GPU
+password-protected files, and video playback through libmpv (mpv draws into its own GPU
 window; Glance draws the controls over it). Animated WebP shows its first frame only. PDFs are rendered
 by PDFium (Chrome's engine, `pdfium.dll` from bblanchon/pdfium-binaries build 8076, pinned by
 hash), which is loaded only when the first PDF opens. On a 132-page magazine it renders the
@@ -355,6 +355,7 @@ windows/src/
   Settings.cpp, SettingsDialog.cpp preferences (INI) and the Settings dialog
   AdjustmentsDialog.cpp, PasswordDialog.cpp, ParameterStore.cpp
   Video.cpp                        video playback through libmpv: controls, timeline pictures
+  FileTypes.cpp                    file types and their icons, for Explorer and Default apps
 windows/thumbnails/                GlanceThumbnails.dll: PDF covers in Explorer
 ```
 
@@ -362,6 +363,6 @@ windows/thumbnails/                GlanceThumbnails.dll: PDF covers in Explorer
 
 Glance is free software under the [GNU General Public License, version 3](LICENSE): you can use,
 share and change it, and versions you share must stay under the same licence with their source
-available. The Windows downloads include PDFium (BSD) and, in the video add-on, libmpv (GPL); the
-Mac app includes libmpv and FFmpeg (GPL and LGPL);
+available. The Windows download includes PDFium (BSD) and libmpv (GPL); the Mac app includes
+libmpv and FFmpeg (GPL and LGPL);
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists them and where their source is.

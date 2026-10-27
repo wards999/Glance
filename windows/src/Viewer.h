@@ -4,6 +4,7 @@
 #include "Navigator.h"
 #include "Pipeline.h"
 #include "Settings.h"
+#include "ParameterStore.h"
 #include "Video.h"
 
 #include <d2d1_1.h>
@@ -218,6 +219,7 @@ private:
     // The PDF being read, kept apart from the picture so a page that fails to render doesn't
     // lose your place: you can still turn to the next one.
     std::wstring pdfPath_;
+    PdfPlaces::Place pdfPlace_;  // where you are in it, remembered when you leave
     UINT pdfScreens_ = 0;
 
     ZoomMode zoomMode_ = ZoomMode::Fit;

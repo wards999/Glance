@@ -5,6 +5,10 @@ CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "glance.manifest"
 
 // The app icon (drawn by scripts/make-icons.ps1). The first icon resource is the one Explorer shows.
 1 ICON "glance.ico"
+// File icons for Glance's file types (FileTypes.h): pictures, PDFs and videos.
+2 ICON "picture.ico"
+3 ICON "pdf.ico"
+4 ICON "video.ico"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION 0,4,0,0
