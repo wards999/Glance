@@ -22,8 +22,9 @@ Get the latest version from [Releases](https://github.com/wards999/Glance/releas
 Glance to Applications. The app isn't signed with an Apple developer certificate, so the first
 time, right-click Glance in Applications, choose **Open**, then **Open** again. If macOS says the
 app is damaged, run `xattr -dr com.apple.quarantine /Applications/Glance.app` once in Terminal.
-Video playback is built in (it makes the download about 50 MB). To open videos in Glance from
-Finder, select one, choose Get Info, set "Open with" to Glance, and click "Change All…".
+Video playback is built in (it makes the download about 50 MB). To make Glance open pictures,
+PDFs and videos from Finder, choose Glance ▸ **Make Glance the Default App…**: it sets every type
+at once, after asking. Change any type back with Get Info ▸ Open with.
 
 **Windows** (Windows 10 or 11, 64-bit): download **Glance-windows.zip** and unzip it anywhere;
 there's nothing to install. Run `Glance.exe`. The app isn't code-signed, so the first time
@@ -162,8 +163,8 @@ swift run -c release Glance ~/Pictures/some-photo.jpg
 ```
 
 Always use a release build when judging speed; debug builds are much slower.
-To make Glance the default viewer, select an image in Finder, choose Get Info, set "Open with"
-to Glance, and click "Change All…".
+To make Glance the default viewer, choose Glance ▸ Make Glance the Default App… (or, per type,
+Get Info ▸ Open with ▸ Change All…).
 
 ## Why it's fast (Mac)
 
