@@ -2,6 +2,13 @@ import AppKit
 
 /// The button strip that fades in when the mouse nears the bottom of the window, like JPEGView's navigation panel.
 final class ControlBar: NSVisualEffectView {
+    /// Previous File and Next File, either side of the arrows: shown in a PDF, where the arrows
+    /// turn pages.
+    var showsFileButtons = false {
+        didSet { fileButtons.forEach { $0.isHidden = !showsFileButtons } }
+    }
+    private var fileButtons: [NSButton] = []
+
     init(target: AnyObject) {
         super.init(frame: .zero)
         material = .hudWindow
@@ -13,8 +20,10 @@ final class ControlBar: NSVisualEffectView {
 
         typealias C = ViewerWindowController
         let items: [(symbol: String, title: String, action: Selector)] = [
+            ("backward.end.fill", "Previous File", #selector(C.previousDocument(_:))),
             ("chevron.left", "Previous", #selector(C.previousImage(_:))),
             ("chevron.right", "Next", #selector(C.nextImage(_:))),
+            ("forward.end.fill", "Next File", #selector(C.nextDocument(_:))),
             ("rotate.left", "Rotate Left", #selector(C.rotateLeft(_:))),
             ("rotate.right", "Rotate Right", #selector(C.rotateRight(_:))),
             ("minus.magnifyingglass", "Zoom Out", #selector(C.zoomOut(_:))),
@@ -42,7 +51,10 @@ final class ControlBar: NSVisualEffectView {
             return button
         }
 
-        let stack = NSStackView(views: buttons)
+        fileButtons = [buttons[0], buttons[3]]
+        fileButtons.forEach { $0.isHidden = true }
+
+        let stack = NSStackView(views: buttons)  // hidden buttons take no room
         stack.orientation = .horizontal
         stack.spacing = 4
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)

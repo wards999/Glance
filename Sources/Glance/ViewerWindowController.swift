@@ -1645,6 +1645,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func setControlsVisible(_ visible: Bool) {
         if visible {
+            controlBar.showsFileButtons = currentPDF != nil
             guard controlBar.isHidden else { return }
             controlBar.isHidden = false
             NSAnimationContext.runAnimationGroup { context in

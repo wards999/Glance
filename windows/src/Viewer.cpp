@@ -1665,47 +1665,53 @@ int Viewer::controlBarHit(POINT point) const {
 void Viewer::drawControlBar() {
     if (!ensureIconFont()) return;
     // JPEGView's navigation panel: the common commands, one click away.
-    static const struct {
+    struct Button {
         int command;
         const wchar_t* glyph;
         bool text;
-    } kButtons[] = {
+    };
+    std::vector<Button> buttons = {
         {CmdPrevious, L"\xE76B", false},  {CmdNext, L"\xE76C", false},       {CmdRotateLeft, L"\xE7A7", false},
         {CmdRotateRight, L"\xE7A6", false}, {CmdZoomOut, L"\xE71F", false},   {CmdZoomIn, L"\xE8A3", false},
         {CmdFit, L"\xE9A6", false},       {CmdActual, L"1:1", true},         {CmdInfo, L"\xE946", false},
         {CmdAdjustments, L"\xE9E9", false}, {CmdSlideshow, L"\xE768", false}, {CmdFullScreen, L"\xE740", false},
     };
+    if (showingPdf()) {
+        // In a PDF the arrows turn pages, so the files either side get buttons of their own.
+        buttons.insert(buttons.begin() + 2, Button{CmdNextFile, L"\xE893", false});
+        buttons.insert(buttons.begin(), Button{CmdPreviousFile, L"\xE892", false});
+    }
     double width, height;
     viewSize(width, height);
     const float scale = GetDpiForWindow(hwnd_) / 96.0f;
     const float size = 40 * scale, gap = 4 * scale, pad = 8 * scale;
-    const float barWidth = std::size(kButtons) * size + (std::size(kButtons) - 1) * gap + pad * 2;
+    const float barWidth = std::size(buttons) * size + (std::size(buttons) - 1) * gap + pad * 2;
     const float left = static_cast<float>(width - barWidth) / 2;
     const float top = static_cast<float>(height) - 20 * scale - size - pad * 2;
     const D2D1_ROUNDED_RECT bar{{left, top, left + barWidth, top + size + pad * 2}, 10 * scale, 10 * scale};
     context_->FillRoundedRectangle(&bar, overlayBrush_.get());
 
     barButtons_.clear();
-    for (size_t i = 0; i < std::size(kButtons); ++i) {
+    for (size_t i = 0; i < std::size(buttons); ++i) {
         const float x = left + pad + i * (size + gap);
         const D2D1_RECT_F rect{x, top + pad, x + size, top + pad + size};
-        barButtons_.push_back(BarButton{kButtons[i].command, kButtons[i].glyph, kButtons[i].text, rect});
+        barButtons_.push_back(BarButton{buttons[i].command, buttons[i].glyph, buttons[i].text, rect});
         if (static_cast<int>(i) == barHover_) {
             const D2D1_ROUNDED_RECT highlight{rect, 6 * scale, 6 * scale};
             context_->FillRoundedRectangle(&highlight, overlayBrush_.get());
         }
         // The slideshow and full screen buttons show what pressing them does now.
-        const wchar_t* glyph = kButtons[i].glyph;
-        if (kButtons[i].command == CmdSlideshow && slideshow_) glyph = L"\xE769";      // pause
-        if (kButtons[i].command == CmdFullScreen && fullScreen_) glyph = L"\xE73F";    // back to window
-        IDWriteTextFormat* format = kButtons[i].text ? textFormat_.get() : iconFormat_.get();
-        if (kButtons[i].text) {
+        const wchar_t* glyph = buttons[i].glyph;
+        if (buttons[i].command == CmdSlideshow && slideshow_) glyph = L"\xE769";      // pause
+        if (buttons[i].command == CmdFullScreen && fullScreen_) glyph = L"\xE73F";    // back to window
+        IDWriteTextFormat* format = buttons[i].text ? textFormat_.get() : iconFormat_.get();
+        if (buttons[i].text) {
             textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
         context_->DrawText(glyph, static_cast<UINT32>(wcslen(glyph)), format, &rect, brush_.get(),
                            D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
-        if (kButtons[i].text) {
+        if (buttons[i].text) {
             textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         }
