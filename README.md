@@ -323,14 +323,29 @@ It builds on GitHub's Windows machines (the **Build Windows** workflow) with MSV
 `windows/build.sh` (MinGW) or CMake. The app icon for both platforms is drawn by
 `scripts/make-icons.ps1`, which writes `Resources/Glance.icns` and `windows/glance.ico`.
 
-Measured on an i5-14500T with an RTX 4070, windowed at 1600×1000, with 12 and 24 MP JPEGs and
-12 MP PNGs (`windows/tools/ui_bench.py`, which watches the screen):
+Measured on an i5-14500T with an RTX 4070, in a 1600×1000 window.
 
-| | Glance |
+**Pictures**: 12 and 24 MP JPEGs and 12 MP PNGs, timed by `windows/tools/ui_bench.py`, which
+watches the screen.
+
+| | Time |
 |---|---|
 | Launch to photo on screen | **~100 ms** |
 | Next image, normal browsing | **~10 ms** |
 | Next image, key held down | **~20 ms** |
+
+**PDFs and videos**: a 132-page magazine and three feature films, timed by Glance's own log (set
+`GLANCE_TRACE=1`; it writes `%TEMP%\glance-trace.txt`). Times run from the process starting, or the
+mouse wheel turning, to the frame being handed to the graphics card, a few milliseconds before it
+shows on screen. Files were already in Windows' file cache.
+
+| | Time |
+|---|---|
+| Launch to the magazine's cover on screen | **~240 ms** |
+| Next spread (drawn ahead while you read) | **1–5 ms** |
+| A very heavy spread (two 5 MP photos in a print colour format), turned to straight after opening | ~1.4 s (2 ms once it's been drawn ahead) |
+| Launch to the first frame of a 720p H.264 MP4 | **~300 ms** |
+| Next video in the folder: 720p H.264 / 1080p HEVC | **~95 / ~130 ms** |
 
 ## Why it's fast (Windows)
 
