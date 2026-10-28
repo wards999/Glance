@@ -647,7 +647,7 @@ final class ImageView: NSView {
             return
         }
         if !event.hasPreciseScrollingDeltas || event.modifierFlags.contains(.command) {
-            // A mouse wheel (or ⌘-scroll on a trackpad) zooms around the cursor, as in JPEGView.
+            // A mouse wheel (or ⌘-scroll on a trackpad) zooms around the cursor.
             let notches = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 20 : event.scrollingDeltaY
             guard notches != 0 else { return }
             setZoom(zoom * pow(1.2, notches), around: point)

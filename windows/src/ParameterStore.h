@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-/// Adjustments remembered per file (JPEGView's "Save parameters to DB"), reapplied whenever
+/// Adjustments remembered per file ("Save parameters to DB"), reapplied whenever
 /// that file is opened. Stored in Parameters.ini, beside Glance.ini (see dataFile in Settings.h).
 namespace ParameterStore {
 

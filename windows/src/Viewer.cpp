@@ -627,7 +627,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         dragging_ = true;
         didDrag_ = false;
         dragStart_ = dragLast_ = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        selecting_ = (wParam & MK_CONTROL) != 0;  // Ctrl+drag selects an area to crop, as in JPEGView
+        selecting_ = (wParam & MK_CONTROL) != 0;  // Ctrl+drag selects an area to crop
         // Drag pans a zoomed-in image; when it all fits, drag draws a rectangle to zoom into.
         zoomBox_ = !selecting_ && !(canPanX() || canPanY());
         if (!selecting_ && holdToZoomEnabled()) {
@@ -798,7 +798,7 @@ bool Viewer::onKey(WPARAM key, bool control, bool shift) {
     viewSize(width, height);
     const double step = std::max(width, height) * 0.15;
     switch (key) {
-    // Arrows pan a zoomed-in image and change image otherwise, as in JPEGView.
+    // Arrows pan a zoomed-in image and change image otherwise.
     case VK_RIGHT: if (canPanX()) scrollBy(step, 0); else go(1); break;
     case VK_LEFT: if (canPanX()) scrollBy(-step, 0); else go(-1); break;
     case VK_DOWN: if (canPanY()) scrollBy(0, step); else go(1); break;
@@ -1696,7 +1696,7 @@ int Viewer::controlBarHit(POINT point) const {
 
 void Viewer::drawControlBar() {
     if (!ensureIconFont()) return;
-    // JPEGView's navigation panel: the common commands, one click away.
+    // The navigation buttons: the common commands, one click away.
     struct Button {
         int command;
         const wchar_t* glyph;

@@ -32,7 +32,7 @@ enum HoldToZoom: Int {
     case off = 0, pdfsOnly, everything
 }
 
-/// User preferences, kept in UserDefaults (what JPEGView puts in its INI file).
+/// User preferences, kept in UserDefaults.
 /// Setting any value posts `Settings.didChange`; the viewer and the Settings window both follow it.
 final class Settings {
     static let shared = Settings()
@@ -158,7 +158,7 @@ final class Settings {
         set { store(newValue, Key.keepAdjustments) }
     }
 
-    /// JPEGView-style: Escape closes the app instead of only leaving full screen.
+    /// Escape closes the app instead of only leaving full screen.
     var escapeQuits: Bool {
         get { defaults.bool(forKey: Key.escapeQuits) }
         set { store(newValue, Key.escapeQuits) }
@@ -355,7 +355,7 @@ final class Settings {
     }
 }
 
-/// Adjustments remembered per file (JPEGView's "Save parameters to DB"), reapplied whenever
+/// Adjustments remembered per file ("Save parameters"), reapplied whenever
 /// that file is opened again.
 enum ParameterStore {
     private static let key = "savedParameters"

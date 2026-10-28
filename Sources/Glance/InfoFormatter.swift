@@ -2,7 +2,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Text for the info overlay (JPEGView's F2 panel).
+/// Text for the info overlay (F2).
 enum InfoFormatter {
     static func text(for info: ImageInfo, position: String, size: CGSize, zoom: CGFloat, page: Int, edited: Bool) -> String {
         var lines = [info.url.lastPathComponent, position]

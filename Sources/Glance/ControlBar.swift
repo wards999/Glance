@@ -1,6 +1,6 @@
 import AppKit
 
-/// The button strip that fades in when the mouse nears the bottom of the window, like JPEGView's navigation panel.
+/// The button strip that fades in when the mouse nears the bottom of the window.
 final class ControlBar: NSVisualEffectView {
     /// Previous and next file look the same everywhere (|< >|, as on the video bar); in a PDF,
     /// page arrows show between them.

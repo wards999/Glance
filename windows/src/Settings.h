@@ -31,7 +31,7 @@ struct Settings {
     bool showInfo = false;
     bool showFilename = false;
     bool pixelatedZoom = true;  // individual pixels above 400%
-    bool showControls = true;   // button bar when the mouse nears the bottom (JPEGView's navigation panel)
+    bool showControls = true;   // button bar when the mouse nears the bottom (navigation buttons)
     bool hideCursor = true;     // in full screen, after the mouse stops
 
     // Performance
@@ -40,7 +40,7 @@ struct Settings {
 
     // Editing
     int saveQuality = 90;         // JPEG quality, percent
-    bool keepAdjustments = false; // carry brightness etc. on to the next image (JPEGView's F4)
+    bool keepAdjustments = false; // carry brightness etc. on to the next image (F4)
 
     // PDF
     int pdfLayout = 0;            // 0 automatic, 1 single page, 2 two pages, 3 two pages with cover

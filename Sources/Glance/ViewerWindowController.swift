@@ -742,7 +742,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let step = max(view.bounds.width, view.bounds.height) * 0.15
 
         switch Int(scalar.value) {
-        // Arrows pan a zoomed-in image and flip through the folder otherwise, as in JPEGView.
+        // Arrows pan a zoomed-in image and flip through the folder otherwise.
         case NSRightArrowFunctionKey:
             if view.canPanHorizontally { view.scroll(dx: step, dy: 0) } else { go(1) }
         case NSLeftArrowFunctionKey:
@@ -755,7 +755,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             go(1)
         case NSPageUpFunctionKey, 0x7F:
             go(-1)
-        // JPEGView's function keys.
+        // Function keys.
         case NSF2FunctionKey:
             toggleInfo(nil)
         case NSF4FunctionKey:
@@ -1185,7 +1185,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         showCurrent()
     }
 
-    // MARK: - More JPEGView commands
+    // MARK: - More commands
 
     @objc func reloadImage(_ sender: Any?) {
         guard let url = navigator.current else { return }
@@ -1327,7 +1327,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
     }
 
-    /// Rotates or flips the file itself by rewriting its orientation tag (JPEGView's lossless
+    /// Rotates or flips the file itself by rewriting its orientation tag (lossless
     /// JPEG transformations). Tags: 0 right, 1 left, 2 180°, 3 flip horizontal, 4 flip vertical.
     @objc func losslessTransform(_ sender: NSMenuItem) {
         guard let current else { return }
@@ -1628,7 +1628,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func updateInfo() {
         let position = "\(navigator.index + 1) / \(navigator.count)"
         if !showInfo, settings.showFilename, let url = navigator.current {
-            // File name only (JPEGView's "Show filename").
+            // File name only ("Show filename").
             infoBox.isHidden = false
             infoLabel.stringValue = "\(url.lastPathComponent)   \(position)"
             return

@@ -233,7 +233,7 @@ private:
     bool dragging_ = false;
     bool didDrag_ = false;
     bool zoomBox_ = false;
-    bool selecting_ = false;  // Ctrl+drag: crop selection, as in JPEGView
+    bool selecting_ = false;  // Ctrl+drag: crop selection
     POINT dragStart_{};
     POINT dragLast_{};
     int wheelRemainder_ = 0;

@@ -183,9 +183,8 @@ Get Info ▸ Open with ▸ Change All…).
 | **LRU memory cache** sized to ¼ of RAM (4 GB max). | `ImagePipeline` |
 | Opens the file **before** listing the folder; the folder scan runs in the background. | `ViewerWindowController.open` |
 
-## Features compared with JPEGView (Mac)
+## Features (Mac)
 
-Included:
 
 - Every format ImageIO supports: JPEG, PNG, GIF, BMP, TIFF, WebP, HEIC/HEIF, AVIF (macOS 13+), JPEG XL (macOS 14+), PSD, camera RAW, and more
 - Animated GIF/WebP/APNG playback; page navigation for multi-page TIFF
@@ -200,19 +199,19 @@ Included:
 - Bottom control bar that fades in on hover
 - Full screen with cursor auto-hide, optionally on launch. The menu bar and Dock are hidden completely; every command is on the right-click menu. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
 - Move to Trash, Reveal in Finder, Set as Desktop Picture, Copy, drag and drop, mouse back/forward buttons, trackpad swipe between images
-- A right-click menu laid out like JPEGView's, including Reload, Print, Set Modification Date (now or date taken), Copy Original Size, Copy File Path, Paste, Show Filename, and lossless rotate/flip written straight to the file
+- A right-click menu with every command, including Reload, Print, Set Modification Date (now or date taken), Copy Original Size, Copy File Path, Paste, Show Filename, and lossless rotate/flip written straight to the file
 - **PDF reading**: pages rendered sharp at any zoom, decoded ahead like photos. Magazines open as a cover followed by two-page spreads (automatic, or choose single / two pages / two pages with cover, plus right to left). Space, arrows and the wheel turn pages before moving to the next file. Turning a page while zoomed in keeps the zoom and opens the new page at its top-left corner (top-right for right to left), or at the bottom corner when going back. **Hold to zoom**: press and hold on the page to magnify it, move to look around, let go to return. Password-protected PDFs ask for their password (kept in memory only). PDFs are skipped when browsing photo folders unless you turn that on, and they can't be overwritten: Save As exports the current page or spread as an image
-- Adjustments can be saved per image (JPEGView's "Save parameters to DB") and are reapplied whenever that file is opened
+- Adjustments can be saved per image and are reapplied whenever that file is opened
 
 Not included yet:
 
 - Side-by-side comparison of two images
-- Perspective correction and JPEGView's "local density correction" (auto correction uses Core Image's auto-adjust instead)
+- Perspective correction and local contrast correction (auto correction uses Core Image's auto-adjust)
 - Histogram, lossless JPEG *crop* (crops re-encode), batch rename and copy/move to folder, "movie" folder playback
 
 ## Settings (Mac)
 
-JPEGView keeps most of its options in an INI file. Glance has a **Settings window** instead
+Glance's options are in its **Settings window**
 (⌘, or Glance ▸ Settings…). Changes apply immediately and are saved automatically (in
 UserDefaults). Menu toggles such as Loop or Show Info change the same settings, so the menus
 and the window always agree.
@@ -250,13 +249,13 @@ and the window always agree.
 | F4 | Keep adjustments for next images on/off |
 | E, ⌘E | Adjustments panel |
 | I, F2, ⌘I | Info overlay |
-| W | Reveal in Finder (JPEGView's "open containing folder") |
+| W | Reveal in Finder |
 | ⌘P | Print |
 | ⌘C / ⌥⌘C | Copy the displayed image / copy at original size |
 | ⇧⌘C | Copy file path |
 | ⌘V | Paste (opens copied files or a copied image) |
 | S, ⌥⌘P | Slideshow on/off |
-| F, ⌃⌘F | Full screen (instant or macOS style, per Settings). Esc leaves it, or closes Glance if Settings ▸ General ▸ Escape key says so (JPEGView style) |
+| F, ⌃⌘F | Full screen (instant or macOS style, per Settings). Esc leaves it, or closes Glance if Settings ▸ General ▸ Escape key says so |
 | ⌘S / ⇧⌘S | Save / Save As |
 | ⌘⌫ | Move to Trash |
 | ⇧⌘R | Reveal in Finder |
@@ -269,7 +268,7 @@ and the window always agree.
 580 KB). It has the viewer (folder navigation, zoom, pan, drag-to-zoom, borderless full screen,
 slideshow, info overlay, a button bar that appears when the mouse nears the bottom, pointer hidden
 in full screen when idle), animated GIF playback, multi-page TIFF pages (`[` and `]`), a
-JPEGView-style right-click menu, a Settings dialog, GPU adjustments (brightness, contrast,
+right-click menu with every command, a Settings dialog, GPU adjustments (brightness, contrast,
 saturation, gamma, sharpen, colour balance, auto correction) that can be saved per picture (Save
 parameters to DB), crop (Ctrl+drag, Enter), Save processed image (Ctrl+S), lossless JPEG rotation,
 Print (Ctrl+P), Paste (Ctrl+V), Copy original size (Ctrl+X), Set modification date, and PDF reading
@@ -307,7 +306,7 @@ the same folder. If Glance's folder can't be written to (under Program Files, sa
 | E | Adjustments |
 | F5 / F4 | Auto correction / keep adjustments for next images |
 | F2 / Ctrl+F2 | Info overlay / file name |
-| F, F11, Alt+Enter | Full screen. Esc leaves it, or closes Glance if Settings says so (JPEGView style) |
+| F, F11, Alt+Enter | Full screen. Esc leaves it, or closes Glance if Settings says so |
 | S | Slideshow |
 | Ctrl+O / Ctrl+S | Open / Save As |
 | Ctrl+C / Ctrl+X / Ctrl+Shift+C | Copy image / copy at original size / copy file path |
@@ -324,14 +323,14 @@ It builds on GitHub's Windows machines (the **Build Windows** workflow) with MSV
 `windows/build.sh` (MinGW) or CMake. The app icon for both platforms is drawn by
 `scripts/make-icons.ps1`, which writes `Resources/Glance.icns` and `windows/glance.ico`.
 
-Measured against JPEGView 1.4 on an i5-14500T with an RTX 4070, both windowed at 1600×1000,
-with 12 and 24 MP JPEGs and 12 MP PNGs (`windows/tools/ui_bench.py`, which watches the screen):
+Measured on an i5-14500T with an RTX 4070, windowed at 1600×1000, with 12 and 24 MP JPEGs and
+12 MP PNGs (`windows/tools/ui_bench.py`, which watches the screen):
 
-| | Glance | JPEGView |
-|---|---|---|
-| Launch to photo on screen | **~100 ms** | ~225 ms |
-| Next image, normal browsing | **~10 ms** | ~28 ms |
-| Next image, key held down | **~20 ms** | ~130 ms |
+| | Glance |
+|---|---|
+| Launch to photo on screen | **~100 ms** |
+| Next image, normal browsing | **~10 ms** |
+| Next image, key held down | **~20 ms** |
 
 ## Why it's fast (Windows)
 
