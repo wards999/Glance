@@ -1,6 +1,6 @@
 # Glance
 
-A fast picture, PDF and video viewer for **macOS and Windows**, modeled on JPEGView: minimal UI,
+A fast picture, PDF and video viewer for **macOS and Windows**: minimal UI,
 and built to put pixels on screen as fast as possible, including very large
 files. It opens **JPEG, PNG, GIF (animated), TIFF (multi-page), BMP, WebP, HEIC/HEIF, AVIF,
 camera RAW** and more (on the Mac also JPEG XL and PSD), reads **PDFs** like a magazine (cover
