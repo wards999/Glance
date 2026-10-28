@@ -1253,7 +1253,7 @@ void Viewer::command(int id) {
     case CmdAbout: {
         // With Glance's own icon. What's included depends on the DLLs beside Glance.exe.
         std::wstring text = L"Glance " GLANCE_VERSION_TEXT L"\n"
-                            L"Fast picture, PDF and video viewer, modeled on JPEGView.\n\n"
+                            L"Fast picture, PDF and video viewer.\n\n"
                             L"Free software under the GNU General Public License, version 3.\n";
         if (Pdf::available()) text += L"PDFs are read by PDFium (BSD licence).\n";
         if (Video::available()) text += L"Videos are played by libmpv and FFmpeg (GPL).\n";

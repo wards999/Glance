@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The standard About panel (name, version and icon from Info.plist), with what Glance is.
     @objc func showAbout(_ sender: Any?) {
         let credits = NSMutableAttributedString(
-            string: "Fast picture, PDF and video viewer, modeled on JPEGView.\n\n"
+            string: "Fast picture, PDF and video viewer.\n\n"
                 + (MPV.available ? "Videos are played by libmpv and FFmpeg (GPL and LGPL).\n" : ""),
             attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.labelColor])
         credits.append(NSAttributedString(string: "github.com/wards999/Glance", attributes: [
