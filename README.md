@@ -23,9 +23,9 @@ Glance to Applications. The app isn't signed with an Apple developer certificate
 time, right-click Glance in Applications, choose **Open**, then **Open** again. If macOS says the
 app is damaged, run `xattr -dr com.apple.quarantine /Applications/Glance.app` once in Terminal.
 Video playback is built in (it makes the download about 50 MB). To make Glance open pictures,
-PDFs and videos from Finder, choose Glance ▸ **Make Glance the Default App…**: it sets PNG, JPEG,
-PDF, MP4, MOV and MKV, after asking (macOS confirms each). Other types, or changing one back: Get
-Info ▸ Open with ▸ Change All.
+PDFs and videos from Finder, choose Glance ▸ **Make Glance the Default App…**. Tick which of PNG,
+JPEG, PDF, MP4, MOV and MKV it should open; macOS then asks you to confirm each one in turn, and
+you can stop part-way. Other types, or changing one back: Get Info ▸ Open with ▸ Change All.
 
 **Windows** (Windows 10 or 11, 64-bit): download **Glance-windows.zip** and unzip it anywhere;
 there's nothing to install. Run `Glance.exe`. The app isn't code-signed, so the first time
