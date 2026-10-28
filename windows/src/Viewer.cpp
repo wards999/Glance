@@ -2003,6 +2003,7 @@ DecodeRequest Viewer::openingRequest() const {
 }
 
 void Viewer::go(int delta) {
+    trace(delta > 0 ? "go: next" : "go: previous");
     direction_ = delta < 0 ? -1 : 1;
     // In a PDF, pages turn before moving on to the next file.
     if (showingPdf()) {
@@ -2868,6 +2869,12 @@ void Viewer::render() {
     if (!firstImagePresented && shown_) {
         firstImagePresented = true;
         trace("first image presented");
+    }
+    // Each new picture or page as it reaches the screen (for timing page turns).
+    static const GpuImage* lastPresented = nullptr;
+    if (shown_ && shown_.get() != lastPresented) {
+        lastPresented = shown_.get();
+        trace("image presented");
     }
     if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
         // GPU reset or driver update: rebuild everything and draw again.
