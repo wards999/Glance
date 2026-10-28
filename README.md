@@ -333,6 +333,21 @@ with 12 and 24 MP JPEGs and 12 MP PNGs (`windows/tools/ui_bench.py`, which watch
 | Next image, normal browsing | **~10 ms** | ~28 ms |
 | Next image, key held down | **~20 ms** | ~130 ms |
 
+## Why it's fast (Windows)
+
+| Technique | Where |
+|---|---|
+| Opens the file **before** listing the folder; the folder scan runs in the background, and the first decode starts before the window even appears. The GPU device is created on another thread while that decode runs. | `Viewer::open`, `scanFolder`, `main.cpp`, `Viewer::create` |
+| Decodes only **what the window shows**: JPEG decodes straight to 1/2, 1/4 or 1/8 of full size (DCT scaling inside the codec), with no full-size decode and no separate resize or colour-conversion pass. | `decodeNative`, `Decoder::halvingLevel` |
+| **Decodes ahead** in the direction you're moving (3 files by default, plus 1 behind), on background threads, with one worker always kept free for the image you're waiting for. | `Viewer::prefetchNeighbors`, `Pipeline` |
+| **Skips stale work**: hold a key down and queued decodes for images you've already passed are dropped before they start. | `Pipeline::prefetch`, `wanted_` |
+| **GPU display** with Direct2D: each picture is uploaded once (decoded-ahead ones while nothing else is happening), and zoom, pan and rotation only change a transform. Bitmaps bigger than the GPU allows are tiled. | `Viewer::upload`, `gpuFor`, `render` |
+| **Zoom levels on demand**: zooming in past the decoded size fetches the smallest 1/2ⁿ level that's sharp enough, not always the full image. | `requestedLevel_`, `levelKey_` |
+| **LRU memory cache** sized to ¼ of RAM (4 GB max). | `Viewer::cacheLimit`, `Pipeline::evict` |
+| **Nothing loaded until it's needed**: `pdfium.dll` loads with the first PDF and `libmpv-2.dll` with the first video, so launch and photo speed are the same with or without them. Videos aren't decoded ahead, but the player is warmed up when one is next to you, so it opens without a pause. | `Pdf::api`, `Video.cpp`, `prefetchNeighbors` |
+| **PDFs**: pages are rendered ahead (24 screens), the page you're waiting for jumps the queue, and **two copies of PDFium** draw the two pages of a spread at the same time. Recently drawn pages stay open, so zooming or returning to a slow page doesn't decode its images again. | `Pdf::decode`, `UrgentClaim`, `engineFor`, `pageOf` |
+| **No runtime to install**: one native exe of under 1 MB, starting straight into Win32 and Direct2D. | `windows/` |
+
 ## Layout
 
 ```
