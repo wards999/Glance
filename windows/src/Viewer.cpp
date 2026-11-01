@@ -2285,6 +2285,10 @@ void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
         return;
     }
     if (!result->image) return;
+    if (endPage_ && result->key == coverKey_) {
+        render();  // this PDF's small cover, for the page between PDFs
+        return;
+    }
     if (current_ && !edited_ && result->key == levelKey_ && result->image->longSide() > current_->longSide()) {
         show(result->key, result->image, false);  // sharper pixels for the zoomed view
         return;
@@ -2987,12 +2991,23 @@ void Viewer::drawNotice() {
                              D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
 
-void Viewer::drawGpuImage(const GpuImage& image, const D2D1_RECT_F& rect) {
+std::shared_ptr<GpuImage> Viewer::pdfCover(const std::wstring& path, const DecodeRequest& request, bool load) {
+    const DecodeKey key = keyFor(path, 0, request);
+    if (auto it = gpuCache_.find(key); it != gpuCache_.end()) return it->second;
+    if (auto image = pipeline_->cached(key)) return gpuFor(key, image);
+    if (load && !(key == coverKey_)) {
+        coverKey_ = key;
+        pipeline_->load(key);
+    }
+    return nullptr;
+}
+
+void Viewer::drawGpuImage(const GpuImage& image, const D2D1_RECT_F& rect, float opacity) {
     const float sx = (rect.right - rect.left) / image.width, sy = (rect.bottom - rect.top) / image.height;
     const D2D1_MATRIX_3X2_F transform = matrix(sx, 0, 0, sy, rect.left, rect.top);
     context_->SetTransform(&transform);
     for (const auto& tile : image.tiles) {
-        context_->DrawBitmap(tile.bitmap.get(), &tile.rect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
+        context_->DrawBitmap(tile.bitmap.get(), &tile.rect, opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
     }
     const D2D1_MATRIX_3X2_F plain = identity();
     context_->SetTransform(&plain);
@@ -3005,16 +3020,11 @@ void Viewer::drawEndPage() {
     viewSize(width, height);
     const std::wstring* now = navigator_.current();
     const std::wstring* next = neighbourPdf(endPage_);
-    // The other PDF's cover is decoded ahead like any neighbouring file; until it's there, only the text.
-    std::shared_ptr<GpuImage> cover;
-    if (next) {
-        const DecodeKey key = keyFor(*next, 0, openingRequest());
-        if (auto it = gpuCache_.find(key); it != gpuCache_.end()) {
-            cover = it->second;
-        } else if (auto image = pipeline_->cached(key)) {
-            cover = gpuFor(key, image);
-        }
-    }
+    // The cover you're heading to is decoded ahead like any neighbouring file. This PDF's own cover
+    // usually isn't still cached by its last page: it's asked for small, and appears when it's ready.
+    const std::shared_ptr<GpuImage> big = next ? pdfCover(*next, openingRequest(), false) : nullptr;
+    std::shared_ptr<GpuImage> small = now ? pdfCover(*now, openingRequest(), false) : nullptr;
+    if (!small && now) small = pdfCover(*now, DecodeRequest{0, 0, 1024}, true);
     const bool forward = endPage_ > 0;
     std::wstring text = (forward ? L"End of " : L"Start of ") + (now ? fileName(*now) : std::wstring());
     if (next) text += (forward ? L"\n\nNext: " : L"\n\nPrevious: ") + fileName(*next);
@@ -3030,25 +3040,44 @@ void Viewer::drawEndPage() {
     DWRITE_TEXT_METRICS metrics{};
     layout->GetMetrics(&metrics);
 
-    const float gap = 24 * scale;
-    float coverW = 0, coverH = 0;
-    if (cover && cover->width && cover->height) {
-        coverH = std::min(static_cast<float>(height) * 0.45f, 420 * scale);
-        coverW = coverH * cover->width / cover->height;
-        if (coverW > maxWidth) {
-            coverW = maxWidth;
-            coverH = coverW * cover->height / cover->width;
-        }
+    // Both covers side by side in reading order (previous on the left, unless right to left), bottoms
+    // lined up: the one Space or Backspace goes to is large, the one you're leaving half the size and
+    // dimmed. A cover not decoded yet keeps its place (with the other's proportions), so nothing jumps.
+    auto aspect = [](const std::shared_ptr<GpuImage>& image) {
+        return image && image->width && image->height ? float(image->width) / float(image->height) : 0.0f;
+    };
+    const float bigAspect = aspect(big) > 0 ? aspect(big) : aspect(small) > 0 ? aspect(small) : 0.7f;
+    const float smallAspect = aspect(small) > 0 ? aspect(small) : bigAspect;
+    const float gap = 24 * scale, between = 32 * scale;
+    float bigH = std::min(static_cast<float>(height) * 0.45f, 420 * scale);
+    float bigW = bigH * bigAspect, smallH = bigH / 2, smallW = smallH * smallAspect;
+    if (const float row = bigW + between + smallW; row > maxWidth) {
+        const float shrink = maxWidth / row;
+        bigH *= shrink;
+        bigW *= shrink;
+        smallH *= shrink;
+        smallW *= shrink;
     }
-    const float total = coverH + (coverH > 0 ? gap : 0) + metrics.height;
+    const bool showCovers = big || small;
+    const float total = (showCovers ? bigH + gap : 0) + metrics.height;
     float y = (static_cast<float>(height) - total) / 2;
-    if (coverH > 0) {
-        const float x = (static_cast<float>(width) - coverW) / 2;
-        const D2D1_RECT_F rect{x, y, x + coverW, y + coverH};
-        drawGpuImage(*cover, rect);
-        const D2D1_RECT_F frame{rect.left - 0.5f, rect.top - 0.5f, rect.right + 0.5f, rect.bottom + 0.5f};
-        context_->DrawRectangle(&frame, overlayBrush_.get(), 1.0f, nullptr);
-        y += coverH + gap;
+    if (showCovers) {
+        // Forward, this PDF comes first in reading order; going back, the previous one does.
+        const bool smallFirst = forward != settings_.pdfRightToLeft;
+        const float left = (static_cast<float>(width) - (bigW + between + smallW)) / 2;
+        const float bottom = y + bigH;
+        const float bigX = smallFirst ? left + smallW + between : left;
+        const float smallX = smallFirst ? left : left + bigW + between;
+        auto draw = [&](const std::shared_ptr<GpuImage>& image, float x, float w, float h, float opacity) {
+            if (!image) return;
+            const D2D1_RECT_F rect{x, bottom - h, x + w, bottom};
+            drawGpuImage(*image, rect, opacity);
+            const D2D1_RECT_F frame{rect.left - 0.5f, rect.top - 0.5f, rect.right + 0.5f, rect.bottom + 0.5f};
+            context_->DrawRectangle(&frame, overlayBrush_.get(), 1.0f, nullptr);
+        };
+        draw(big, bigX, bigW, bigH, 1.0f);
+        draw(small, smallX, smallW, smallH, 0.5f);
+        y += bigH + gap;
     }
     const float boxLeft = (static_cast<float>(width) - metrics.width) / 2 - 16 * scale;
     const D2D1_ROUNDED_RECT box{{boxLeft, y - 10 * scale, boxLeft + metrics.width + 32 * scale, y + metrics.height + 10 * scale},

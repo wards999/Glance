@@ -57,9 +57,10 @@ top for a few seconds. Turn on **Remember each PDF's zoom and position** in Sett
 also reopens at the zoom you left it at and, zoomed in, the same part of the page.
 
 **Turning pages.** Pages turn before Glance moves on to the next file in the folder. When that
-file is another PDF, a blank **page between them** comes first, with the next PDF's cover and name,
-so it's obvious one document has ended: Space goes on to it, Backspace (Delete on the Mac) goes
-back. Going backwards works the same way: before the first page, the previous PDF's cover. (Turn it
+file is another PDF, a blank **page between them** comes first, so it's obvious one document has
+ended: both covers side by side in reading order, the next PDF's large and this one's small and
+dimmed, with the next one's name. Space goes on to it, Backspace (Delete on the Mac) goes back.
+Going backwards works the same way: before the first page, the previous PDF's cover is the large one. (Turn it
 off in Settings ▸ PDF.)
 
 | | Next page | Previous page |

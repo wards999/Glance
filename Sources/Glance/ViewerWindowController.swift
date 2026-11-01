@@ -947,20 +947,33 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func showEndPage(side: Int, current: URL, other: URL) {
         pdfBoundary = side
         setControlsVisible(false)
-        endPageView.show(forward: side > 0, current: current.lastPathComponent, other: other.lastPathComponent,
-                         background: settings.backgroundColor)
+        endPageView.show(forward: side > 0, rightToLeft: settings.pdfRightToLeft, current: current.lastPathComponent,
+                         other: other.lastPathComponent, background: settings.backgroundColor)
         endPageView.isHidden = false
-        // The other PDF's cover, usually decoded ahead already.
-        let key = pipelineKey(other, page: 0, size: openingDecodeSize)
-        if let hit = pipeline.cached(key) {
-            endPageView.setCover(hit.image)
+        // The cover you're heading to is usually decoded ahead already. This PDF's own cover isn't
+        // often still cached by its last page: it's asked for small, and appears when it's ready.
+        cover(of: other, size: openingDecodeSize, side: side) { [weak self] in self?.endPageView.setDestinationCover($0) }
+        if let hit = pipeline.cached(pipelineKey(current, page: 0, size: openingDecodeSize)) {
+            endPageView.setOriginCover(hit.image)
         } else {
-            pipeline.load(key, preview: nil) { [weak self] decoded in
-                guard let self, self.pdfBoundary == side, self.neighbourPDF(side) == other else { return }
-                self.endPageView.setCover(decoded?.image)
-            }
+            cover(of: current, size: .longSide(1024), side: side) { [weak self] in self?.endPageView.setOriginCover($0) }
         }
         updateTitle()
+    }
+
+    /// A PDF's first screen for the page between PDFs: at once if it's cached, else when it's decoded
+    /// (if that page is still up by then).
+    private func cover(of url: URL, size: ImagePipeline.DecodeSize, side: Int, _ apply: @escaping (CGImage?) -> Void) {
+        let key = pipelineKey(url, page: 0, size: size)
+        if let hit = pipeline.cached(key) {
+            apply(hit.image)
+            return
+        }
+        let current = navigator.current
+        pipeline.load(key, preview: nil) { [weak self] decoded in
+            guard let self, self.pdfBoundary == side, self.navigator.current == current else { return }
+            apply(decoded?.image)
+        }
     }
 
     private func hideEndPage() {

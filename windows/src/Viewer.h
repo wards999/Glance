@@ -72,9 +72,11 @@ private:
     void showNotice(const std::wstring& text);
     void drawNotice();
     /// Between two PDFs (after the last page going forward, before the first going back): a blank
-    /// page with the other PDF's cover.
+    /// page with both covers in reading order, the one you're heading to large, this one small.
     void drawEndPage();
-    void drawGpuImage(const GpuImage& image, const D2D1_RECT_F& rect);
+    /// A PDF's first screen on the GPU, if it's decoded at `request`; `load` asks for it if not.
+    std::shared_ptr<GpuImage> pdfCover(const std::wstring& path, const DecodeRequest& request, bool load);
+    void drawGpuImage(const GpuImage& image, const D2D1_RECT_F& rect, float opacity = 1.0f);
     bool ensureText();
     /// Bottom-left note for a page that's taking a while, so it never looks frozen.
     void drawBusyNote();
@@ -240,6 +242,7 @@ private:
     bool restorePdfView_ = false;  // arriving at a PDF: open at the zoom remembered in pdfPlace_
     bool announceResume_ = false;  // ...and say which page it's resuming from
     std::wstring notice_;
+    DecodeKey coverKey_;           // the small cover the page between PDFs asked for
 
     ZoomMode zoomMode_ = ZoomMode::Fit;
     double zoom_ = 1;      // device pixels per full-resolution pixel
