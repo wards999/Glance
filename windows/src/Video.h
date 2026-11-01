@@ -107,6 +107,7 @@ public:
 
     /// The file name box at the top left (Show filename, or the info in the corner), drawn over
     /// the video like the controls, since the video window covers what Glance draws. Empty hides it.
+    /// While it shows, the bar doesn't repeat the name above itself.
     void setLabel(const std::wstring& text);
 
     /// The bar also has Previous File, Next File and Full Screen, which are Glance's to do: after

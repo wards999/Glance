@@ -1557,6 +1557,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         view.isHidden = true
         view.menu = contextMenu
         view.options = videoOptions
+        view.showsName = infoBox.isHidden
         content.addSubview(view, positioned: .above, relativeTo: imageView)
         videoView = view
         return view
@@ -1790,6 +1791,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func updateInfo() {
+        defer { videoView?.showsName = infoBox.isHidden }  // the name once, not above the bar as well
         let position = "\(navigator.index + 1) / \(navigator.count)"
         let showInfo = self.showInfo || cornerInfo
         if !showInfo, settings.showFilename, let url = navigator.current {

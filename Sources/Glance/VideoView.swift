@@ -37,6 +37,11 @@ final class VideoView: NSView {
 
     private(set) var url: URL?
     private(set) var isOpen = false
+    /// The name above the bar; off while the window's own file name box shows at the top left,
+    /// so it isn't there twice.
+    var showsName = true {
+        didSet { if showsName != oldValue { updateControls() } }
+    }
     private var ended = false
     private(set) var duration = 0.0
     private(set) var videoSize = CGSize.zero
@@ -373,7 +378,7 @@ final class VideoView: NSView {
         }
         let position = min(max(mpv.double(handle, "time-pos") ?? lastPosition, 0), max(duration, 0))
         lastPosition = position
-        controls.name = url.map { $0.deletingPathExtension().lastPathComponent } ?? ""
+        controls.name = showsName ? url.map { $0.deletingPathExtension().lastPathComponent } ?? "" : ""
         controls.duration = duration
         controls.position = scrubbing ? time(atX: controls.hoverPoint.x) : position
         controls.isPaused = isPaused || ended

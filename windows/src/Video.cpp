@@ -542,8 +542,10 @@ void VideoPlayer::layout() {
 
 void VideoPlayer::setLabel(const std::wstring& text) {
     if (text == labelText_) return;
+    const bool nameMoved = text.empty() != labelText_.empty();
     labelText_ = text;
     drawLabel();
+    if (nameMoved && controlsVisible_) drawControls();
 }
 
 void VideoPlayer::drawLabel() {
@@ -1020,8 +1022,9 @@ void VideoPlayer::drawControls() {
 
     if (controlsVisible_) {
     target_->FillRoundedRectangle(D2D1::RoundedRect(local(barRect_), 10 * s, 10 * s), panel.get());
-    // The file's name, just above the bar on the left (the title bar is gone in full screen).
-    if (!(hovering_ || scrubbing_)) {
+    // The file's name, just above the bar on the left (the title bar is gone in full screen),
+    // unless the file name box at the top left already shows it.
+    if (!(hovering_ || scrubbing_) && labelText_.empty()) {
         std::wstring name = path_.substr(path_.find_last_of(L"\\/") + 1);
         const size_t dot = name.find_last_of(L'.');
         if (dot != std::wstring::npos && dot > 0) name.resize(dot);
