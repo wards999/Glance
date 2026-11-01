@@ -409,7 +409,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_APP_VIDEO:
-        if (video_ && video_->handleEvents()) updateTitle();
+        if (video_ && video_->handleEvents()) {
+            updateTitle();
+            syncVideoControls();  // the size and length, for the info
+        }
         return 0;
 
     case WM_APP_VIDEO_PREVIEW:
@@ -1185,10 +1188,12 @@ void Viewer::command(int id) {
     case CmdInfo:
         settings_.showInfo = !settings_.showInfo;
         settings_.save();
+        syncVideoControls();
         break;
     case CmdFilename:
         settings_.showFilename = !settings_.showFilename;
         settings_.save();
+        syncVideoControls();
         break;
     case CmdNext: go(1); break;
     case CmdNextFile: goToFile(1); break;
@@ -1697,7 +1702,9 @@ void Viewer::mouseActivity(POINT point) {
     viewSize(width, height);
     const double scale = GetDpiForWindow(hwnd_) / 96.0;
     if (showingVideo_) {
-        // A video's controls appear whenever the mouse moves, as in most players.
+        // A video's controls appear whenever the mouse moves, as in most players; the info
+        // shows while the mouse is in the top-left corner.
+        if (settings_.infoInCorner && !dragging_) cornerInfo_ = point.x < 160 * scale && point.y < 120 * scale;
         barVisible_ = settings_.showControls;
         syncVideoControls();
         SetTimer(hwnd_, kIdleTimer, kIdleDelayMs, nullptr);
@@ -2388,6 +2395,7 @@ void Viewer::showVideo(const std::wstring& path) {
     if (settings_.videoAutoplay && !playNow) SetTimer(hwnd_, kVideoPlayTimer, kVideoPlayDelayMs, nullptr);
     SetTimer(hwnd_, kVideoTickTimer, 250, nullptr);
     SetFocus(hwnd_);  // keys stay with Glance, not mpv's window
+    syncVideoControls();  // the file name box, for this file
     render();
     updateTitle();
     prefetchNeighbors();
@@ -2407,6 +2415,14 @@ void Viewer::syncVideoControls() {
     const bool busy = video_->scrubbing() || video_->paused() || video_->overControls(lastMouse_);
     video_->setFullScreen(fullScreen_);
     video_->setControlsVisible(settings_.showControls && (barVisible_ || busy));
+    // The file name, as over pictures: the video window covers what render() draws.
+    std::wstring label;
+    if (const std::wstring* path = navigator_.current(); path && (settings_.showFilename || showingFullInfo())) {
+        const std::wstring position = std::to_wstring(navigator_.index() + 1) + L" / " + std::to_wstring(navigator_.count());
+        label = showingFullInfo() ? fileName(*path) + L"\n" + position + L"\n" + video_->describe()
+                                  : fileName(*path) + L"    " + position;
+    }
+    video_->setLabel(label);
 }
 
 bool Viewer::videoKey(WPARAM key, bool control, bool shift) {

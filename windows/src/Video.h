@@ -105,6 +105,10 @@ public:
     void mouseLeave();
     bool scrubbing() const { return scrubbing_ || volumeDragging_; }  // dragging the timeline or volume
 
+    /// The file name box at the top left (Show filename, or the info in the corner), drawn over
+    /// the video like the controls, since the video window covers what Glance draws. Empty hides it.
+    void setLabel(const std::wstring& text);
+
     /// The bar also has Previous File, Next File and Full Screen, which are Glance's to do: after
     /// mouseDown, takeAction says which was pressed.
     enum class Action { None, PreviousFile, NextFile, FullScreen };
@@ -150,7 +154,9 @@ private:
     double property(const char* name, double fallback = 0) const;
     std::string stringProperty(const char* name) const;
     void command(std::initializer_list<const char*> arguments);
+    bool ensureGraphics();
     void drawControls();
+    void drawLabel();
     // Geometry of the controls (client coordinates, recomputed by drawControls)
     double timeAt(int x) const;
     void requestPreview(double time);
@@ -163,6 +169,7 @@ private:
     void* mpv_ = nullptr;  // mpv_handle
     HWND surface_ = nullptr;
     HWND overlay_ = nullptr;
+    HWND label_ = nullptr;
     std::atomic<bool> wakePending_{false};
     bool open_ = false;
     bool ended_ = false;
@@ -195,6 +202,15 @@ private:
     HBITMAP dib_ = nullptr;
     HGDIOBJ oldBitmap_ = nullptr;
     int dibWidth_ = 0, dibHeight_ = 0;
+
+    // The file name box: its own small layered window, so it costs nothing while hidden.
+    std::wstring labelText_;
+    ComPtr<IDWriteTextFormat> labelFormat_;
+    UINT labelDpi_ = 0;
+    HDC labelDc_ = nullptr;
+    HBITMAP labelDib_ = nullptr;
+    HGDIOBJ labelOldBitmap_ = nullptr;
+    int labelDibWidth_ = 0, labelDibHeight_ = 0;
 
     // Timeline pictures: a second mpv on its own thread, newest request wins.
     std::thread previewThread_;

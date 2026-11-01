@@ -229,12 +229,18 @@ VideoPlayer::~VideoPlayer() {
     }
     if (mpv_) api()->terminateDestroy(static_cast<mpv_handle*>(mpv_));
     if (overlay_) DestroyWindow(overlay_);
+    if (label_) DestroyWindow(label_);
     if (surface_) DestroyWindow(surface_);
     if (dc_) {
         SelectObject(dc_, oldBitmap_);
         DeleteDC(dc_);
     }
     if (dib_) DeleteObject(dib_);
+    if (labelDc_) {
+        SelectObject(labelDc_, labelOldBitmap_);
+        DeleteDC(labelDc_);
+    }
+    if (labelDib_) DeleteObject(labelDib_);
 }
 
 void VideoPlayer::createWindows() {
@@ -246,6 +252,8 @@ void VideoPlayer::createWindows() {
     // Layered and transparent to the mouse: drawn with per-pixel alpha over the video.
     overlay_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE, kOverlayClass, L"",
                                WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 1, 1, parent_, nullptr, GetModuleHandleW(nullptr), nullptr);
+    label_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE, kOverlayClass, L"",
+                             WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 1, 1, parent_, nullptr, GetModuleHandleW(nullptr), nullptr);
 }
 
 bool VideoPlayer::start() {
@@ -340,7 +348,9 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
     layout();
     ShowWindow(surface_, SW_SHOWNA);
     SetWindowPos(overlay_, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(label_, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     drawControls();
+    drawLabel();
     return true;
 }
 
@@ -356,6 +366,7 @@ void VideoPlayer::close() {
     run(api(), static_cast<mpv_handle*>(mpv_), {"stop"});
     ShowWindow(surface_, SW_HIDE);
     ShowWindow(overlay_, SW_HIDE);
+    ShowWindow(label_, SW_HIDE);
     controlsVisible_ = false;
     previews_.clear();
     ++generation_;
@@ -526,6 +537,92 @@ void VideoPlayer::layout() {
     const int height = std::min<int>(client.bottom, MulDiv(kOverlayHeight, GetDpiForWindow(parent_), 96));
     SetWindowPos(overlay_, HWND_TOP, 0, client.bottom - height, client.right, height, SWP_NOACTIVATE);
     if (controlsVisible_) drawControls();
+    drawLabel();  // a long name may fit now, or need cutting short
+}
+
+void VideoPlayer::setLabel(const std::wstring& text) {
+    if (text == labelText_) return;
+    labelText_ = text;
+    drawLabel();
+}
+
+void VideoPlayer::drawLabel() {
+    if (!label_) return;
+    if (labelText_.empty() || !open_ || !ensureGraphics()) {
+        ShowWindow(label_, SW_HIDE);
+        return;
+    }
+    RECT client{};
+    GetClientRect(parent_, &client);
+    const UINT dpi = GetDpiForWindow(parent_);
+    const float s = dpi / 96.0f;
+    if (labelDpi_ != dpi) {
+        // As Glance draws it over pictures: monospaced, so the lines line up.
+        labelFormat_.reset();
+        dwrite_->CreateTextFormat(L"Consolas", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                                  DWRITE_FONT_STRETCH_NORMAL, 13 * s, L"", labelFormat_.put());
+        if (!labelFormat_) return;
+        labelDpi_ = dpi;
+    }
+    // One line each, the box as wide as the text: a name too long for the window ends in "…".
+    const float left = 20 * s, top = 16 * s, padX = 14 * s, padY = 10 * s;
+    const float maxWidth = std::max(float(client.right) - left * 2 - padX * 2, 40 * s);
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite_->CreateTextLayout(labelText_.c_str(), static_cast<UINT32>(labelText_.size()), labelFormat_.get(), maxWidth,
+                                         2000 * s, layout.put()))) {
+        return;
+    }
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+    ComPtr<IDWriteInlineObject> ellipsis;
+    dwrite_->CreateEllipsisTrimmingSign(labelFormat_.get(), ellipsis.put());
+    layout->SetTrimming(&trimming, ellipsis.get());
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+    const int width = static_cast<int>(std::ceil(std::min(metrics.width, maxWidth) + padX * 2));
+    const int height = std::min<int>(static_cast<int>(std::ceil(metrics.height + padY * 2)), client.bottom);
+    if (width <= 0 || height <= 0) return;
+
+    if (width != labelDibWidth_ || height != labelDibHeight_) {
+        if (labelDc_) {
+            SelectObject(labelDc_, labelOldBitmap_);
+            DeleteDC(labelDc_);
+        }
+        if (labelDib_) DeleteObject(labelDib_);
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        labelDc_ = CreateCompatibleDC(nullptr);
+        labelDib_ = CreateDIBSection(labelDc_, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+        labelOldBitmap_ = SelectObject(labelDc_, labelDib_);
+        labelDibWidth_ = width;
+        labelDibHeight_ = height;
+    }
+    const RECT bounds{0, 0, width, height};
+    if (FAILED(target_->BindDC(labelDc_, &bounds))) return;
+    target_->BeginDraw();
+    target_->Clear(D2D1::ColorF(0, 0, 0, 0));
+    ComPtr<ID2D1SolidColorBrush> white, shade;
+    target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.9f), white.put());
+    target_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.6f), shade.put());
+    if (white && shade) {
+        const D2D1_RECT_F box{0, 0, float(width), float(height)};
+        target_->FillRoundedRectangle(D2D1::RoundedRect(box, 8 * s, 8 * s), shade.get());
+        target_->DrawTextLayout(D2D1::Point2F(padX, padY), layout.get(), white.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    }
+    target_->EndDraw();
+
+    POINT source{0, 0};
+    SIZE size{width, height};
+    BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    UpdateLayeredWindow(label_, nullptr, nullptr, &size, labelDc_, &source, 0, &blend, ULW_ALPHA);
+    SetWindowPos(label_, HWND_TOP, static_cast<int>(left), static_cast<int>(top), width, height,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
 void VideoPlayer::setControlsVisible(bool visible) {
@@ -808,6 +905,19 @@ void VideoPlayer::previewWorker() {
     mpv->terminateDestroy(handle);
 }
 
+bool VideoPlayer::ensureGraphics() {
+    if (!d2d_) {
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory), nullptr,
+                          reinterpret_cast<void**>(d2d_.put()));
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(dwrite_.put()));
+        if (!d2d_ || !dwrite_) return false;
+        const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        d2d_->CreateDCRenderTarget(&properties, target_.put());
+    }
+    return d2d_ && dwrite_ && target_;
+}
+
 void VideoPlayer::drawControls() {
     if (!overlay_) return;
     if ((!controlsVisible_ && toast_.empty()) || !open_) {
@@ -821,18 +931,7 @@ void VideoPlayer::drawControls() {
     const int width = client.right;
     const int height = std::min<int>(client.bottom, MulDiv(kOverlayHeight, dpi, 96));
     const int top = client.bottom - height;  // overlay's top in client coordinates
-    if (width <= 0 || height <= 0) return;
-
-    if (!d2d_) {
-        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory), nullptr,
-                          reinterpret_cast<void**>(d2d_.put()));
-        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(dwrite_.put()));
-        if (!d2d_ || !dwrite_) return;
-        const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
-            D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        d2d_->CreateDCRenderTarget(&properties, target_.put());
-        if (!target_) return;
-    }
+    if (width <= 0 || height <= 0 || !ensureGraphics()) return;
     if (formatDpi_ != dpi) {
         textFormat_.reset();
         iconFormat_.reset();
