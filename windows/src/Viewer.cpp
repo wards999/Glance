@@ -3021,10 +3021,11 @@ void Viewer::drawEndPage() {
     const std::wstring* now = navigator_.current();
     const std::wstring* next = neighbourPdf(endPage_);
     // The cover you're heading to is decoded ahead like any neighbouring file. This PDF's own cover
-    // usually isn't still cached by its last page: it's asked for small, and appears when it's ready.
-    const std::shared_ptr<GpuImage> big = next ? pdfCover(*next, openingRequest(), false) : nullptr;
-    std::shared_ptr<GpuImage> small = now ? pdfCover(*now, openingRequest(), false) : nullptr;
-    if (!small && now) small = pdfCover(*now, DecodeRequest{0, 0, 1024}, true);
+    // usually isn't still cached by its last page: it's asked for at a small size, and appears when
+    // it's ready.
+    const std::shared_ptr<GpuImage> heading = next ? pdfCover(*next, openingRequest(), false) : nullptr;
+    std::shared_ptr<GpuImage> leaving = now ? pdfCover(*now, openingRequest(), false) : nullptr;
+    if (!leaving && now) leaving = pdfCover(*now, DecodeRequest{0, 0, 1024}, true);
     const bool forward = endPage_ > 0;
     std::wstring text = (forward ? L"End of " : L"Start of ") + (now ? fileName(*now) : std::wstring());
     if (next) text += (forward ? L"\n\nNext: " : L"\n\nPrevious: ") + fileName(*next);
@@ -3046,8 +3047,8 @@ void Viewer::drawEndPage() {
     auto aspect = [](const std::shared_ptr<GpuImage>& image) {
         return image && image->width && image->height ? float(image->width) / float(image->height) : 0.0f;
     };
-    const float bigAspect = aspect(big) > 0 ? aspect(big) : aspect(small) > 0 ? aspect(small) : 0.7f;
-    const float smallAspect = aspect(small) > 0 ? aspect(small) : bigAspect;
+    const float bigAspect = aspect(heading) > 0 ? aspect(heading) : aspect(leaving) > 0 ? aspect(leaving) : 0.7f;
+    const float smallAspect = aspect(leaving) > 0 ? aspect(leaving) : bigAspect;
     const float gap = 24 * scale, between = 32 * scale;
     float bigH = std::min(static_cast<float>(height) * 0.45f, 420 * scale);
     float bigW = bigH * bigAspect, smallH = bigH / 2, smallW = smallH * smallAspect;
@@ -3058,7 +3059,7 @@ void Viewer::drawEndPage() {
         smallH *= shrink;
         smallW *= shrink;
     }
-    const bool showCovers = big || small;
+    const bool showCovers = heading || leaving;
     const float total = (showCovers ? bigH + gap : 0) + metrics.height;
     float y = (static_cast<float>(height) - total) / 2;
     if (showCovers) {
@@ -3075,8 +3076,8 @@ void Viewer::drawEndPage() {
             const D2D1_RECT_F frame{rect.left - 0.5f, rect.top - 0.5f, rect.right + 0.5f, rect.bottom + 0.5f};
             context_->DrawRectangle(&frame, overlayBrush_.get(), 1.0f, nullptr);
         };
-        draw(big, bigX, bigW, bigH, 1.0f);
-        draw(small, smallX, smallW, smallH, 0.5f);
+        draw(heading, bigX, bigW, bigH, 1.0f);
+        draw(leaving, smallX, smallW, smallH, 0.5f);
         y += bigH + gap;
     }
     const float boxLeft = (static_cast<float>(width) - metrics.width) / 2 - 16 * scale;
