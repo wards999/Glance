@@ -32,6 +32,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let infoBox = NSView()
     private let infoLabel = NSTextField(wrappingLabelWithString: "")
     private let messageLabel = NSTextField(labelWithString: "")
+    /// A few seconds' note at the top ("Resuming from page 12").
+    private let noticeLabel = NSTextField(labelWithString: "")
+    private var noticeHideTimer: Timer?
+    private let endPageView = EndPageView()
     private lazy var controlBar = ControlBar(target: self)
     private var adjustmentsPanel: AdjustmentsPanel?
 
@@ -41,7 +45,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var settingsObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
     private var appliedPDFLayout = PDFLayout()
-    private var appliedIncludes: (pdfs: Bool, videos: Bool)?
+    private var appliedIncludes: (pdfs: PDFNavigation, videos: Bool)?
     /// Core Image work (adjustments, crop, save) runs here, one job at a time.
     private let renderQueue = DispatchQueue(label: "glance.render", qos: .userInitiated)
 
@@ -51,6 +55,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var editedImage: CGImage?
     private var page = 0
     private var pdfURL: URL?  // the PDF you're in, once you've arrived (its place is restored once)
+    /// Past the last screen of a PDF, before the next one: the end page is up.
+    private var atPDFEnd = false
+    /// Arriving in a PDF partway through: say so when its page appears.
+    private var announceResume: URL?
+    /// The mouse is in the top-left corner, showing the info (Settings).
+    private var cornerInfo = false
     /// Bumped whenever the picture changes, so late results for an old picture are ignored.
     private var generation = 0
     private var direction = 1
@@ -126,7 +136,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             navigator.resort()
             updateTitle()
         }
-        let includes = (settings.includePDFsInFolders, settings.includeVideosInFolders)
+        let includes = (settings.pdfNavigation, settings.includeVideosInFolders)
         if let applied = appliedIncludes, applied != includes, let current = navigator.current {
             // Which files the folder lists changed: list it again, staying on the file you're viewing.
             scanFolder(current.deletingLastPathComponent(), keeping: current)
@@ -140,6 +150,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         keepAdjustments = settings.keepAdjustments
         saveQuality = settings.saveQuality
         showInfo = settings.showInfo
+        if !settings.showInfoInCorner { cornerInfo = false }
+        if atPDFEnd && nextPDF == nil { hideEndPage() }  // turned off, or the next file isn't a PDF now
         updateInfo()
         if !settings.showControls { setControlsVisible(false) }
         videoView?.options = videoOptions
@@ -252,6 +264,20 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     func windowWillClose(_ notification: Notification) {
         rememberFullScreen()
+        rememberPDFView()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        // The file name's single line can be as wide as the window allows.
+        if !infoBox.isHidden { updateInfo() }
+    }
+
+    /// Where you are in the PDF on screen, with the zoom if Settings remembers it ("page" alone is
+    /// saved as each page appears).
+    func rememberPDFView() {
+        guard let url = pdfURL, let current, current.info.url == url, let first = current.info.pdf?.pages.first else { return }
+        let view = settings.rememberPDFZoom && editedImage == nil ? imageView.savedView : nil
+        PDFPlaces.save(.init(page: first, screen: current.page, layout: "\(settings.pdfLayout)", view: view), for: url)
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -295,7 +321,16 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         infoLabel.isSelectable = false
         infoLabel.preferredMaxLayoutWidth = 420
         infoLabel.translatesAutoresizingMaskIntoConstraints = false
+        // A long file name gives way (truncates) rather than pushing the box off the window.
+        infoLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         infoBox.addSubview(infoLabel)
+
+        endPageView.frame = content.bounds
+        endPageView.autoresizingMask = [.width, .height]
+        endPageView.isHidden = true
+        endPageView.menu = contextMenu
+        endPageView.scrollTarget = imageView
+        content.addSubview(endPageView)
         content.addSubview(infoBox)
 
         messageLabel.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -306,6 +341,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         messageLabel.isHidden = true
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(messageLabel)
+
+        noticeLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        noticeLabel.textColor = .white
+        noticeLabel.alignment = .center
+        noticeLabel.drawsBackground = true
+        noticeLabel.backgroundColor = NSColor.black.withAlphaComponent(0.6)
+        noticeLabel.isHidden = true
+        noticeLabel.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(noticeLabel)
 
         controlBar.alphaValue = 0
         controlBar.isHidden = true
@@ -321,6 +365,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             // housing and rounded corners in full screen.
             infoBox.leadingAnchor.constraint(equalTo: content.safeAreaLayoutGuide.leadingAnchor, constant: 20),
             infoBox.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 16),
+            infoBox.trailingAnchor.constraint(lessThanOrEqualTo: content.safeAreaLayoutGuide.trailingAnchor, constant: -20),
+
+            noticeLabel.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            noticeLabel.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor, constant: 16),
 
             messageLabel.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: content.centerYAnchor),
@@ -360,12 +408,17 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func scanFolder(_ folder: URL, keeping selected: URL?) {
         let order = navigator.sortOrder
         let descending = navigator.descending
-        // Opening a PDF directly means you're reading PDFs, so its neighbours count too.
-        let includePDFs = settings.includePDFsInFolders || (selected.map(PDFRenderer.isPDF) ?? false)
+        // Opening a PDF directly means you're reading PDFs, so its neighbours count too, unless
+        // Settings says next/previous always include or always skip PDFs.
+        let includePDFs = settings.pdfNavigation.includesPDFs(openedPDF: selected.map(PDFRenderer.isPDF) ?? false)
         let includeVideos = settings.includeVideosInFolders || (selected.map(VideoFiles.isPlayable) ?? false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let files = FolderNavigator.scan(folder: folder, order: order, descending: descending,
+            var files = FolderNavigator.scan(folder: folder, order: order, descending: descending,
                                              includePDFs: includePDFs, includeVideos: includeVideos)
+            // The file you opened is always listed (a PDF when PDFs are skipped), in its place in the order.
+            if let selected, !files.contains(where: { $0.standardizedFileURL == selected.standardizedFileURL }) {
+                files = FolderNavigator.sort(files + [selected], by: order, descending: descending)
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let selected {
@@ -456,6 +509,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func showCurrent(keepPage: Bool = false) {
+        hideEndPage()
+        imageView.restoredView = nil  // only for the PDF it was meant for, below
         animation?.cancel()
         animation = nil
         if let foregroundKey { pipeline.drop(foregroundKey) }
@@ -469,7 +524,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             updateInfo()
             return
         }
-        if url != pdfURL { pdfURL = nil }
+        if url != pdfURL {
+            rememberPDFView()  // moved on from a PDF: its zoom, for next time
+            pdfURL = nil
+        }
         if VideoFiles.isPlayable(url) {
             showVideo(url)
             return
@@ -480,6 +538,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             // Arriving at a PDF: open it where you left it.
             pdfURL = url
             if !keepPage, let place = PDFPlaces.place(for: url) {
+                if settings.rememberPDFZoom, let view = place.view { imageView.restoredView = view }
+                if place.screen > 0 { announceResume = url }
                 let layout = settings.pdfLayout
                 if place.layout == "\(layout)" {
                     page = place.screen
@@ -568,6 +628,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         updateHoldToZoom()
         if messageIsSticky { hideMessage() }
         display(decoded.image, resetView: resetView)
+        if announceResume == decoded.info.url, let first = decoded.info.pdf?.pages.first {
+            announceResume = nil
+            showNotice("Resuming from page \(first)")
+        }
         if decoded.info.isAnimated && decoded.page == 0 {
             startAnimation(decoded.info)
         }
@@ -666,7 +730,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     func imageViewDidChangeZoom(_ view: ImageView) {
         updateTitle()
-        if showInfo { updateInfo() }
+        if showInfo || cornerInfo { updateInfo() }
     }
 
     func imageView(_ view: ImageView, needsLongSide pixels: Int) {
@@ -703,9 +767,25 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         open(urls)
     }
 
+    func imageViewMouseExited(_ view: ImageView) {
+        if cornerInfo {
+            cornerInfo = false
+            updateInfo()
+        }
+    }
+
     func imageViewMouseMoved(_ view: ImageView, at point: NSPoint) {
+        if settings.showInfoInCorner, !showingVideo {
+            // The info shows while the mouse is in the top-left corner (or over the info it brought up).
+            let overInfo = cornerInfo && !infoBox.isHidden && infoBox.frame.contains(view.convert(point, to: infoBox.superview))
+            let inCorner = (point.x < 160 && point.y > view.bounds.height - 150) || overInfo
+            if inCorner != cornerInfo {
+                cornerInfo = inCorner
+                updateInfo()
+            }
+        }
         // A video has its own bar (with Previous File and Next File); this one would cover it.
-        setControlsVisible(settings.showControls && !showingVideo && point.y < 110)
+        setControlsVisible(settings.showControls && !showingVideo && !atPDFEnd && point.y < 110)
         controlsHideTimer?.invalidate()
         controlsHideTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             guard let self, let window = self.window else { return }
@@ -729,6 +809,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             case NSPageUpFunctionKey, NSUpArrowFunctionKey:
                 goToFile(-1)
                 return true
+            // ⌥← / ⌥→ on a video: 30 seconds (Shift steps a frame).
+            case NSLeftArrowFunctionKey where showingVideo:
+                videoView?.seek(by: -30)
+                return true
+            case NSRightArrowFunctionKey where showingVideo:
+                videoView?.seek(by: 30)
+                return true
             default:
                 break
             }
@@ -738,6 +825,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         defer { keyRepeating = false }
         if showingVideo, let videoView, handleVideoKey(scalar, shift: event.modifierFlags.contains(.shift), video: videoView) {
             return true
+        }
+        if atPDFEnd {
+            // Nothing to pan on the end page: the arrows go on to the next PDF or back.
+            switch Int(scalar.value) {
+            case NSRightArrowFunctionKey, NSDownArrowFunctionKey:
+                go(1)
+                return true
+            case NSLeftArrowFunctionKey, NSUpArrowFunctionKey:
+                go(-1)
+                return true
+            default:
+                break
+            }
         }
         let step = max(view.bounds.width, view.bounds.height) * 0.15
 
@@ -808,6 +908,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func go(_ delta: Int) {
         direction = delta < 0 ? -1 : 1
+        if atPDFEnd {
+            // From the end page: on to the next PDF, or back to the last page (still there behind it).
+            hideEndPage()
+            if delta > 0 { goToFile(1) }
+            return
+        }
         // In a PDF, Space, arrows and the wheel turn its pages before moving to the next file.
         if let pdf = currentPDF, (0..<pdf.info.pageCount).contains(page + delta) {
             carryZoomForPageTurn(forward: delta > 0)
@@ -815,11 +921,48 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             showCurrent(keepPage: true)
             return
         }
+        if delta == 1, let pdf = currentPDF, page + 1 == pdf.info.pageCount, let next = nextPDF {
+            // Past the last page with another PDF next: a blank end page first, so the step from
+            // one document to the next is obvious.
+            showEndPage(after: pdf.info.url, next: next)
+            return
+        }
         guard navigator.move(by: delta) else {
             NSSound.beep()
             return
         }
         showCurrent()
+    }
+
+    /// The next file, if it's another PDF (and the end page is turned on).
+    private var nextPDF: URL? {
+        guard settings.pdfEndPage, let next = navigator.url(at: 1), next != navigator.current, PDFRenderer.isPDF(next) else { return nil }
+        return next
+    }
+
+    private func showEndPage(after current: URL, next: URL) {
+        atPDFEnd = true
+        setControlsVisible(false)
+        endPageView.show(ending: current.lastPathComponent, next: next.lastPathComponent, background: settings.backgroundColor)
+        endPageView.isHidden = false
+        // The next PDF's cover, usually decoded ahead already.
+        let key = pipelineKey(next, page: 0, size: openingDecodeSize)
+        if let hit = pipeline.cached(key) {
+            endPageView.setCover(hit.image)
+        } else {
+            pipeline.load(key, preview: nil) { [weak self] decoded in
+                guard let self, self.atPDFEnd, self.nextPDF == next else { return }
+                self.endPageView.setCover(decoded?.image)
+            }
+        }
+        updateTitle()
+    }
+
+    private func hideEndPage() {
+        guard atPDFEnd else { return }
+        atPDFEnd = false
+        endPageView.isHidden = true
+        updateTitle()
     }
 
     @objc func nextImage(_ sender: Any?) { go(1) }
@@ -1441,8 +1584,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         switch Int(scalar.value) {
         case 0x20: video.togglePause()
         // Arrows move through the video; Page Up/Down and the wheel still change file.
-        case NSLeftArrowFunctionKey: video.seek(by: shift ? -30 : -5)
-        case NSRightArrowFunctionKey: video.seek(by: shift ? 30 : 5)
+        // Shift steps one frame at a time (held, it keeps stepping); ⌥ jumps 30 seconds.
+        case NSLeftArrowFunctionKey: if shift { video.frameStep(forward: false) } else { video.seek(by: -5) }
+        case NSRightArrowFunctionKey: if shift { video.frameStep(forward: true) } else { video.seek(by: 5) }
         case NSUpArrowFunctionKey: video.changeVolume(by: 5)
         case NSDownArrowFunctionKey: video.changeVolume(by: -5)
         default:
@@ -1609,7 +1753,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         window.title = url.lastPathComponent
         window.representedURL = url
         var parts = ["\(navigator.index + 1) / \(navigator.count)"]
-        if let info = current?.info, info.url == url {
+        if atPDFEnd {
+            parts.append("end of the document")
+        } else if let info = current?.info, info.url == url {
             let size = displayFullSize
             parts.append("\(Int(size.width)) × \(Int(size.height))")
             if let pdf = info.pdf {
@@ -1622,14 +1768,17 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             parts.append(details)
         }
         window.subtitle = parts.joined(separator: "  ·  ")
-        if settings.showFilename && !showInfo { updateInfo() }
+        if settings.showFilename && !showInfo && !cornerInfo { updateInfo() }
     }
 
     private func updateInfo() {
         let position = "\(navigator.index + 1) / \(navigator.count)"
+        let showInfo = self.showInfo || cornerInfo
         if !showInfo, settings.showFilename, let url = navigator.current {
-            // File name only ("Show filename").
+            // File name only ("Show filename"), always on one line: the box widens to fit it, and a
+            // name too long for the window ends in an ellipsis rather than wrapping.
             infoBox.isHidden = false
+            setInfoSingleLine(true)
             infoLabel.stringValue = "\(url.lastPathComponent)   \(position)"
             return
         }
@@ -1638,6 +1787,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return
         }
         infoBox.isHidden = false
+        setInfoSingleLine(false)
         infoLabel.stringValue = InfoFormatter.text(
             for: current.info,
             position: position,
@@ -1646,6 +1796,23 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             page: page,
             edited: hasEdits
         )
+    }
+
+    private func setInfoSingleLine(_ single: Bool) {
+        infoLabel.maximumNumberOfLines = single ? 1 : 0
+        infoLabel.lineBreakMode = single ? .byTruncatingTail : .byWordWrapping
+        infoLabel.cell?.truncatesLastVisibleLine = single
+        let room = (window?.contentView?.safeAreaRect.width ?? 0) - 68  // the box's margins and padding
+        infoLabel.preferredMaxLayoutWidth = single ? max(room, 100) : 420
+    }
+
+    private func showNotice(_ text: String) {
+        noticeLabel.stringValue = "   \(text)   "
+        noticeLabel.isHidden = false
+        noticeHideTimer?.invalidate()
+        noticeHideTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            self?.noticeLabel.isHidden = true
+        }
     }
 
     private func showMessage(_ text: String, duration: TimeInterval? = 1.2) {

@@ -39,6 +39,8 @@ constexpr UINT WM_APP_VIDEO_PREVIEW = WM_APP + 6;
 constexpr UINT_PTR kVideoPlayTimer = 6;  // a video starts once you've stopped on it
 constexpr UINT_PTR kVideoTickTimer = 7;  // the controls' clock
 constexpr UINT kVideoPlayDelayMs = 300;
+constexpr UINT_PTR kNoticeTimer = 8;  // the note at the top goes after a few seconds
+constexpr UINT kNoticeMs = 3000;
 constexpr UINT_PTR kAnimationTimer = 4;
 constexpr UINT_PTR kIdleTimer = 5;
 constexpr UINT kIdleDelayMs = 1500;
@@ -242,7 +244,7 @@ Viewer::Viewer(HINSTANCE instance) : instance_(instance), settings_(Settings::lo
     appliedSort_ = settings_.sortOrder;
     appliedDescending_ = settings_.descending;
     appliedPdfLayout_ = pdfLayout();
-    appliedIncludePdfs_ = settings_.includePdfs;
+    appliedPdfNavigation_ = settings_.pdfNavigation;
     appliedIncludeVideos_ = settings_.includeVideos;
     navigator_.wraps = settings_.loop;
 }
@@ -433,6 +435,12 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             syncVideoControls();
             return 0;
         }
+        if (wParam == kNoticeTimer) {
+            KillTimer(hwnd_, kNoticeTimer);
+            notice_.clear();
+            render();
+            return 0;
+        }
         if (wParam == kVideoTickTimer) {
             if (showingVideo_ && video_) video_->tick();
             return 0;
@@ -506,9 +514,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         trackingMouse_ = false;
         KillTimer(hwnd_, kIdleTimer);
         cursorHidden_ = false;
-        if (barVisible_) {
+        if (barVisible_ || cornerInfo_) {
             barVisible_ = false;
             barHover_ = -1;
+            cornerInfo_ = false;
             render();
         }
         if (video_) video_->mouseLeave();
@@ -585,7 +594,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 go(wheelRemainder_ > 0 ? -1 : 1);
                 wheelRemainder_ -= wheelRemainder_ > 0 ? WHEEL_DELTA : -WHEEL_DELTA;
             }
-        } else if (current_) {
+        } else if (current_ && !endPage_) {
             setZoom(zoom_ * std::pow(1.2, double(delta) / WHEEL_DELTA), p.x, p.y);
         }
         return 0;
@@ -622,7 +631,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             render();
             return 0;
         }
-        if (!current_) return 0;
+        if (!current_ || endPage_) return 0;
         SetCapture(hwnd_);
         dragging_ = true;
         didDrag_ = false;
@@ -718,7 +727,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
-        if (!current_) return 0;
+        if (!current_ || endPage_) return 0;
         // Toggle between fitting the window and 100% at the clicked point.
         double fit = fitZoom();
         if (zoomMode_ == ZoomMode::Fit || std::abs(zoom_ - fit) < 0.001) {
@@ -776,7 +785,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             settings_.videoMuted = video_->muted();
         }
         settings_.save();
-        if (!pdfPath_.empty()) PdfPlaces::save(pdfPath_, pdfPlace_);  // the PDF on screen, too
+        if (!pdfPath_.empty()) {
+            rememberPdfView();
+            PdfPlaces::save(pdfPath_, pdfPlace_);  // the PDF on screen, too
+        }
         video_.reset();     // mpv and its windows first, while the parent still exists
         pipeline_.reset();  // stop the workers before the window goes away
         PostQuitMessage(0);
@@ -791,6 +803,12 @@ bool Viewer::onKey(WPARAM key, bool control, bool shift) {
     if (control && (key == VK_NEXT || key == VK_PRIOR)) {
         // Straight to the next or previous file, even from the middle of a PDF.
         goToFile(key == VK_NEXT ? 1 : -1);
+        render();
+        return true;
+    }
+    if (endPage_ && (key == VK_RIGHT || key == VK_DOWN || key == VK_LEFT || key == VK_UP)) {
+        // Nothing to pan on the end page: the arrows go on to the next PDF or back.
+        go(key == VK_RIGHT || key == VK_DOWN ? 1 : -1);
         render();
         return true;
     }
@@ -909,6 +927,8 @@ void Viewer::updateTitle() {
         if (video_) {
             if (const std::wstring details = video_->describe(); !details.empty()) title += L"  -  " + details;
         }
+    } else if (endPage_) {
+        title += L"  -  end of the document (Space for the next PDF)";
     } else if (current_ && samePath(current_->info.path, *path)) {
         if (current_->info.isPdf) {
             title += L"  -  " + current_->info.pdfPages;
@@ -993,12 +1013,16 @@ void Viewer::showContextMenu(int x, int y) {
     } else if (kind == Kind::Pdf) {
         add(menu, CmdNextPage, L"Next page\tSpace");
         add(menu, CmdPreviousPage, L"Previous page\tBackspace");
-        HMENU pages = CreatePopupMenu();
-        const wchar_t* layouts[] = {L"Automatic", L"Single page", L"Two pages", L"Two pages with cover"};
-        for (int i = 0; i < 4; ++i) add(pages, CmdPdfLayoutBase + i, layouts[i], true, settings_.pdfLayout == i);
-        separator(pages);
-        add(pages, CmdRightToLeft, L"Right to left", true, settings_.pdfRightToLeft);
-        submenu(menu, pages, L"Page layout");
+        // The page layouts are right here, not in a submenu: switching between one page and
+        // spreads is the thing you do most while reading. The choice is remembered (Glance.ini).
+        separator(menu);
+        const wchar_t* layouts[] = {L"Automatic layout", L"Single page", L"2 pages", L"2 pages with cover"};
+        for (int i = 0; i < 4; ++i) {
+            AppendMenuW(menu, MF_STRING | MFT_RADIOCHECK | (settings_.pdfLayout == i ? MF_CHECKED : 0), CmdPdfLayoutBase + i,
+                        layouts[i]);
+        }
+        add(menu, CmdRightToLeft, L"Right to left", true, settings_.pdfRightToLeft);
+        separator(menu);
         zoomMenu();
     } else {
         if (hasPages()) {
@@ -1280,9 +1304,9 @@ void Viewer::applySettings() {
         appliedDescending_ = settings_.descending;
         navigator_.sort(settings_.sortOrder, settings_.descending);
     }
-    if (settings_.includePdfs != appliedIncludePdfs_ || settings_.includeVideos != appliedIncludeVideos_) {
+    if (settings_.pdfNavigation != appliedPdfNavigation_ || settings_.includeVideos != appliedIncludeVideos_) {
         // Which files the folder lists changed: list it again, staying on the file you're viewing.
-        appliedIncludePdfs_ = settings_.includePdfs;
+        appliedPdfNavigation_ = settings_.pdfNavigation;
         appliedIncludeVideos_ = settings_.includeVideos;
         if (const std::wstring* path = navigator_.current()) scanFolder(Navigator::folderOf(*path), *path);
     }
@@ -1300,6 +1324,8 @@ void Viewer::applySettings() {
         }
     }
     if (slideshow_) SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
+    if (!settings_.infoInCorner) cornerInfo_ = false;
+    if (endPage_ && !nextPdf()) endPage_ = false;  // turned off, or the next file isn't a PDF now
     if (!settings_.showControls) {
         barVisible_ = false;
         barHover_ = -1;
@@ -1676,13 +1702,25 @@ void Viewer::mouseActivity(POINT point) {
         SetTimer(hwnd_, kIdleTimer, kIdleDelayMs, nullptr);
         return;
     }
-    const bool nearBottom = settings_.showControls && current_ && !dragging_ && point.y > height - 110 * scale;
+    // The info shows while the mouse is in the top-left corner (or over the info it brought up).
+    bool changed = false;
+    if (settings_.infoInCorner && !dragging_) {
+        const bool overInfo = cornerInfo_ && point.x >= overlayRect_.left && point.x < overlayRect_.right &&
+                              point.y >= overlayRect_.top && point.y < overlayRect_.bottom;
+        const bool inCorner = (point.x < 160 * scale && point.y < 120 * scale) || overInfo;
+        if (inCorner != cornerInfo_) {
+            cornerInfo_ = inCorner;
+            changed = true;
+        }
+    }
+    const bool nearBottom = settings_.showControls && current_ && !endPage_ && !dragging_ && point.y > height - 110 * scale;
     const int hover = barVisible_ ? controlBarHit(point) : -1;
     if (nearBottom != barVisible_ || hover != barHover_) {
         barVisible_ = nearBottom || hover >= 0;
         barHover_ = barVisible_ ? hover : -1;
-        render();
+        changed = true;
     }
+    if (changed) render();
     SetTimer(hwnd_, kIdleTimer, kIdleDelayMs, nullptr);
 }
 
@@ -1982,12 +2020,18 @@ void Viewer::scanFolder(const std::wstring& folder, const std::wstring& selected
     HWND hwnd = hwnd_;
     const SortOrder order = settings_.sortOrder;
     const bool descending = settings_.descending;
-    // Opening a PDF (or video) directly means you're reading PDFs, so its neighbours count too.
-    const bool withPdf = settings_.includePdfs || Pdf::isPdf(selected);
+    // Opening a PDF (or video) directly means you're reading PDFs, so its neighbours count too,
+    // unless Settings says next/previous always include or always skip PDFs.
+    const bool withPdf = settings_.includePdfsFrom(Pdf::isPdf(selected));
     const bool withVideo = settings_.includeVideos || Video::isVideo(selected);
     std::thread([hwnd, folder, selected, order, descending, withPdf, withVideo] {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         auto files = Navigator::scan(folder, supportedExtensions(withPdf, withVideo));
+        // The file you opened is always listed (a PDF when PDFs are skipped), in its place in the order.
+        if (!selected.empty() &&
+            std::none_of(files.begin(), files.end(), [&](const FileEntry& f) { return samePath(f.path, selected); })) {
+            files.push_back(Navigator::entryFor(selected));
+        }
         Navigator::sortEntries(files, order, descending);
         CoUninitialize();
         PostMessageW(hwnd, WM_APP_FOLDER, 0, reinterpret_cast<LPARAM>(new FolderResult{selected, std::move(files)}));
@@ -2007,11 +2051,32 @@ void Viewer::go(int delta) {
     direction_ = delta < 0 ? -1 : 1;
     // In a PDF, pages turn before moving on to the next file.
     if (showingPdf()) {
+        if (endPage_) {
+            // From the end page: on to the next PDF, or back to the last page (still there behind it).
+            endPage_ = false;
+            if (delta > 0) {
+                goToFile(1);
+            } else {
+                updateTitle();
+                render();
+            }
+            return;
+        }
         const long long target = static_cast<long long>(frame_) + delta;
         if (target >= 0 && target < static_cast<long long>(pdfScreens_)) {
             carryZoomForPageTurn(delta > 0);
             frame_ = static_cast<UINT>(target);
             showCurrent();
+            return;
+        }
+        if (delta == 1 && target == static_cast<long long>(pdfScreens_) && current_ && current_->info.isPdf && nextPdf()) {
+            // Past the last page with another PDF next: a blank end page first, so the step from
+            // one document to the next is obvious.
+            endPage_ = true;
+            hasSelection_ = false;
+            if (magnifying_) endMagnify();
+            updateTitle();
+            render();
             return;
         }
     }
@@ -2027,8 +2092,31 @@ void Viewer::goToFile(int delta) {
     showCurrent();
 }
 
+const std::wstring* Viewer::nextPdf() const {
+    if (!settings_.pdfEndPage) return nullptr;
+    const std::wstring* now = navigator_.current();
+    const std::wstring* next = navigator_.at(1);
+    if (!now || !next || samePath(*now, *next) || !Pdf::isPdf(*next)) return nullptr;
+    return next;
+}
+
+void Viewer::rememberPdfView() {
+    pdfPlace_.zoom = 0;
+    pdfPlace_.centerX = pdfPlace_.centerY = 0.5;
+    if (!settings_.rememberPdfZoom || !current_ || !current_->info.isPdf || !samePath(current_->info.path, pdfPath_)) return;
+    // While holding to zoom, the view to come back to is the one before the press.
+    const ZoomMode mode = magnifying_ ? savedMode_ : zoomMode_;
+    if (mode != ZoomMode::Custom) return;  // fitted: nothing to remember
+    const double fit = fitZoom();
+    if (fit <= 0) return;
+    pdfPlace_.zoom = (magnifying_ ? savedZoom_ : zoom_) / fit;
+    pdfPlace_.centerX = (magnifying_ ? savedCenterX_ : centerX_) / orientedWidth();
+    pdfPlace_.centerY = (magnifying_ ? savedCenterY_ : centerY_) / orientedHeight();
+}
+
 void Viewer::showCurrent() {
     const std::wstring* path = navigator_.current();
+    endPage_ = false;
     if (waiting_) pipeline_->drop(wantedKey_);
     edited_.reset();
     hasSelection_ = false;
@@ -2061,6 +2149,7 @@ void Viewer::showCurrent() {
     if (showingVideo_) leaveVideo();
     if (!pdfPath_.empty() && !samePath(*path, pdfPath_)) {
         // Moved on from a PDF: remember where you were in it, for next time.
+        rememberPdfView();
         PdfPlaces::save(pdfPath_, pdfPlace_);
         pdfPath_.clear();
         pdfScreens_ = 0;
@@ -2070,6 +2159,8 @@ void Viewer::showCurrent() {
         pdfPath_ = *path;
         pdfPlace_ = PdfPlaces::load(*path).value_or(PdfPlaces::Place{});
         frame_ = 0;
+        restorePdfView_ = settings_.rememberPdfZoom && pdfPlace_.zoom > 0;
+        announceResume_ = pdfPlace_.page > 1;
         if (pdfPlace_.page > 1) {
             if (pdfPlace_.layout == pdfLayout()) {
                 frame_ = static_cast<UINT>(pdfPlace_.screen);
@@ -2104,6 +2195,7 @@ void Viewer::showCurrent() {
 void Viewer::show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, bool resetView) {
     current_ = image;
     currentKey_ = key;
+    const PdfPlaces::Place arrivedAt = pdfPlace_;  // what was remembered, before this page replaces it
     if (image->info.isPdf) {
         pdfPath_ = image->info.path;
         pdfScreens_ = image->info.frameCount;
@@ -2126,6 +2218,19 @@ void Viewer::show(const DecodeKey& key, const std::shared_ptr<Decoded>& image, b
             centerX_ = carryRight_ ? orientedWidth() : 0;
             centerY_ = carryBottom_ ? orientedHeight() : 0;
             clampCenter();
+        }
+        if (image->info.isPdf && restorePdfView_) {
+            // Back in a PDF you'd zoomed into: the same zoom (relative to the window) and place.
+            restorePdfView_ = false;
+            zoom_ = std::clamp(arrivedAt.zoom * fitZoom(), 0.01, 32.0);
+            zoomMode_ = ZoomMode::Custom;
+            centerX_ = arrivedAt.centerX * orientedWidth();
+            centerY_ = arrivedAt.centerY * orientedHeight();
+            clampCenter();
+        }
+        if (image->info.isPdf && announceResume_) {
+            announceResume_ = false;
+            showNotice(L"Resuming from page " + std::to_wstring(image->info.pdfFirstPage));
         }
     } else {
         clampCenter();
@@ -2183,6 +2288,8 @@ void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
     // Decoded ahead: upload it now, while idle, so showing it later is only a draw.
     if (context_ && std::find(prefetchKeys_.begin(), prefetchKeys_.end(), result->key) != prefetchKeys_.end()) {
         gpuFor(result->key, result->image);
+        // The next PDF's cover, for the end page that's waiting for it.
+        if (const std::wstring* next = endPage_ ? nextPdf() : nullptr; next && samePath(result->key.path, *next)) render();
     }
 }
 
@@ -2297,8 +2404,15 @@ bool Viewer::videoKey(WPARAM key, bool control, bool shift) {
     switch (key) {
     case VK_SPACE: video_->togglePause(); break;
     // Arrows move through the video; Page Up/Down, Backspace and the wheel still change file.
-    case VK_LEFT: video_->seekBy(shift ? -30 : control ? -1 : -5); break;
-    case VK_RIGHT: video_->seekBy(shift ? 30 : control ? 1 : 5); break;
+    // Shift steps one frame at a time (held, it keeps stepping); Ctrl+Shift jumps 30 seconds.
+    case VK_LEFT:
+        if (shift && !control) video_->frameStep(false);
+        else video_->seekBy(shift ? -30 : control ? -1 : -5);
+        break;
+    case VK_RIGHT:
+        if (shift && !control) video_->frameStep(true);
+        else video_->seekBy(shift ? 30 : control ? 1 : 5);
+        break;
     case VK_UP: video_->changeVolume(5); break;
     case VK_DOWN: video_->changeVolume(-5); break;
     case 'M': video_->toggleMute(); break;
@@ -2742,7 +2856,7 @@ std::wstring Viewer::overlayText() const {
     if (!path) return {};
     const std::wstring position = std::to_wstring(navigator_.index() + 1) + L" / " + std::to_wstring(navigator_.count());
     const bool ready = current_ && samePath(current_->info.path, *path);
-    if (!settings_.showInfo) {
+    if (!showingFullInfo()) {
         return fileName(*path) + L"    " + position + (ready && current_->info.isPdf ? L"    " + current_->info.pdfPages : L"");
     }
 
@@ -2813,17 +2927,127 @@ void Viewer::drawOverlay() {
     const std::wstring text = overlayText();
     if (text.empty() || !ensureText()) return;
     const float scale = GetDpiForWindow(hwnd_) / 96.0f;
+    double width, height;
+    viewSize(width, height);
+    const float left = 20 * scale, top = 16 * scale, padX = 14 * scale, padY = 10 * scale;
+    // Each line stays on one line: the box grows to fit it, and a name too long for the window
+    // ends in an ellipsis rather than wrapping.
+    const float maxWidth = std::max(static_cast<float>(width) - left * 2 - padX * 2, 40 * scale);
     ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(), 640.0f * scale,
+    if (FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(), maxWidth,
                                          2000.0f * scale, layout.put()))) {
         return;
     }
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+    ComPtr<IDWriteInlineObject> ellipsis;
+    dwrite_->CreateEllipsisTrimmingSign(textFormat_.get(), ellipsis.put());
+    layout->SetTrimming(&trimming, ellipsis.get());
     DWRITE_TEXT_METRICS metrics{};
     layout->GetMetrics(&metrics);
-    const float left = 20 * scale, top = 16 * scale, padX = 14 * scale, padY = 10 * scale;
-    const D2D1_ROUNDED_RECT box{{left, top, left + metrics.width + padX * 2, top + metrics.height + padY * 2}, 8 * scale, 8 * scale};
+    const float textWidth = std::min(metrics.width, maxWidth);
+    const D2D1_ROUNDED_RECT box{{left, top, left + textWidth + padX * 2, top + metrics.height + padY * 2}, 8 * scale, 8 * scale};
+    overlayRect_ = box.rect;
     context_->FillRoundedRectangle(&box, overlayBrush_.get());
     context_->DrawTextLayout(D2D1_POINT_2F{left + padX, top + padY}, layout.get(), brush_.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+void Viewer::showNotice(const std::wstring& text) {
+    notice_ = text;
+    SetTimer(hwnd_, kNoticeTimer, kNoticeMs, nullptr);
+    render();
+}
+
+void Viewer::drawNotice() {
+    if (!ensureText()) return;
+    const float scale = GetDpiForWindow(hwnd_) / 96.0f;
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite_->CreateTextLayout(notice_.c_str(), static_cast<UINT32>(notice_.size()), textFormat_.get(), 800.0f * scale,
+                                         100.0f * scale, layout.put()))) {
+        return;
+    }
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+    double width, height;
+    viewSize(width, height);
+    // Top centre, or below the info box at the top left in a window too narrow for both.
+    const float padX = 16 * scale, padY = 8 * scale;
+    const float left = (static_cast<float>(width) - metrics.width) / 2 - padX;
+    const float top = overlayRect_.bottom > 0 && left < overlayRect_.right + 8 * scale ? overlayRect_.bottom + 8 * scale : 16 * scale;
+    const D2D1_ROUNDED_RECT box{{left, top, left + metrics.width + padX * 2, top + metrics.height + padY * 2}, 8 * scale, 8 * scale};
+    context_->FillRoundedRectangle(&box, overlayBrush_.get());
+    context_->DrawTextLayout(D2D1_POINT_2F{left + padX - metrics.left, top + padY}, layout.get(), brush_.get(),
+                             D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+void Viewer::drawGpuImage(const GpuImage& image, const D2D1_RECT_F& rect) {
+    const float sx = (rect.right - rect.left) / image.width, sy = (rect.bottom - rect.top) / image.height;
+    const D2D1_MATRIX_3X2_F transform = matrix(sx, 0, 0, sy, rect.left, rect.top);
+    context_->SetTransform(&transform);
+    for (const auto& tile : image.tiles) {
+        context_->DrawBitmap(tile.bitmap.get(), &tile.rect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
+    }
+    const D2D1_MATRIX_3X2_F plain = identity();
+    context_->SetTransform(&plain);
+}
+
+void Viewer::drawEndPage() {
+    if (!ensureText()) return;
+    const float scale = GetDpiForWindow(hwnd_) / 96.0f;
+    double width, height;
+    viewSize(width, height);
+    const std::wstring* now = navigator_.current();
+    const std::wstring* next = nextPdf();
+    // The next PDF's cover is decoded ahead like any next file; until it's there, only the text.
+    std::shared_ptr<GpuImage> cover;
+    if (next) {
+        const DecodeKey key = keyFor(*next, 0, openingRequest());
+        if (auto it = gpuCache_.find(key); it != gpuCache_.end()) {
+            cover = it->second;
+        } else if (auto image = pipeline_->cached(key)) {
+            cover = gpuFor(key, image);
+        }
+    }
+    std::wstring text = L"End of " + (now ? fileName(*now) : std::wstring());
+    if (next) text += L"\n\nNext: " + fileName(*next);
+    text += L"\nSpace for the next PDF  \u00B7  Backspace to go back";
+    const float maxWidth = std::max(static_cast<float>(width) - 80 * scale, 100 * scale);
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(), maxWidth,
+                                         1000.0f * scale, layout.put()))) {
+        return;
+    }
+    layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+
+    const float gap = 24 * scale;
+    float coverW = 0, coverH = 0;
+    if (cover && cover->width && cover->height) {
+        coverH = std::min(static_cast<float>(height) * 0.45f, 420 * scale);
+        coverW = coverH * cover->width / cover->height;
+        if (coverW > maxWidth) {
+            coverW = maxWidth;
+            coverH = coverW * cover->height / cover->width;
+        }
+    }
+    const float total = coverH + (coverH > 0 ? gap : 0) + metrics.height;
+    float y = (static_cast<float>(height) - total) / 2;
+    if (coverH > 0) {
+        const float x = (static_cast<float>(width) - coverW) / 2;
+        const D2D1_RECT_F rect{x, y, x + coverW, y + coverH};
+        drawGpuImage(*cover, rect);
+        const D2D1_RECT_F frame{rect.left - 0.5f, rect.top - 0.5f, rect.right + 0.5f, rect.bottom + 0.5f};
+        context_->DrawRectangle(&frame, overlayBrush_.get(), 1.0f, nullptr);
+        y += coverH + gap;
+    }
+    const float boxLeft = (static_cast<float>(width) - metrics.width) / 2 - 16 * scale;
+    const D2D1_ROUNDED_RECT box{{boxLeft, y - 10 * scale, boxLeft + metrics.width + 32 * scale, y + metrics.height + 10 * scale},
+                                8 * scale, 8 * scale};
+    context_->FillRoundedRectangle(&box, overlayBrush_.get());
+    context_->DrawTextLayout(D2D1_POINT_2F{(static_cast<float>(width) - maxWidth) / 2, y}, layout.get(), brush_.get(),
+                             D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
 
 void Viewer::render() {
@@ -2833,9 +3057,12 @@ void Viewer::render() {
     const D2D1_COLOR_F background = colour(settings_.background);
     context_->SetTransform(&plain);
     context_->Clear(&background);
+    overlayRect_ = {};  // set again if the info is drawn
 
     if (current_ && !shown_) shown_ = gpuFor(currentKey_, current_);
-    if (current_ && shown_) {
+    if (endPage_) {
+        drawEndPage();
+    } else if (current_ && shown_) {
         const D2D1_MATRIX_3X2_F transform = imageTransform();
         context_->SetTransform(&transform);
         // Screen pixels per bitmap pixel decides the filter: smooth when shrinking, real pixels
@@ -2852,16 +3079,17 @@ void Viewer::render() {
                         float(std::max(dragStart_.x, dragLast_.x)) + 0.5f, float(std::max(dragStart_.y, dragLast_.y)) + 0.5f};
         context_->DrawRectangle(&box, brush_.get(), 1.0f, nullptr);
     }
-    if (hasSelection_ && brush_ && darkBrush_) {
+    if (hasSelection_ && !endPage_ && brush_ && darkBrush_) {
         // Crop selection: a light line over a dark one, visible on any picture.
         const D2D1_POINT_2F a = toView(selection_.left, selection_.top), b = toView(selection_.right, selection_.bottom);
         const D2D1_RECT_F box{std::round(a.x) + 0.5f, std::round(a.y) + 0.5f, std::round(b.x) - 0.5f, std::round(b.y) - 0.5f};
         context_->DrawRectangle(&box, darkBrush_.get(), 3.0f, nullptr);
         context_->DrawRectangle(&box, brush_.get(), 1.0f, nullptr);
     }
-    if (settings_.showInfo || settings_.showFilename) drawOverlay();
+    if (showingFullInfo() || settings_.showFilename) drawOverlay();
     if (busy_ && waiting_) drawBusyNote();
     if (barVisible_ && settings_.showControls && current_) drawControlBar();
+    if (!notice_.empty()) drawNotice();
 
     HRESULT hr = context_->EndDraw();
     if (SUCCEEDED(hr)) hr = swapChain_->Present(1, 0);

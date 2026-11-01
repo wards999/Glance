@@ -30,6 +30,7 @@ enum Id {
     IdBackground,
     IdInfo,
     IdFilename,
+    IdInfoInCorner,
     IdPixels,
     IdControls,
     IdHideCursor,
@@ -39,7 +40,9 @@ enum Id {
     IdKeepAdjustments,
     IdPdfLayout,
     IdPdfRightToLeft,
-    IdIncludePdfs,
+    IdPdfNavigation,
+    IdPdfEndPage,
+    IdRememberPdfZoom,
     IdHoldToZoom,
     IdHoldZoom,
     IdIncludeVideos,
@@ -129,12 +132,13 @@ SIZE build() {
                {L"1 second", L"2 seconds", L"3 seconds", L"5 seconds", L"10 seconds", L"30 seconds"},
                indexOf(kSlideshowSeconds, s.slideshowSeconds, 2));
     left.endGroup();
-    left.group(L"Display", 8);
+    left.group(L"Display", 9);
     left.combo(IdStartFullScreen, L"Open in:", {L"Full screen", L"A window", L"As you left it"}, s.openIn);
     left.checkbox(IdEnlarge, L"Enlarge small images to fit the window", s.enlargeSmall);
     left.button(IdBackground, L"Background:", L"Choose colour...");
     left.checkbox(IdInfo, L"Show picture info (EXIF)", s.showInfo);
     left.checkbox(IdFilename, L"Show the file name", s.showFilename);
+    left.checkbox(IdInfoInCorner, L"Show info when the mouse is in the top-left corner", s.infoInCorner);
     left.checkbox(IdPixels, L"Show individual pixels above 400% zoom", s.pixelatedZoom);
     left.checkbox(IdControls, L"Show buttons when the mouse nears the bottom", s.showControls);
     left.checkbox(IdHideCursor, L"Hide the mouse pointer in full screen", s.hideCursor);
@@ -164,10 +168,13 @@ SIZE build() {
                 indexOf(kQuality, s.saveQuality, 2));
     right.checkbox(IdKeepAdjustments, L"Keep adjustments for the next image (F4)", s.keepAdjustments);
     right.endGroup();
-    right.group(L"PDF", 5);
+    right.group(L"PDF", 7);
     right.combo(IdPdfLayout, L"Page layout:", {L"Automatic", L"Single page", L"Two pages", L"Two pages with cover"}, s.pdfLayout);
     right.checkbox(IdPdfRightToLeft, L"Right to left (manga)", s.pdfRightToLeft);
-    right.checkbox(IdIncludePdfs, L"Include PDFs when browsing folders", s.includePdfs);
+    right.combo(IdPdfNavigation, L"Next / previous file:",
+                {L"Other PDFs when you opened a PDF", L"Includes PDFs, even among photos", L"Skips PDFs"}, s.pdfNavigation);
+    right.checkbox(IdPdfEndPage, L"End page with the next PDF's cover", s.pdfEndPage);
+    right.checkbox(IdRememberPdfZoom, L"Remember each PDF's zoom and position", s.rememberPdfZoom);
     right.combo(IdHoldToZoom, L"Hold to zoom:", {L"Off", L"PDFs only", L"PDFs and images"}, s.holdToZoom);
     right.combo(IdHoldZoom, L"Magnification:", {L"1.5x", L"2x", L"2.5x", L"3x", L"4x"}, indexOf(kHoldZoom, s.holdZoomPercent, 2));
     right.endGroup();
@@ -220,6 +227,7 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case IdBackground: chooseColour(); break;
         case IdInfo: s.showInfo = checked; break;
         case IdFilename: s.showFilename = checked; break;
+        case IdInfoInCorner: s.infoInCorner = checked; break;
         case IdPixels: s.pixelatedZoom = checked; break;
         case IdControls: s.showControls = checked; break;
         case IdHideCursor: s.hideCursor = checked; break;
@@ -229,7 +237,9 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case IdKeepAdjustments: s.keepAdjustments = checked; break;
         case IdPdfLayout: s.pdfLayout = selection; break;
         case IdPdfRightToLeft: s.pdfRightToLeft = checked; break;
-        case IdIncludePdfs: s.includePdfs = checked; break;
+        case IdPdfNavigation: if (picked) s.pdfNavigation = selection; break;
+        case IdPdfEndPage: s.pdfEndPage = checked; break;
+        case IdRememberPdfZoom: s.rememberPdfZoom = checked; break;
         case IdIncludeVideos: s.includeVideos = checked; break;
         case IdVideoAutoplay: s.videoAutoplay = checked; break;
         case IdVideoPreviews: s.videoPreviews = checked; break;

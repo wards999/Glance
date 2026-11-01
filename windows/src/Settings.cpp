@@ -94,6 +94,7 @@ Settings Settings::load() {
     s.background = static_cast<COLORREF>(number(L"Background", static_cast<int>(s.background)));
     s.showInfo = flag(L"ShowInfo", s.showInfo);
     s.showFilename = flag(L"ShowFilename", s.showFilename);
+    s.infoInCorner = flag(L"InfoInCorner", s.infoInCorner);
     s.pixelatedZoom = flag(L"PixelatedZoom", s.pixelatedZoom);
     s.showControls = flag(L"ShowControls", s.showControls);
     s.hideCursor = flag(L"HideCursor", s.hideCursor);
@@ -103,7 +104,10 @@ Settings Settings::load() {
     s.keepAdjustments = flag(L"KeepAdjustments", s.keepAdjustments);
     s.pdfLayout = std::clamp(number(L"PdfLayout", s.pdfLayout), 0, 3);
     s.pdfRightToLeft = flag(L"PdfRightToLeft", s.pdfRightToLeft);
-    s.includePdfs = flag(L"IncludePdfs", s.includePdfs);
+    // PdfNavigation replaced IncludePdfs (on/off); an older Glance.ini still says which it was.
+    s.pdfNavigation = std::clamp(number(L"PdfNavigation", flag(L"IncludePdfs", false) ? 1 : 0), 0, 2);
+    s.pdfEndPage = flag(L"PdfEndPage", s.pdfEndPage);
+    s.rememberPdfZoom = flag(L"RememberPdfZoom", s.rememberPdfZoom);
     s.includeVideos = flag(L"IncludeVideos", s.includeVideos);
     s.videoAutoplay = flag(L"VideoAutoplay", s.videoAutoplay);
     s.videoPreviews = flag(L"VideoPreviews", s.videoPreviews);
@@ -141,6 +145,7 @@ void Settings::save() const {
     put(L"Background", static_cast<long long>(background));
     put(L"ShowInfo", showInfo);
     put(L"ShowFilename", showFilename);
+    put(L"InfoInCorner", infoInCorner);
     put(L"PixelatedZoom", pixelatedZoom);
     put(L"ShowControls", showControls);
     put(L"HideCursor", hideCursor);
@@ -150,7 +155,9 @@ void Settings::save() const {
     put(L"KeepAdjustments", keepAdjustments);
     put(L"PdfLayout", pdfLayout);
     put(L"PdfRightToLeft", pdfRightToLeft);
-    put(L"IncludePdfs", includePdfs);
+    put(L"PdfNavigation", pdfNavigation);
+    put(L"PdfEndPage", pdfEndPage);
+    put(L"RememberPdfZoom", rememberPdfZoom);
     put(L"IncludeVideos", includeVideos);
     put(L"VideoAutoplay", videoAutoplay);
     put(L"VideoPreviews", videoPreviews);

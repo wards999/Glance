@@ -70,23 +70,31 @@ constexpr wchar_t kSection[] = L"Pages";
 std::optional<Place> load(const std::wstring& path) {
     const std::wstring ini = ParameterStore::placesFile(false);
     if (ini.empty()) return std::nullopt;
-    wchar_t value[64] = L"";
-    if (!GetPrivateProfileStringW(kSection, ParameterStore::placesKey(path).c_str(), L"", value, 64, ini.c_str())) {
+    wchar_t value[128] = L"";
+    if (!GetPrivateProfileStringW(kSection, ParameterStore::placesKey(path).c_str(), L"", value, 128, ini.c_str())) {
         return std::nullopt;
     }
     Place place;
-    if (swscanf_s(value, L"%d %d %d", &place.page, &place.screen, &place.layout) != 3 || place.page < 1 || place.screen < 0) {
-        return std::nullopt;
-    }
+    // An older Glance wrote only the first three; the zoom is then fitted.
+    const int fields = swscanf_s(value, L"%d %d %d %lf %lf %lf", &place.page, &place.screen, &place.layout, &place.zoom,
+                                 &place.centerX, &place.centerY);
+    if (fields < 3 || place.page < 1 || place.screen < 0) return std::nullopt;
+    if (fields < 6 || place.zoom < 0) place = Place{place.page, place.screen, place.layout};
     return place;
 }
 
 void save(const std::wstring& path, const Place& place) {
-    const std::wstring ini = ParameterStore::placesFile(place.page > 1);
+    const bool keep = place.page > 1 || place.zoom > 0;
+    const std::wstring ini = ParameterStore::placesFile(keep);
     if (ini.empty()) return;
-    wchar_t value[64];
-    swprintf(value, 64, L"%d %d %d", place.page, place.screen, place.layout);
-    WritePrivateProfileStringW(kSection, ParameterStore::placesKey(path).c_str(), place.page > 1 ? value : nullptr, ini.c_str());
+    wchar_t value[128];
+    if (place.zoom > 0) {
+        swprintf(value, 128, L"%d %d %d %.4f %.4f %.4f", place.page, place.screen, place.layout, place.zoom, place.centerX,
+                 place.centerY);
+    } else {
+        swprintf(value, 128, L"%d %d %d", place.page, place.screen, place.layout);
+    }
+    WritePrivateProfileStringW(kSection, ParameterStore::placesKey(path).c_str(), keep ? value : nullptr, ini.c_str());
 }
 
 }  // namespace PdfPlaces

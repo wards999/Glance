@@ -30,6 +30,7 @@ struct Settings {
     COLORREF background = RGB(0, 0, 0);
     bool showInfo = false;
     bool showFilename = false;
+    bool infoInCorner = false;  // show the info while the mouse is in the top-left corner
     bool pixelatedZoom = true;  // individual pixels above 400%
     bool showControls = true;   // button bar when the mouse nears the bottom (navigation buttons)
     bool hideCursor = true;     // in full screen, after the mouse stops
@@ -45,7 +46,12 @@ struct Settings {
     // PDF
     int pdfLayout = 0;            // 0 automatic, 1 single page, 2 two pages, 3 two pages with cover
     bool pdfRightToLeft = false;
-    bool includePdfs = false;     // when browsing folders; opening a PDF always includes its neighbours
+    // Which PDFs next/previous visit: 0 a PDF's neighbours when you opened a PDF, else none;
+    // 1 always (PDFs among photos too); 2 never (only the PDF you opened).
+    int pdfNavigation = 0;
+    bool includePdfsFrom(bool openedPdf) const { return pdfNavigation == 1 || (pdfNavigation == 0 && openedPdf); }
+    bool pdfEndPage = true;       // a blank end page before the next PDF, with its cover
+    bool rememberPdfZoom = false; // each PDF reopens at the zoom (and position) you left it at
     int holdToZoom = 1;           // 0 off, 1 PDFs only, 2 PDFs and images
     int holdZoomPercent = 250;
 

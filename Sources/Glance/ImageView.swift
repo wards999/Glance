@@ -9,6 +9,7 @@ protocol ImageViewDelegate: AnyObject {
     func imageView(_ view: ImageView, navigate delta: Int)
     func imageView(_ view: ImageView, didReceiveDrop urls: [URL])
     func imageViewMouseMoved(_ view: ImageView, at point: NSPoint)
+    func imageViewMouseExited(_ view: ImageView)
 }
 
 enum ZoomMode {
@@ -62,6 +63,29 @@ final class ImageView: NSView {
     /// and puts that corner of the new picture in view (clamping turns it into an edge-aligned view).
     var carriedZoom: (zoom: CGFloat, fromRight: Bool, fromBottom: Bool)?
 
+    /// A zoomed-in view that can be put back on another day, whatever the window's size: the zoom
+    /// as a multiple of fitting the window, and the middle of the view as a fraction of the picture.
+    struct SavedView {
+        var zoom: Double
+        var centerX: Double
+        var centerY: Double
+    }
+
+    /// The view on screen, if it's zoomed in or out by hand (nil when fitted or at a preset zoom).
+    /// While holding to zoom, the view the press will return to.
+    var savedView: SavedView? {
+        let state = magnifyState ?? (zoom: zoom, center: center, mode: zoomMode)
+        let size = orientedSize
+        let fit = fitZoom()
+        guard state.mode == .custom, image != nil, size.width > 0, size.height > 0, fit > 0 else { return nil }
+        return SavedView(zoom: Double(state.zoom / fit), centerX: Double(state.center.x / size.width),
+                         centerY: Double(state.center.y / size.height))
+    }
+
+    /// Applied by the next `setImage(…, resetView: true)`, like `carriedZoom`: reopening a PDF at
+    /// the zoom it was left at.
+    var restoredView: SavedView?
+
     /// Press and hold without moving to magnify; let go to return. The controller turns it on
     /// per picture (PDFs, or everything, per Settings).
     var holdToZoomEnabled = false
@@ -100,7 +124,8 @@ final class ImageView: NSView {
         hostLayer.addSublayer(selectionLayer)
 
         registerForDraggedTypes([.fileURL])
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil))
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
     }
 
     required init?(coder: NSCoder) {
@@ -153,6 +178,14 @@ final class ImageView: NSView {
                 center = CGPoint(x: carried.fromRight ? size.width : 0, y: carried.fromBottom ? size.height : 0)
                 clampCenter()
             }
+        }
+        if resetView, let restored = restoredView, image != nil {
+            restoredView = nil
+            let size = orientedSize
+            zoom = min(max(CGFloat(restored.zoom) * fitZoom(), 0.01), Self.maxZoom)
+            zoomMode = .custom
+            center = CGPoint(x: CGFloat(restored.centerX) * size.width, y: CGFloat(restored.centerY) * size.height)
+            clampCenter()
         }
         layoutImage()
         delegate?.imageViewDidChangeZoom(self)
@@ -689,6 +722,10 @@ final class ImageView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         delegate?.imageViewMouseMoved(self, at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        delegate?.imageViewMouseExited(self)
     }
 
     override func keyDown(with event: NSEvent) {

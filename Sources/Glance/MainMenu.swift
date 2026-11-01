@@ -92,7 +92,11 @@ enum MainMenu {
             particular = [
                 item("Next Page", #selector(C.nextImage(_:)), ""),
                 item("Previous Page", #selector(C.previousImage(_:)), ""),
-                submenu("Page Layout", pdfItems()),
+                // The layouts right here, not in a submenu: switching between one page and spreads
+                // is the thing you do most while reading. The choice is remembered.
+                .separator(),
+            ] + pdfItems(contextTitles: true) + [
+                .separator(),
                 submenu("Zoom", zoomItems()),
             ]
         case .picture:
@@ -306,9 +310,9 @@ enum MainMenu {
         ]
     }
 
-    private static func pdfItems() -> [NSMenuItem] {
+    private static func pdfItems(contextTitles: Bool = false) -> [NSMenuItem] {
         let modes = PDFPageMode.allCases.map { mode in
-            item(mode.title, #selector(C.setPDFPageMode(_:)), "", tag: mode.rawValue)
+            item(contextTitles ? mode.contextTitle : mode.title, #selector(C.setPDFPageMode(_:)), "", tag: mode.rawValue)
         }
         return sections(modes, [item("Right to Left", #selector(C.togglePDFRightToLeft(_:)), "")])
     }

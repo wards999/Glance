@@ -66,6 +66,14 @@ private:
     bool applyEffects(ID2D1Image* input, ComPtr<ID2D1Image>& output);
     void drawOverlay();
     std::wstring overlayText() const;
+    /// The full info panel: switched on, or the mouse is in the top-left corner (if Settings allows).
+    bool showingFullInfo() const { return settings_.showInfo || cornerInfo_; }
+    /// A few seconds' note at the top ("Resuming from page 12").
+    void showNotice(const std::wstring& text);
+    void drawNotice();
+    /// After a PDF's last page, when the next file is a PDF too: a blank page with its cover.
+    void drawEndPage();
+    void drawGpuImage(const GpuImage& image, const D2D1_RECT_F& rect);
     bool ensureText();
     /// Bottom-left note for a page that's taking a while, so it never looks frozen.
     void drawBusyNote();
@@ -86,6 +94,10 @@ private:
     void scanFolder(const std::wstring& folder, const std::wstring& selected);
     void go(int delta);
     void goToFile(int delta);
+    /// The next file, if it's another PDF (and the end page is turned on).
+    const std::wstring* nextPdf() const;
+    /// Puts the zoom and position on screen into pdfPlace_, if Settings remembers them.
+    void rememberPdfView();
 
     // View geometry (all in device pixels; "image" coordinates are oriented full-resolution pixels)
     void viewSize(double& width, double& height) const;
@@ -175,7 +187,7 @@ private:
     SortOrder appliedSort_ = SortOrder::Name;
     bool appliedDescending_ = false;
     int appliedPdfLayout_ = 0;
-    bool appliedIncludePdfs_ = false;
+    int appliedPdfNavigation_ = 0;
     bool appliedIncludeVideos_ = true;
     /// Creating the Direct3D device loads the GPU driver, which is slow; it starts on another
     /// thread the moment the app does, in parallel with the window and the first decode.
@@ -223,6 +235,10 @@ private:
     std::wstring pdfPath_;
     PdfPlaces::Place pdfPlace_;  // where you are in it, remembered when you leave
     UINT pdfScreens_ = 0;
+    bool endPage_ = false;         // past the last screen, before the next PDF
+    bool restorePdfView_ = false;  // arriving at a PDF: open at the zoom remembered in pdfPlace_
+    bool announceResume_ = false;  // ...and say which page it's resuming from
+    std::wstring notice_;
 
     ZoomMode zoomMode_ = ZoomMode::Fit;
     double zoom_ = 1;      // device pixels per full-resolution pixel
@@ -271,6 +287,8 @@ private:
     };
     std::vector<BarButton> barButtons_;
     bool barVisible_ = false;
+    bool cornerInfo_ = false;      // the mouse is in the top-left corner, showing the info
+    D2D1_RECT_F overlayRect_{};    // where the info or file name was last drawn
     int barHover_ = -1;
     bool trackingMouse_ = false;
     bool cursorHidden_ = false;

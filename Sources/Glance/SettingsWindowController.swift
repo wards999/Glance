@@ -79,6 +79,7 @@ final class SettingsWindowController: NSWindowController {
             [label("Background:"), colorWell({ s.backgroundColor }, { s.backgroundColor = $0 })],
             [empty, checkbox("Show the info overlay", { s.showInfo }, { s.showInfo = $0 })],
             [empty, checkbox("Show the file name", { s.showFilename }, { s.showFilename = $0 })],
+            [empty, checkbox("Show the info when the mouse is in the top-left corner", { s.showInfoInCorner }, { s.showInfoInCorner = $0 })],
             [empty, checkbox("Show controls when the mouse nears the bottom", { s.showControls }, { s.showControls = $0 })],
             [empty, checkbox("Hide the cursor in full screen", { s.hideCursorInFullScreen }, { s.hideCursorInFullScreen = $0 })],
             [empty, checkbox("Show individual pixels above 400% zoom", { s.pixelatedZoom }, { s.pixelatedZoom = $0 })],
@@ -92,7 +93,13 @@ final class SettingsWindowController: NSWindowController {
             [label("Page layout:"), popup(PDFPageMode.allCases.map(\.title), { s.pdfPageMode.rawValue }, { s.pdfPageMode = PDFPageMode(rawValue: $0) ?? .automatic })],
             [empty, note("Automatic shows magazine-like PDFs as a cover followed by two-page spreads, and other PDFs one page at a time.")],
             [empty, checkbox("Right to left (manga)", { s.pdfRightToLeft }, { s.pdfRightToLeft = $0 })],
-            [empty, checkbox("Include PDFs when browsing folders", { s.includePDFsInFolders }, { s.includePDFsInFolders = $0 })],
+            [label("Next / previous file:"), popup(
+                ["Other PDFs when you opened a PDF", "Includes PDFs, even among photos", "Skips PDFs"],
+                { s.pdfNavigation.rawValue },
+                { s.pdfNavigation = PDFNavigation(rawValue: $0) ?? .whenOpenedFromPDF }
+            )],
+            [empty, checkbox("End page with the next PDF's cover", { s.pdfEndPage }, { s.pdfEndPage = $0 })],
+            [empty, checkbox("Remember each PDF's zoom and position", { s.rememberPDFZoom }, { s.rememberPDFZoom = $0 })],
             [label("Hold to zoom:"), popup(["Off", "PDFs only", "PDFs and images"], { s.holdToZoom.rawValue }, { s.holdToZoom = HoldToZoom(rawValue: $0) ?? .pdfsOnly })],
             [label("Magnification:"), popup(
                 factors.map { String(format: "%g×", $0) },

@@ -32,6 +32,18 @@ enum HoldToZoom: Int {
     case off = 0, pdfsOnly, everything
 }
 
+/// Which PDFs Next and Previous visit.
+enum PDFNavigation: Int {
+    /// A PDF's neighbouring PDFs when you opened a PDF; none when browsing photos.
+    case whenOpenedFromPDF = 0
+    /// Always, PDFs among photos too.
+    case always
+    /// Never: only the PDF you opened.
+    case never
+
+    func includesPDFs(openedPDF: Bool) -> Bool { self == .always || (self == .whenOpenedFromPDF && openedPDF) }
+}
+
 /// User preferences, kept in UserDefaults.
 /// Setting any value posts `Settings.didChange`; the viewer and the Settings window both follow it.
 final class Settings {
@@ -57,6 +69,7 @@ final class Settings {
         static let fullScreenStyle = "fullScreenStyle"
         static let showInfo = "showInfo"
         static let showFilename = "showFilename"
+        static let infoInCorner = "showInfoInTopLeftCorner"
         static let showControls = "showControls"
         static let hideCursor = "hideCursorInFullScreen"
         static let pixelatedZoom = "pixelatedZoom"
@@ -66,7 +79,10 @@ final class Settings {
         static let quickPreview = "quickPreview"
         static let pdfPageMode = "pdfPageMode"
         static let pdfRightToLeft = "pdfRightToLeft"
-        static let includePDFs = "includePDFsInFolders"
+        static let includePDFs = "includePDFsInFolders"  // before pdfNavigation: on or off
+        static let pdfNavigation = "pdfNavigation"
+        static let pdfEndPage = "pdfEndPage"
+        static let rememberPDFZoom = "rememberPDFZoom"
         static let holdToZoom = "holdToZoom"
         static let holdZoomFactor = "holdZoomFactor"
         static let cacheGB = "cacheGB"
@@ -102,6 +118,7 @@ final class Settings {
             Key.fullScreenStyle: FullScreenStyle.instant.rawValue,
             Key.showInfo: false,
             Key.showFilename: false,
+            Key.infoInCorner: false,
             Key.showControls: true,
             Key.hideCursor: true,
             Key.pixelatedZoom: true,
@@ -112,6 +129,8 @@ final class Settings {
             Key.pdfPageMode: PDFPageMode.automatic.rawValue,
             Key.pdfRightToLeft: false,
             Key.includePDFs: false,
+            Key.pdfEndPage: true,
+            Key.rememberPDFZoom: false,
             Key.holdToZoom: HoldToZoom.pdfsOnly.rawValue,
             Key.holdZoomFactor: 2.5,
             Key.cacheGB: Self.defaultCacheGB,
@@ -222,6 +241,12 @@ final class Settings {
         set { store(newValue, Key.showFilename) }
     }
 
+    /// The info overlay appears while the mouse is in the top-left corner.
+    var showInfoInCorner: Bool {
+        get { defaults.bool(forKey: Key.infoInCorner) }
+        set { store(newValue, Key.infoInCorner) }
+    }
+
     var showControls: Bool {
         get { defaults.bool(forKey: Key.showControls) }
         set { store(newValue, Key.showControls) }
@@ -286,10 +311,29 @@ final class Settings {
 
     var pdfLayout: PDFLayout { PDFLayout(mode: pdfPageMode, rightToLeft: pdfRightToLeft) }
 
-    /// Off by default so flipping through a photo folder never stops to render a PDF.
-    var includePDFsInFolders: Bool {
-        get { defaults.bool(forKey: Key.includePDFs) }
-        set { store(newValue, Key.includePDFs) }
+    /// PDFs aren't listed among photos by default, so flipping through a photo folder never stops
+    /// to render one.
+    var pdfNavigation: PDFNavigation {
+        get {
+            // Until it's chosen, the older on/off setting says which it was.
+            guard defaults.object(forKey: Key.pdfNavigation) != nil else {
+                return defaults.bool(forKey: Key.includePDFs) ? .always : .whenOpenedFromPDF
+            }
+            return PDFNavigation(rawValue: defaults.integer(forKey: Key.pdfNavigation)) ?? .whenOpenedFromPDF
+        }
+        set { store(newValue.rawValue, Key.pdfNavigation) }
+    }
+
+    /// A blank page after a PDF's last page when the next file is a PDF too, with its cover.
+    var pdfEndPage: Bool {
+        get { defaults.bool(forKey: Key.pdfEndPage) }
+        set { store(newValue, Key.pdfEndPage) }
+    }
+
+    /// Each PDF reopens at the zoom, and the place on the page, you left it at.
+    var rememberPDFZoom: Bool {
+        get { defaults.bool(forKey: Key.rememberPDFZoom) }
+        set { store(newValue, Key.rememberPDFZoom) }
     }
 
     var holdToZoom: HoldToZoom {
@@ -384,6 +428,8 @@ enum PDFPlaces {
         var page = 0      // the first page on screen
         var screen = 0    // which screen (page or spread) that was, in `layout`
         var layout = ""   // the page layout then: if it's unchanged, `screen` is used directly
+        /// The zoom you left it at ("Remember each PDF's zoom"); nil when it was fitted.
+        var view: ImageView.SavedView?
     }
 
     private static let key = "pdfPlaces"
@@ -392,13 +438,23 @@ enum PDFPlaces {
         guard let saved = UserDefaults.standard.dictionary(forKey: key)?[url.path] as? [String: Any],
               let page = saved["page"] as? Int, let screen = saved["screen"] as? Int,
               let layout = saved["layout"] as? String else { return nil }
-        return Place(page: page, screen: screen, layout: layout)
+        var place = Place(page: page, screen: screen, layout: layout)
+        if let zoom = saved["zoom"] as? Double, let x = saved["centerX"] as? Double, let y = saved["centerY"] as? Double, zoom > 0 {
+            place.view = ImageView.SavedView(zoom: zoom, centerX: x, centerY: y)
+        }
+        return place
     }
 
-    /// The first screen forgets the file (it opens there anyway).
+    /// The first screen, fitted, forgets the file (it opens like that anyway).
     static func save(_ place: Place, for url: URL) {
         var all = UserDefaults.standard.dictionary(forKey: key) ?? [:]
-        all[url.path] = place.screen > 0 ? ["page": place.page, "screen": place.screen, "layout": place.layout] : nil
+        var entry: [String: Any] = ["page": place.page, "screen": place.screen, "layout": place.layout]
+        if let view = place.view {
+            entry["zoom"] = view.zoom
+            entry["centerX"] = view.centerX
+            entry["centerY"] = view.centerY
+        }
+        all[url.path] = place.screen > 0 || place.view != nil ? entry : nil
         UserDefaults.standard.set(all, forKey: key)
     }
 }

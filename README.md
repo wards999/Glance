@@ -48,10 +48,18 @@ and the next pages are rendered ahead while you read, so turning a page is insta
 macOS's own PDF engine; Windows uses PDFium, Chrome's PDF engine, in `pdfium.dll`.)
 
 **Layout.** A magazine opens as its cover on its own, then two-page spreads, as in print. Change
-this under right-click ▸ PDF pages (Windows) or Settings ▸ PDF: automatic, single page, two pages,
-or two pages with cover, plus **right to left** for manga and other right-to-left books.
+this straight from the right-click menu on a PDF, or in Settings ▸ PDF: automatic, single page,
+**2 pages**, or **2 pages with cover**, plus **right to left** for manga and other right-to-left
+books. The choice is remembered.
 
-**Turning pages.** Pages turn before Glance moves on to the next file in the folder.
+**Where you left off.** A PDF reopens at the page you were on, with "Resuming from page 12" at the
+top for a few seconds. Turn on **Remember each PDF's zoom and position** in Settings ▸ PDF and it
+also reopens at the zoom you left it at and, zoomed in, the same part of the page.
+
+**Turning pages.** Pages turn before Glance moves on to the next file in the folder. When that
+file is another PDF, a blank **end page** comes first, with the next PDF's cover and name, so it's
+obvious one document has ended: Space goes on to it, Backspace (Delete on the Mac) goes back. (Turn
+it off in Settings ▸ PDF.)
 
 | | Next page | Previous page |
 |---|---|---|
@@ -77,8 +85,9 @@ Settings.
 **Also:**
 
 - Password-protected PDFs ask for their password. It's kept in memory only, until Glance closes.
-- When you browse a folder of photos, PDFs in it are skipped unless you turn on "Include PDFs
-  when browsing folders" in Settings. Opening a PDF directly always works.
+- Settings ▸ PDF ▸ **Next / previous file** decides which PDFs next and previous visit: other PDFs
+  in the folder when you opened a PDF (the default; browsing photos skips them), PDFs always, even
+  among photos, or never (only the PDF you opened). Opening a PDF directly always works.
 - Glance never changes a PDF. Save As exports the page or spread on screen as an image.
 
 **PDF covers in Explorer (Windows).** Windows doesn't show PDF pages as thumbnails on its own.
@@ -112,7 +121,8 @@ waits until you stop). Short silent clips loop like GIFs.
 | | |
 |---|---|
 | Space, or click the picture | Play / pause |
-| ← / → | Back / forward 5 seconds (Shift: 30 s, Ctrl: 1 s) |
+| ← / → | Back / forward 5 seconds (Ctrl: 1 s; 30 s with Ctrl+Shift on Windows, ⌥ on the Mac) |
+| Shift+← / Shift+→ | Back / forward one frame (hold to keep stepping) |
 | , / . | Previous / next frame (while paused) |
 | ↑ / ↓, Ctrl+wheel | Volume |
 | M | Mute |
@@ -200,7 +210,7 @@ Get Info ▸ Open with ▸ Change All…).
 - Full screen with cursor auto-hide, optionally on launch. The menu bar and Dock are hidden completely; every command is on the right-click menu. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
 - Move to Trash, Reveal in Finder, Set as Desktop Picture, Copy, drag and drop, mouse back/forward buttons, trackpad swipe between images
 - A right-click menu with every command, including Reload, Print, Set Modification Date (now or date taken), Copy Original Size, Copy File Path, Paste, Show Filename, and lossless rotate/flip written straight to the file
-- **PDF reading**: pages rendered sharp at any zoom, decoded ahead like photos. Magazines open as a cover followed by two-page spreads (automatic, or choose single / two pages / two pages with cover, plus right to left). Space, arrows and the wheel turn pages before moving to the next file. Turning a page while zoomed in keeps the zoom and opens the new page at its top-left corner (top-right for right to left), or at the bottom corner when going back. **Hold to zoom**: press and hold on the page to magnify it, move to look around, let go to return. Password-protected PDFs ask for their password (kept in memory only). PDFs are skipped when browsing photo folders unless you turn that on, and they can't be overwritten: Save As exports the current page or spread as an image
+- **PDF reading**: pages rendered sharp at any zoom, decoded ahead like photos. Magazines open as a cover followed by two-page spreads (automatic, or choose single / two pages / two pages with cover, plus right to left). Space, arrows and the wheel turn pages before moving to the next file. Turning a page while zoomed in keeps the zoom and opens the new page at its top-left corner (top-right for right to left), or at the bottom corner when going back. **Hold to zoom**: press and hold on the page to magnify it, move to look around, let go to return. Password-protected PDFs ask for their password (kept in memory only). An end page with the next PDF's cover separates one PDF from the next, and a PDF reopens where you left it (optionally at the same zoom). PDFs are skipped when browsing photo folders unless you turn that on, and they can't be overwritten: Save As exports the current page or spread as an image
 - Adjustments can be saved per image and are reapplied whenever that file is opened
 
 Not included yet:
@@ -218,9 +228,9 @@ and the window always agree.
 
 | Tab | Options |
 |---|---|
-| PDF | Page layout (automatic / single / two pages / two pages with cover), right to left, include PDFs when browsing folders, hold to zoom (off / PDFs / everything) and its magnification |
+| PDF | Page layout (automatic / single / two pages / two pages with cover), right to left, which PDFs next / previous visit, end page with the next PDF's cover, remember each PDF's zoom and position, hold to zoom (off / PDFs / everything) and its magnification |
 | General | Sort order and direction, loop at end of folder, mouse wheel zooms or flips images, slideshow interval, keep adjustments between images |
-| Display | Open in full screen, full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, hover controls, hide cursor in full screen, pixel view above 400% |
+| Display | Open in full screen, full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, info when the mouse is in the top-left corner, hover controls, hide cursor in full screen, pixel view above 400% |
 | Saving | JPEG/HEIC quality, ask before re-encoding the original |
 | Performance | How many images to decode ahead (0–8), memory cache size |
 
@@ -286,7 +296,7 @@ the first time, then Explorer's cache.
 
 Settings are in a Settings dialog (right-click ▸ Settings…) and saved to
 `Glance.ini` beside `Glance.exe`, so copying the folder takes your settings along; adjustments
-saved per picture go to `Parameters.ini` and the page you were on in each PDF to `Pages.ini`, in
+saved per picture go to `Parameters.ini` and the page (and zoom) you were on in each PDF to `Pages.ini`, in
 the same folder. If Glance's folder can't be written to (under Program Files, say), they go to
 `%APPDATA%\Glance` instead.
 

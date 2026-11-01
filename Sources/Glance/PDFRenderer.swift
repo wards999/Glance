@@ -18,6 +18,16 @@ enum PDFPageMode: Int, CaseIterable {
         case .spreadsWithCover: return "Two Pages with Cover"
         }
     }
+
+    /// In the right-click menu, where the layouts sit among other commands.
+    var contextTitle: String {
+        switch self {
+        case .automatic: return "Automatic Layout"
+        case .single: return "Single Page"
+        case .spreads: return "2 Pages"
+        case .spreadsWithCover: return "2 Pages with Cover"
+        }
+    }
 }
 
 struct PDFLayout: Hashable {
