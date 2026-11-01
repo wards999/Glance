@@ -50,7 +50,7 @@ struct Settings {
     // 1 always (PDFs among photos too); 2 never (only the PDF you opened).
     int pdfNavigation = 0;
     bool includePdfsFrom(bool openedPdf) const { return pdfNavigation == 1 || (pdfNavigation == 0 && openedPdf); }
-    bool pdfEndPage = true;       // a blank end page before the next PDF, with its cover
+    bool pdfEndPage = true;       // a blank page between two PDFs (either way), with the other one's cover
     bool rememberPdfZoom = false; // each PDF reopens at the zoom (and position) you left it at
     int holdToZoom = 1;           // 0 off, 1 PDFs only, 2 PDFs and images
     int holdZoomPercent = 250;

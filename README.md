@@ -57,9 +57,10 @@ top for a few seconds. Turn on **Remember each PDF's zoom and position** in Sett
 also reopens at the zoom you left it at and, zoomed in, the same part of the page.
 
 **Turning pages.** Pages turn before Glance moves on to the next file in the folder. When that
-file is another PDF, a blank **end page** comes first, with the next PDF's cover and name, so it's
-obvious one document has ended: Space goes on to it, Backspace (Delete on the Mac) goes back. (Turn
-it off in Settings ▸ PDF.)
+file is another PDF, a blank **page between them** comes first, with the next PDF's cover and name,
+so it's obvious one document has ended: Space goes on to it, Backspace (Delete on the Mac) goes
+back. Going backwards works the same way: before the first page, the previous PDF's cover. (Turn it
+off in Settings ▸ PDF.)
 
 | | Next page | Previous page |
 |---|---|---|
@@ -210,7 +211,7 @@ Get Info ▸ Open with ▸ Change All…).
 - Full screen with cursor auto-hide, optionally on launch. The menu bar and Dock are hidden completely; every command is on the right-click menu. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
 - Move to Trash, Reveal in Finder, Set as Desktop Picture, Copy, drag and drop, mouse back/forward buttons, trackpad swipe between images
 - A right-click menu with every command, including Reload, Print, Set Modification Date (now or date taken), Copy Original Size, Copy File Path, Paste, Show Filename, and lossless rotate/flip written straight to the file
-- **PDF reading**: pages rendered sharp at any zoom, decoded ahead like photos. Magazines open as a cover followed by two-page spreads (automatic, or choose single / two pages / two pages with cover, plus right to left). Space, arrows and the wheel turn pages before moving to the next file. Turning a page while zoomed in keeps the zoom and opens the new page at its top-left corner (top-right for right to left), or at the bottom corner when going back. **Hold to zoom**: press and hold on the page to magnify it, move to look around, let go to return. Password-protected PDFs ask for their password (kept in memory only). An end page with the next PDF's cover separates one PDF from the next, and a PDF reopens where you left it (optionally at the same zoom). PDFs are skipped when browsing photo folders unless you turn that on, and they can't be overwritten: Save As exports the current page or spread as an image
+- **PDF reading**: pages rendered sharp at any zoom, decoded ahead like photos. Magazines open as a cover followed by two-page spreads (automatic, or choose single / two pages / two pages with cover, plus right to left). Space, arrows and the wheel turn pages before moving to the next file. Turning a page while zoomed in keeps the zoom and opens the new page at its top-left corner (top-right for right to left), or at the bottom corner when going back. **Hold to zoom**: press and hold on the page to magnify it, move to look around, let go to return. Password-protected PDFs ask for their password (kept in memory only). A page with the other PDF's cover separates one PDF from the next (either way), and a PDF reopens where you left it (optionally at the same zoom). PDFs are skipped when browsing photo folders unless you turn that on, and they can't be overwritten: Save As exports the current page or spread as an image
 - Adjustments can be saved per image and are reapplied whenever that file is opened
 
 Not included yet:
@@ -228,7 +229,7 @@ and the window always agree.
 
 | Tab | Options |
 |---|---|
-| PDF | Page layout (automatic / single / two pages / two pages with cover), right to left, which PDFs next / previous visit, end page with the next PDF's cover, remember each PDF's zoom and position, hold to zoom (off / PDFs / everything) and its magnification |
+| PDF | Page layout (automatic / single / two pages / two pages with cover), right to left, which PDFs next / previous visit, a page between PDFs with the other's cover, remember each PDF's zoom and position, hold to zoom (off / PDFs / everything) and its magnification |
 | General | Sort order and direction, loop at end of folder, mouse wheel zooms or flips images, slideshow interval, keep adjustments between images |
 | Display | Open in full screen, full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, info when the mouse is in the top-left corner, hover controls, hide cursor in full screen, pixel view above 400% |
 | Saving | JPEG/HEIC quality, ask before re-encoding the original |

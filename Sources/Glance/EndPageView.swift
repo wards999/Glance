@@ -1,7 +1,7 @@
 import AppKit
 
-/// After a PDF's last page, when the next file is a PDF too: a blank page saying the document has
-/// ended, with the next one's cover, so the step from one PDF to the next is obvious.
+/// Between two PDFs, after the last page going forward or before the first going back: a blank
+/// page with the other PDF's cover, so the step from one document to the next is obvious.
 final class EndPageView: NSView {
     private let cover = NSImageView()
     private let label = NSTextField(wrappingLabelWithString: "")
@@ -43,13 +43,15 @@ final class EndPageView: NSView {
         fatalError("init(coder:) is not supported")
     }
 
-    func show(ending current: String, next: String, background: NSColor) {
+    func show(forward: Bool, current: String, other: String, background: NSColor) {
         layer?.backgroundColor = background.cgColor
-        label.stringValue = "End of \(current)\n\nNext: \(next)\nSpace for the next PDF  ·  Delete to go back"
+        label.stringValue = forward
+            ? "End of \(current)\n\nNext: \(other)\nSpace for the next PDF  ·  Delete to go back"
+            : "Start of \(current)\n\nPrevious: \(other)\nDelete for the previous PDF  ·  Space to go back"
         setCover(nil)
     }
 
-    /// The next PDF's first screen; nil until it's decoded.
+    /// The other PDF's first screen; nil until it's decoded.
     func setCover(_ image: CGImage?) {
         guard let image, image.height > 0 else {
             cover.image = nil

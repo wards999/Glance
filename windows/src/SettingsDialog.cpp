@@ -173,7 +173,7 @@ SIZE build() {
     right.checkbox(IdPdfRightToLeft, L"Right to left (manga)", s.pdfRightToLeft);
     right.combo(IdPdfNavigation, L"Next / previous file:",
                 {L"Other PDFs when you opened a PDF", L"Includes PDFs, even among photos", L"Skips PDFs"}, s.pdfNavigation);
-    right.checkbox(IdPdfEndPage, L"End page with the next PDF's cover", s.pdfEndPage);
+    right.checkbox(IdPdfEndPage, L"A page between PDFs, with the other's cover", s.pdfEndPage);
     right.checkbox(IdRememberPdfZoom, L"Remember each PDF's zoom and position", s.rememberPdfZoom);
     right.combo(IdHoldToZoom, L"Hold to zoom:", {L"Off", L"PDFs only", L"PDFs and images"}, s.holdToZoom);
     right.combo(IdHoldZoom, L"Magnification:", {L"1.5x", L"2x", L"2.5x", L"3x", L"4x"}, indexOf(kHoldZoom, s.holdZoomPercent, 2));

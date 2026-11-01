@@ -98,7 +98,7 @@ final class SettingsWindowController: NSWindowController {
                 { s.pdfNavigation.rawValue },
                 { s.pdfNavigation = PDFNavigation(rawValue: $0) ?? .whenOpenedFromPDF }
             )],
-            [empty, checkbox("End page with the next PDF's cover", { s.pdfEndPage }, { s.pdfEndPage = $0 })],
+            [empty, checkbox("A page between PDFs, with the other's cover", { s.pdfEndPage }, { s.pdfEndPage = $0 })],
             [empty, checkbox("Remember each PDF's zoom and position", { s.rememberPDFZoom }, { s.rememberPDFZoom = $0 })],
             [label("Hold to zoom:"), popup(["Off", "PDFs only", "PDFs and images"], { s.holdToZoom.rawValue }, { s.holdToZoom = HoldToZoom(rawValue: $0) ?? .pdfsOnly })],
             [label("Magnification:"), popup(

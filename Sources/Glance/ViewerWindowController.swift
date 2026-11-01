@@ -55,8 +55,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var editedImage: CGImage?
     private var page = 0
     private var pdfURL: URL?  // the PDF you're in, once you've arrived (its place is restored once)
-    /// Past the last screen of a PDF, before the next one: the end page is up.
-    private var atPDFEnd = false
+    /// Between two PDFs, with the page showing the other one's cover: 1 past the last screen,
+    /// -1 before the first, 0 not.
+    private var pdfBoundary = 0
     /// Arriving in a PDF partway through: say so when its page appears.
     private var announceResume: URL?
     /// The mouse is in the top-left corner, showing the info (Settings).
@@ -151,7 +152,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         saveQuality = settings.saveQuality
         showInfo = settings.showInfo
         if !settings.showInfoInCorner { cornerInfo = false }
-        if atPDFEnd && nextPDF == nil { hideEndPage() }  // turned off, or the next file isn't a PDF now
+        if pdfBoundary != 0 && neighbourPDF(pdfBoundary) == nil { hideEndPage() }  // turned off, or that file isn't a PDF now
         updateInfo()
         if !settings.showControls { setControlsVisible(false) }
         videoView?.options = videoOptions
@@ -785,7 +786,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             }
         }
         // A video has its own bar (with Previous File and Next File); this one would cover it.
-        setControlsVisible(settings.showControls && !showingVideo && !atPDFEnd && point.y < 110)
+        setControlsVisible(settings.showControls && !showingVideo && pdfBoundary == 0 && point.y < 110)
         controlsHideTimer?.invalidate()
         controlsHideTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             guard let self, let window = self.window else { return }
@@ -826,7 +827,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if showingVideo, let videoView, handleVideoKey(scalar, shift: event.modifierFlags.contains(.shift), video: videoView) {
             return true
         }
-        if atPDFEnd {
+        if pdfBoundary != 0 {
             // Nothing to pan on the end page: the arrows go on to the next PDF or back.
             switch Int(scalar.value) {
             case NSRightArrowFunctionKey, NSDownArrowFunctionKey:
@@ -908,10 +909,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func go(_ delta: Int) {
         direction = delta < 0 ? -1 : 1
-        if atPDFEnd {
-            // From the end page: on to the next PDF, or back to the last page (still there behind it).
+        if pdfBoundary != 0 {
+            // From the page between PDFs: on to the other PDF, or back to this one's page (still
+            // there behind it).
+            let side = pdfBoundary
             hideEndPage()
-            if delta > 0 { goToFile(1) }
+            if (delta > 0) == (side > 0) { goToFile(side) }
             return
         }
         // In a PDF, Space, arrows and the wheel turn its pages before moving to the next file.
@@ -921,10 +924,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             showCurrent(keepPage: true)
             return
         }
-        if delta == 1, let pdf = currentPDF, page + 1 == pdf.info.pageCount, let next = nextPDF {
-            // Past the last page with another PDF next: a blank end page first, so the step from
-            // one document to the next is obvious.
-            showEndPage(after: pdf.info.url, next: next)
+        if let pdf = currentPDF, abs(delta) == 1, page + delta == (delta > 0 ? pdf.info.pageCount : -1),
+           let other = neighbourPDF(delta) {
+            // Past the last page (or before the first) with another PDF beside it: a blank page
+            // first, with that PDF's cover, so the step from one document to the next is obvious.
+            showEndPage(side: delta, current: pdf.info.url, other: other)
             return
         }
         guard navigator.move(by: delta) else {
@@ -934,24 +938,25 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         showCurrent()
     }
 
-    /// The next file, if it's another PDF (and the end page is turned on).
-    private var nextPDF: URL? {
-        guard settings.pdfEndPage, let next = navigator.url(at: 1), next != navigator.current, PDFRenderer.isPDF(next) else { return nil }
-        return next
+    /// The next (side 1) or previous (side -1) file, if it's another PDF and the page between PDFs is on.
+    private func neighbourPDF(_ side: Int) -> URL? {
+        guard settings.pdfEndPage, let other = navigator.url(at: side), other != navigator.current, PDFRenderer.isPDF(other) else { return nil }
+        return other
     }
 
-    private func showEndPage(after current: URL, next: URL) {
-        atPDFEnd = true
+    private func showEndPage(side: Int, current: URL, other: URL) {
+        pdfBoundary = side
         setControlsVisible(false)
-        endPageView.show(ending: current.lastPathComponent, next: next.lastPathComponent, background: settings.backgroundColor)
+        endPageView.show(forward: side > 0, current: current.lastPathComponent, other: other.lastPathComponent,
+                         background: settings.backgroundColor)
         endPageView.isHidden = false
-        // The next PDF's cover, usually decoded ahead already.
-        let key = pipelineKey(next, page: 0, size: openingDecodeSize)
+        // The other PDF's cover, usually decoded ahead already.
+        let key = pipelineKey(other, page: 0, size: openingDecodeSize)
         if let hit = pipeline.cached(key) {
             endPageView.setCover(hit.image)
         } else {
             pipeline.load(key, preview: nil) { [weak self] decoded in
-                guard let self, self.atPDFEnd, self.nextPDF == next else { return }
+                guard let self, self.pdfBoundary == side, self.neighbourPDF(side) == other else { return }
                 self.endPageView.setCover(decoded?.image)
             }
         }
@@ -959,8 +964,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func hideEndPage() {
-        guard atPDFEnd else { return }
-        atPDFEnd = false
+        guard pdfBoundary != 0 else { return }
+        pdfBoundary = 0
         endPageView.isHidden = true
         updateTitle()
     }
@@ -1753,8 +1758,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         window.title = url.lastPathComponent
         window.representedURL = url
         var parts = ["\(navigator.index + 1) / \(navigator.count)"]
-        if atPDFEnd {
-            parts.append("end of the document")
+        if pdfBoundary != 0 {
+            parts.append(pdfBoundary > 0 ? "end of the document" : "start of the document")
         } else if let info = current?.info, info.url == url {
             let size = displayFullSize
             parts.append("\(Int(size.width)) × \(Int(size.height))")

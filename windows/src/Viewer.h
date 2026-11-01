@@ -71,7 +71,8 @@ private:
     /// A few seconds' note at the top ("Resuming from page 12").
     void showNotice(const std::wstring& text);
     void drawNotice();
-    /// After a PDF's last page, when the next file is a PDF too: a blank page with its cover.
+    /// Between two PDFs (after the last page going forward, before the first going back): a blank
+    /// page with the other PDF's cover.
     void drawEndPage();
     void drawGpuImage(const GpuImage& image, const D2D1_RECT_F& rect);
     bool ensureText();
@@ -94,8 +95,8 @@ private:
     void scanFolder(const std::wstring& folder, const std::wstring& selected);
     void go(int delta);
     void goToFile(int delta);
-    /// The next file, if it's another PDF (and the end page is turned on).
-    const std::wstring* nextPdf() const;
+    /// The next (side 1) or previous (side -1) file, if it's another PDF and the page between PDFs is on.
+    const std::wstring* neighbourPdf(int side) const;
     /// Puts the zoom and position on screen into pdfPlace_, if Settings remembers them.
     void rememberPdfView();
 
@@ -235,7 +236,7 @@ private:
     std::wstring pdfPath_;
     PdfPlaces::Place pdfPlace_;  // where you are in it, remembered when you leave
     UINT pdfScreens_ = 0;
-    bool endPage_ = false;         // past the last screen, before the next PDF
+    int endPage_ = 0;              // between PDFs: 1 past the last screen, -1 before the first, else 0
     bool restorePdfView_ = false;  // arriving at a PDF: open at the zoom remembered in pdfPlace_
     bool announceResume_ = false;  // ...and say which page it's resuming from
     std::wstring notice_;

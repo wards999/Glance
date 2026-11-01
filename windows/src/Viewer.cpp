@@ -928,7 +928,8 @@ void Viewer::updateTitle() {
             if (const std::wstring details = video_->describe(); !details.empty()) title += L"  -  " + details;
         }
     } else if (endPage_) {
-        title += L"  -  end of the document (Space for the next PDF)";
+        title += endPage_ > 0 ? L"  -  end of the document (Space for the next PDF)"
+                              : L"  -  start of the document (Backspace for the previous PDF)";
     } else if (current_ && samePath(current_->info.path, *path)) {
         if (current_->info.isPdf) {
             title += L"  -  " + current_->info.pdfPages;
@@ -1325,7 +1326,7 @@ void Viewer::applySettings() {
     }
     if (slideshow_) SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
     if (!settings_.infoInCorner) cornerInfo_ = false;
-    if (endPage_ && !nextPdf()) endPage_ = false;  // turned off, or the next file isn't a PDF now
+    if (endPage_ && !neighbourPdf(endPage_)) endPage_ = 0;  // turned off, or that file isn't a PDF now
     if (!settings_.showControls) {
         barVisible_ = false;
         barHover_ = -1;
@@ -2052,10 +2053,12 @@ void Viewer::go(int delta) {
     // In a PDF, pages turn before moving on to the next file.
     if (showingPdf()) {
         if (endPage_) {
-            // From the end page: on to the next PDF, or back to the last page (still there behind it).
-            endPage_ = false;
-            if (delta > 0) {
-                goToFile(1);
+            // From the page between PDFs: on to the other PDF, or back to this one's page (still
+            // there behind it).
+            const int side = endPage_;
+            endPage_ = 0;
+            if ((delta > 0) == (side > 0)) {
+                goToFile(side);
             } else {
                 updateTitle();
                 render();
@@ -2069,10 +2072,11 @@ void Viewer::go(int delta) {
             showCurrent();
             return;
         }
-        if (delta == 1 && target == static_cast<long long>(pdfScreens_) && current_ && current_->info.isPdf && nextPdf()) {
-            // Past the last page with another PDF next: a blank end page first, so the step from
-            // one document to the next is obvious.
-            endPage_ = true;
+        const int side = target == static_cast<long long>(pdfScreens_) ? 1 : target == -1 ? -1 : 0;
+        if (side && side == delta && current_ && current_->info.isPdf && neighbourPdf(side)) {
+            // Past the last page (or before the first) with another PDF beside it: a blank page
+            // first, with that PDF's cover, so the step from one document to the next is obvious.
+            endPage_ = side;
             hasSelection_ = false;
             if (magnifying_) endMagnify();
             updateTitle();
@@ -2092,12 +2096,12 @@ void Viewer::goToFile(int delta) {
     showCurrent();
 }
 
-const std::wstring* Viewer::nextPdf() const {
+const std::wstring* Viewer::neighbourPdf(int side) const {
     if (!settings_.pdfEndPage) return nullptr;
     const std::wstring* now = navigator_.current();
-    const std::wstring* next = navigator_.at(1);
-    if (!now || !next || samePath(*now, *next) || !Pdf::isPdf(*next)) return nullptr;
-    return next;
+    const std::wstring* other = navigator_.at(side);
+    if (!now || !other || samePath(*now, *other) || !Pdf::isPdf(*other)) return nullptr;
+    return other;
 }
 
 void Viewer::rememberPdfView() {
@@ -2116,7 +2120,7 @@ void Viewer::rememberPdfView() {
 
 void Viewer::showCurrent() {
     const std::wstring* path = navigator_.current();
-    endPage_ = false;
+    endPage_ = 0;
     if (waiting_) pipeline_->drop(wantedKey_);
     edited_.reset();
     hasSelection_ = false;
@@ -2288,8 +2292,10 @@ void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
     // Decoded ahead: upload it now, while idle, so showing it later is only a draw.
     if (context_ && std::find(prefetchKeys_.begin(), prefetchKeys_.end(), result->key) != prefetchKeys_.end()) {
         gpuFor(result->key, result->image);
-        // The next PDF's cover, for the end page that's waiting for it.
-        if (const std::wstring* next = endPage_ ? nextPdf() : nullptr; next && samePath(result->key.path, *next)) render();
+        // The other PDF's cover, for the page between PDFs that's waiting for it.
+        if (const std::wstring* other = endPage_ ? neighbourPdf(endPage_) : nullptr; other && samePath(result->key.path, *other)) {
+            render();
+        }
     }
 }
 
@@ -2998,8 +3004,8 @@ void Viewer::drawEndPage() {
     double width, height;
     viewSize(width, height);
     const std::wstring* now = navigator_.current();
-    const std::wstring* next = nextPdf();
-    // The next PDF's cover is decoded ahead like any next file; until it's there, only the text.
+    const std::wstring* next = neighbourPdf(endPage_);
+    // The other PDF's cover is decoded ahead like any neighbouring file; until it's there, only the text.
     std::shared_ptr<GpuImage> cover;
     if (next) {
         const DecodeKey key = keyFor(*next, 0, openingRequest());
@@ -3009,9 +3015,11 @@ void Viewer::drawEndPage() {
             cover = gpuFor(key, image);
         }
     }
-    std::wstring text = L"End of " + (now ? fileName(*now) : std::wstring());
-    if (next) text += L"\n\nNext: " + fileName(*next);
-    text += L"\nSpace for the next PDF  \u00B7  Backspace to go back";
+    const bool forward = endPage_ > 0;
+    std::wstring text = (forward ? L"End of " : L"Start of ") + (now ? fileName(*now) : std::wstring());
+    if (next) text += (forward ? L"\n\nNext: " : L"\n\nPrevious: ") + fileName(*next);
+    text += forward ? L"\nSpace for the next PDF  \u00B7  Backspace to go back"
+                    : L"\nBackspace for the previous PDF  \u00B7  Space to go back";
     const float maxWidth = std::max(static_cast<float>(width) - 80 * scale, 100 * scale);
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(), maxWidth,

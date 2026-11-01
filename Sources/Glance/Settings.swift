@@ -324,7 +324,7 @@ final class Settings {
         set { store(newValue.rawValue, Key.pdfNavigation) }
     }
 
-    /// A blank page after a PDF's last page when the next file is a PDF too, with its cover.
+    /// A blank page between two PDFs (going forward or back), with the other one's cover.
     var pdfEndPage: Bool {
         get { defaults.bool(forKey: Key.pdfEndPage) }
         set { store(newValue, Key.pdfEndPage) }
