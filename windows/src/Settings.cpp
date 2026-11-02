@@ -88,7 +88,8 @@ Settings Settings::load() {
     s.escapeCloses = flag(L"EscapeCloses", s.escapeCloses);
     s.slideshowSeconds = std::clamp(number(L"SlideshowSeconds", s.slideshowSeconds), 1, 300);
     // OpenIn replaced StartFullScreen (on/off); an older Glance.ini still says which it was.
-    s.openIn = std::clamp(number(L"OpenIn", flag(L"StartFullScreen", false) ? 0 : 1), 0, 2);
+    const int before = values.count(L"StartFullScreen") ? (flag(L"StartFullScreen", false) ? 0 : 1) : s.openIn;
+    s.openIn = std::clamp(number(L"OpenIn", before), 0, 2);
     s.wasFullScreen = flag(L"WasFullScreen", s.wasFullScreen);
     s.enlargeSmall = flag(L"EnlargeSmall", s.enlargeSmall);
     s.background = static_cast<COLORREF>(number(L"Background", static_cast<int>(s.background)));

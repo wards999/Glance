@@ -209,7 +209,7 @@ Get Info ▸ Open with ▸ Change All…).
 - Slideshow with 1–30 s intervals
 - EXIF info overlay: camera, lens, exposure, date, GPS
 - Bottom control bar that fades in on hover
-- Full screen with cursor auto-hide, optionally on launch. The menu bar and Dock are hidden completely; every command is on the right-click menu. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
+- Full screen with cursor auto-hide. Glance opens the way you left it (full screen or a window), or always one or the other if you prefer. The menu bar and Dock are hidden completely; every command is on the right-click menu. "Instant" style (the default) covers the screen with no animation or Space switch; macOS full screen is available as an option
 - Move to Trash, Reveal in Finder, Set as Desktop Picture, Copy, drag and drop, mouse back/forward buttons, trackpad swipe between images
 - A right-click menu with every command, including Reload, Print, Set Modification Date (now or date taken), Copy Original Size, Copy File Path, Paste, Show Filename, and lossless rotate/flip written straight to the file
 - **PDF reading**: pages rendered sharp at any zoom, decoded ahead like photos. Magazines open as a cover followed by two-page spreads (automatic, or choose single / two pages / two pages with cover, plus right to left). Space, arrows and the wheel turn pages before moving to the next file. Turning a page while zoomed in keeps the zoom and opens the new page at its top-left corner (top-right for right to left), or at the bottom corner when going back. **Hold to zoom**: press and hold on the page to magnify it, move to look around, let go to return. Password-protected PDFs ask for their password (kept in memory only). A page with the other PDF's cover separates one PDF from the next (either way), and a PDF reopens where you left it (optionally at the same zoom). PDFs are skipped when browsing photo folders unless you turn that on, and they can't be overwritten: Save As exports the current page or spread as an image
@@ -232,7 +232,7 @@ and the window always agree.
 |---|---|
 | PDF | Page layout (automatic / single / two pages / two pages with cover), right to left, which PDFs next / previous visit, a page between PDFs with the other's cover, remember each PDF's zoom and position, hold to zoom (off / PDFs / everything) and its magnification |
 | General | Sort order and direction, loop at end of folder, mouse wheel zooms or flips images, slideshow interval, keep adjustments between images |
-| Display | Open in full screen, full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, info when the mouse is in the top-left corner, hover controls, hide cursor in full screen, pixel view above 400% |
+| Display | Open in full screen, a window, or as you left it (the default), full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, info when the mouse is in the top-left corner, hover controls, hide cursor in full screen, pixel view above 400% |
 | Saving | JPEG/HEIC quality, ask before re-encoding the original |
 | Performance | How many images to decode ahead (0–8), memory cache size |
 

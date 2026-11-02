@@ -23,7 +23,7 @@ struct Settings {
     int slideshowSeconds = 3;
 
     // Display
-    int openIn = 1;               // 0 full screen, 1 a window, 2 as you left it
+    int openIn = 2;               // 0 full screen, 1 a window, 2 as you left it
     bool wasFullScreen = false;   // whether Glance was in full screen when it last closed
     bool startFullScreen() const { return openIn == 0 || (openIn == 2 && wasFullScreen); }
     bool enlargeSmall = true;

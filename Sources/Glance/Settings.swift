@@ -114,7 +114,6 @@ final class Settings {
             Key.startZoom: StartZoom.fit.rawValue,
             Key.enlargeSmall: false,
             Key.background: [0.0, 0.0, 0.0],
-            Key.openFullScreen: false,
             Key.fullScreenStyle: FullScreenStyle.instant.rawValue,
             Key.showInfo: false,
             Key.showFilename: false,
@@ -209,11 +208,13 @@ final class Settings {
 
     var openIn: OpenIn {
         get {
-            // Until it's chosen, the older on/off setting says which it was.
+            // Until it's chosen, the older on/off setting says which it was; without that, as you
+            // left it.
             guard defaults.object(forKey: Key.openIn) != nil else {
-                return defaults.bool(forKey: Key.openFullScreen) ? .fullScreen : .window
+                guard let old = defaults.object(forKey: Key.openFullScreen) as? Bool else { return .asLeft }
+                return old ? .fullScreen : .window
             }
-            return OpenIn(rawValue: defaults.integer(forKey: Key.openIn)) ?? .window
+            return OpenIn(rawValue: defaults.integer(forKey: Key.openIn)) ?? .asLeft
         }
         set { store(newValue.rawValue, Key.openIn) }
     }
