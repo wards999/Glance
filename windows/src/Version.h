@@ -4,5 +4,5 @@
 // Keep it in step with CFBundleShortVersionString in Resources/Info.plist (the Mac version).
 #define GLANCE_VERSION_MAJOR 0
 #define GLANCE_VERSION_MINOR 6
-#define GLANCE_VERSION_PATCH 4
-#define GLANCE_VERSION_TEXT "0.6.4"
+#define GLANCE_VERSION_PATCH 5
+#define GLANCE_VERSION_TEXT "0.6.5"
