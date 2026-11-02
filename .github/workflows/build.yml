@@ -38,6 +38,9 @@ jobs:
       - name: Build Glance.app
         run: ./scripts/bundle.sh
 
+      - name: Smoke test (opens a picture and shows a window)
+        run: ./scripts/smoke-test-mac.sh
+
       - name: Make DMG
         run: |
           mkdir -p build/dmg

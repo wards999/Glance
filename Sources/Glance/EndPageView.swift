@@ -37,6 +37,10 @@ final class EndPageView: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(covers)
         addSubview(label)
+        // In the view tree before any constraint ties them to this view: AppKit refuses (with an
+        // exception) a constraint between views with no common ancestor. show() sets the order.
+        covers.addArrangedSubview(origin)
+        covers.addArrangedSubview(destination)
         let height = destination.heightAnchor.constraint(equalToConstant: 420)
         height.priority = .defaultHigh
         NSLayoutConstraint.activate([
@@ -67,8 +71,8 @@ final class EndPageView: NSView {
             : "Start of \(current)\n\nPrevious: \(other)\nDelete for the previous PDF  ·  Space to go back"
         // Reading order: going forward, this PDF comes first; going back, the previous one does.
         let originFirst = forward != rightToLeft
-        covers.arrangedSubviews.forEach { covers.removeArrangedSubview($0) }
-        (originFirst ? [origin, destination] : [destination, origin]).forEach { covers.addArrangedSubview($0) }
+        // Moving one to the front reorders them; both stay in the stack, and their constraints with them.
+        covers.insertArrangedSubview(originFirst ? origin : destination, at: 0)
         setCover(nil, of: destination)
         setCover(nil, of: origin)
     }
