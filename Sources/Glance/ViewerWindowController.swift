@@ -90,6 +90,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     // Videos (libmpv, loaded only when the first one is shown)
     private var videoView: VideoView?
+    private var videoWheelSteps = WheelSteps()
     private var showingVideo = false
     private var keyRepeating = false  // while a held key repeats: videos wait until you stop
     private var videoPlayTimer: Timer?
@@ -1652,11 +1653,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     func videoView(_ view: VideoView, scrollWheel event: NSEvent) {
         // Mouse wheels only: trackpad scrolling does nothing on a video.
-        guard !event.hasPreciseScrollingDeltas, event.scrollingDeltaY != 0 else { return }
+        guard event.isMouseWheel else { return }
+        let step = videoWheelSteps.step(for: event)
+        guard step != 0 else { return }
         if settings.wheelAction == .navigate && !event.modifierFlags.contains(.command) {
-            go(event.scrollingDeltaY > 0 ? -1 : 1)
+            go(-step)
         } else {
-            view.changeVolume(by: event.scrollingDeltaY > 0 ? 5 : -5)  // where pictures would zoom, videos get louder
+            view.changeVolume(by: step * 5)  // where pictures would zoom, videos get louder
         }
     }
 

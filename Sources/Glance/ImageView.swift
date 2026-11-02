@@ -1,6 +1,34 @@
 import AppKit
 import QuartzCore
 
+extension NSEvent {
+    /// A mouse wheel rather than a trackpad, including a wheel that smoothing software (Mos,
+    /// Logitech Options+) turns into precise little steps like a trackpad's. Only a trackpad
+    /// gesture has phases (beginning, changing, ending) or momentum after the fingers lift.
+    var isMouseWheel: Bool {
+        !hasPreciseScrollingDeltas || (phase.isEmpty && momentumPhase.isEmpty)
+    }
+}
+
+/// Turns mouse wheel events into steps (a file, a volume notch). A plain wheel sends one event a
+/// notch; a smoothed one sends a run of small ones, which make one step until the wheel rests.
+struct WheelSteps {
+    private var lastTime: TimeInterval = 0
+    private var stepped = false
+
+    /// 1 for the wheel turned up (away from you), -1 for down, 0 for nothing to do.
+    mutating func step(for event: NSEvent) -> Int {
+        guard event.scrollingDeltaY != 0 else { return 0 }
+        let direction = event.scrollingDeltaY > 0 ? 1 : -1
+        guard event.hasPreciseScrollingDeltas else { return direction }
+        if event.timestamp - lastTime > 0.15 { stepped = false }
+        lastTime = event.timestamp
+        if stepped { return 0 }
+        stepped = true
+        return direction
+    }
+}
+
 protocol ImageViewDelegate: AnyObject {
     func imageViewDidChangeZoom(_ view: ImageView)
     /// The view is magnifying its current bitmap and wants one with at least `pixels` on its long side.
@@ -103,6 +131,7 @@ final class ImageView: NSView {
     private var pushedCursor = false
     private var swipeDistance: CGFloat = 0
     private var swipeHandled = false
+    private var wheelSteps = WheelSteps()
 
     /// Bitmaps larger than this are split into tiles. GPUs top out at 16384² textures.
     private static let tileSize = 4096
@@ -673,13 +702,12 @@ final class ImageView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if !event.hasPreciseScrollingDeltas && wheelNavigates && !event.modifierFlags.contains(.command) {
-            if event.scrollingDeltaY != 0 {
-                delegate?.imageView(self, navigate: event.scrollingDeltaY > 0 ? -1 : 1)
-            }
+        if event.isMouseWheel && wheelNavigates && !event.modifierFlags.contains(.command) {
+            let step = wheelSteps.step(for: event)
+            if step != 0 { delegate?.imageView(self, navigate: -step) }
             return
         }
-        if !event.hasPreciseScrollingDeltas || event.modifierFlags.contains(.command) {
+        if event.isMouseWheel || event.modifierFlags.contains(.command) {
             // A mouse wheel (or ⌘-scroll on a trackpad) zooms around the cursor.
             let notches = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 20 : event.scrollingDeltaY
             guard notches != 0 else { return }
