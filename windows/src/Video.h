@@ -183,6 +183,8 @@ private:
     // Controls
     bool controlsVisible_ = false;
     bool scrubbing_ = false;
+    bool scrubResume_ = false;  // it was playing when the drag began
+    double resumeAt_ = -1;      // play again once the exact seek here is done; < 0: not waiting
     bool hovering_ = false;
     POINT hover_{};
     RECT barRect_{}, trackRect_{}, playRect_{}, muteRect_{}, ccRect_{}, volumeRect_{};

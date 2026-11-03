@@ -213,6 +213,16 @@ bool isVideo(const std::wstring& path) {
     return false;
 }
 
+/// MPEG transport and program streams have no index, so a seek can land just after the spot asked
+/// for, and the exact seek then has no frame before it to start from: the first frames judder.
+bool seeksLoosely(const std::wstring& path) {
+    const std::wstring extension = Navigator::extensionOf(path);
+    for (const wchar_t* loose : {L"ts", L"m2ts", L"mts", L"mpg", L"mpeg", L"vob"}) {
+        if (samePath(extension, loose)) return true;
+    }
+    return false;
+}
+
 }  // namespace Video
 
 VideoPlayer::VideoPlayer(HWND parent, UINT eventMessage, UINT previewMessage)
@@ -330,9 +340,13 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
     videoWidth_ = videoHeight_ = 0;
     previews_.clear();
     exactTime_ = -1;
+    scrubResume_ = false;
+    resumeAt_ = -1;
     ++generation_;
     mpv->setPropertyString(handle, "pause", play ? "no" : "yes");
     mpv->setPropertyString(handle, "loop-file", "no");
+    // For those, exact seeks start half a second early, so there's a frame before the spot.
+    mpv->setPropertyString(handle, "hr-seek-demuxer-offset", Video::seeksLoosely(path) ? "0.5" : "0");
     const std::string file = utf8(path);
     run(mpv, handle, {"loadfile", file.c_str(), "replace"});
     trace("video loadfile");
@@ -432,6 +446,16 @@ bool VideoPlayer::handleEvents() {
                 firstFrame_ = true;
                 trace("video first frame");
             }
+            if (resumeAt_ >= 0) {
+                // A restart from the keyframe seeks during the drag may still come first: wait for
+                // the one at the frame you let go on (or at the end, if that's where it went).
+                int eof = 0;
+                api()->getProperty(static_cast<mpv_handle*>(mpv_), "eof-reached", MPV_FORMAT_FLAG, &eof);
+                if (eof || std::abs(property("time-pos", -1) - resumeAt_) < 0.1) {
+                    resumeAt_ = -1;
+                    play();
+                }
+            }
             drawControls();
             break;
         default:
@@ -462,6 +486,7 @@ bool VideoPlayer::paused() const {
 
 void VideoPlayer::togglePause() {
     if (!open_) return;
+    resumeAt_ = -1;  // your choice now, not the timeline's
     if (ended_ || (duration_ > 0 && property("time-pos") >= duration_ - 0.05)) {
         command({"seek", "0", "absolute"});  // at the end: play again from the start
         ended_ = false;
@@ -693,6 +718,11 @@ bool VideoPlayer::mouseDown(POINT point) {
         volumeDragging_ = true;
         setVolumeAt(point.x);
     } else if (PtInRect(&hit, point)) {
+        // Paused while you drag, so it doesn't play on from the keyframes it shows on the way and
+        // then jump; it plays again once the exact frame you let go on is ready.
+        scrubResume_ = playing() || resumeAt_ >= 0;
+        resumeAt_ = -1;
+        if (scrubResume_) api()->setPropertyString(static_cast<mpv_handle*>(mpv_), "pause", "yes");
         scrubbing_ = true;
         hover_ = point;
         mouseMove(point);
@@ -713,6 +743,8 @@ void VideoPlayer::mouseUp(POINT point) {
     char at[32];
     snprintf(at, sizeof(at), "%.3f", timeAt(point.x));
     command({"seek", at, "absolute+exact"});  // land on the exact frame when you let go
+    if (scrubResume_) resumeAt_ = timeAt(point.x);
+    scrubResume_ = false;
     ended_ = false;
     drawControls();
 }
