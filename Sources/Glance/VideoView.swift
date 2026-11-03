@@ -49,8 +49,7 @@ final class VideoView: NSView {
     private var pressedOnPicture = false
     private var lastPosition = 0.0  // shown while mpv has no position (during a seek)
     private var scrubbing = false
-    private var scrubResume = false        // it was playing when the drag began
-    private var resumeAt: Double?           // play again once the exact seek here is done
+    private var scrubResume = false  // it was playing when the drag began
     private var draggingVolume = false
     private var hideTimer: Timer?
     private var tickTimer: Timer?
@@ -161,7 +160,6 @@ final class VideoView: NSView {
         pictures = [:]
         exactPicture = nil
         scrubResume = false
-        resumeAt = nil
         generation += 1
         mpv.set(handle, "pause", play ? "no" : "yes")
         mpv.set(handle, "loop-file", "no")
@@ -224,15 +222,6 @@ final class VideoView: NSView {
                 delegate?.videoViewDidLoadFile(self)
                 updateControls()
             case MPV_EVENT_PLAYBACK_RESTART:
-                if let target = resumeAt {
-                    // A restart from the keyframe seeks during the drag may still come first: wait
-                    // for the one at the frame you let go on (or at the end, if that's where it went).
-                    let position = mpv.double(handle, "time-pos") ?? -1
-                    if mpv.flag(handle, "eof-reached") == true || abs(position - target) < 0.1 {
-                        resumeAt = nil
-                        play()
-                    }
-                }
                 updateControls()
             default:
                 break
@@ -253,7 +242,6 @@ final class VideoView: NSView {
 
     func togglePause() {
         guard isOpen else { return }
-        resumeAt = nil  // your choice now, not the timeline's
         let position = mpv.double(handle, "time-pos") ?? 0
         if ended || (duration > 0 && position >= duration - 0.05) {
             mpv.run(handle, ["seek", "0", "absolute"])  // at the end: play again from the start
@@ -495,9 +483,9 @@ final class VideoView: NSView {
             }
             if controls.timelineHitRect.contains(point) {
                 // Paused while you drag, so it doesn't play on from the keyframes it shows on the
-                // way and then jump; it plays again once the exact frame you let go on is ready.
-                scrubResume = isPlaying || resumeAt != nil
-                resumeAt = nil
+                // way and then jump. It plays again when you let go: mpv holds playback until the
+                // exact seek is done.
+                scrubResume = isPlaying
                 if scrubResume { mpv.set(handle, "pause", "yes") }
                 scrubbing = true
                 controls.hoverPoint = point
@@ -532,7 +520,7 @@ final class VideoView: NSView {
             scrubbing = false
             let at = time(atX: point.x)
             mpv.run(handle, ["seek", String(format: "%.3f", at), "absolute+exact"])
-            if scrubResume { resumeAt = at }
+            if scrubResume { play() }
             scrubResume = false
             ended = false
             updateControls()

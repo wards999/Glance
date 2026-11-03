@@ -341,7 +341,6 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
     previews_.clear();
     exactTime_ = -1;
     scrubResume_ = false;
-    resumeAt_ = -1;
     ++generation_;
     mpv->setPropertyString(handle, "pause", play ? "no" : "yes");
     mpv->setPropertyString(handle, "loop-file", "no");
@@ -446,16 +445,6 @@ bool VideoPlayer::handleEvents() {
                 firstFrame_ = true;
                 trace("video first frame");
             }
-            if (resumeAt_ >= 0) {
-                // A restart from the keyframe seeks during the drag may still come first: wait for
-                // the one at the frame you let go on (or at the end, if that's where it went).
-                int eof = 0;
-                api()->getProperty(static_cast<mpv_handle*>(mpv_), "eof-reached", MPV_FORMAT_FLAG, &eof);
-                if (eof || std::abs(property("time-pos", -1) - resumeAt_) < 0.1) {
-                    resumeAt_ = -1;
-                    play();
-                }
-            }
             drawControls();
             break;
         default:
@@ -486,7 +475,6 @@ bool VideoPlayer::paused() const {
 
 void VideoPlayer::togglePause() {
     if (!open_) return;
-    resumeAt_ = -1;  // your choice now, not the timeline's
     if (ended_ || (duration_ > 0 && property("time-pos") >= duration_ - 0.05)) {
         command({"seek", "0", "absolute"});  // at the end: play again from the start
         ended_ = false;
@@ -719,9 +707,8 @@ bool VideoPlayer::mouseDown(POINT point) {
         setVolumeAt(point.x);
     } else if (PtInRect(&hit, point)) {
         // Paused while you drag, so it doesn't play on from the keyframes it shows on the way and
-        // then jump; it plays again once the exact frame you let go on is ready.
-        scrubResume_ = playing() || resumeAt_ >= 0;
-        resumeAt_ = -1;
+        // then jump. It plays again when you let go: mpv holds playback until the exact seek is done.
+        scrubResume_ = playing();
         if (scrubResume_) api()->setPropertyString(static_cast<mpv_handle*>(mpv_), "pause", "yes");
         scrubbing_ = true;
         hover_ = point;
@@ -743,7 +730,7 @@ void VideoPlayer::mouseUp(POINT point) {
     char at[32];
     snprintf(at, sizeof(at), "%.3f", timeAt(point.x));
     command({"seek", at, "absolute+exact"});  // land on the exact frame when you let go
-    if (scrubResume_) resumeAt_ = timeAt(point.x);
+    if (scrubResume_) play();
     scrubResume_ = false;
     ended_ = false;
     drawControls();
