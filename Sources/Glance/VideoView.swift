@@ -51,6 +51,10 @@ final class VideoView: NSView {
     private var scrubbing = false
     private var scrubResume = false  // it was playing when the drag began
     private var exactX: CGFloat?       // where the video was last seeked exactly, during this drag
+    /// Whether `x` is somewhere else than the last exact seek. Within a point counts as the same
+    /// place: a held mouse or trackpad drifts by fractions of a point, which mustn't seek again
+    /// (back to a keyframe, then to the exact frame, and again when you let go).
+    private func movedFromExact(_ x: CGFloat) -> Bool { exactX.map { abs(x - $0) >= 1 } ?? true }
     private var scrubRestTimer: Timer?
     private var looseSeeking = false  // a transport or program stream
     private var draggingVolume = false
@@ -513,12 +517,12 @@ final class VideoView: NSView {
         guard scrubbing else { return }
         controls.hoverPoint = point
         let at = time(atX: point.x)
-        if point.x != exactX {
+        if movedFromExact(point.x) {
             // Keyframes while the mouse moves: instant. Once it rests, the exact frame.
             mpv.run(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])
             scrubRestTimer?.invalidate()
             scrubRestTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
-                guard let self, self.scrubbing, self.controls.hoverPoint.x != self.exactX else { return }
+                guard let self, self.scrubbing, self.movedFromExact(self.controls.hoverPoint.x) else { return }
                 self.seekExact(atX: self.controls.hoverPoint.x)  // held still: matching the picture above
             }
         }
@@ -542,7 +546,7 @@ final class VideoView: NSView {
             // stream: its keyframe seeks can land just past the spot, so the exact frame is a step
             // back from the picture you chose. It plays on from that picture instead (its keyframes
             // are about half a second apart).
-            if point.x != exactX && !looseSeeking { seekExact(atX: point.x) }
+            if movedFromExact(point.x) && !looseSeeking { seekExact(atX: point.x) }
             exactX = nil
             if scrubResume { play() }
             scrubResume = false
