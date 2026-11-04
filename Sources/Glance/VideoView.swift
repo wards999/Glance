@@ -1289,11 +1289,20 @@ final class PreviewMaker {
         mpv.run(handle, ["seek", String(format: "%.3f", time), exact ? "absolute+exact" : "absolute+keyframes"])
         // Take the frame the moment it's decoded. (Not "playback restarted": with this renderer mpv
         // only reports that once the frame has been drawn, so waiting for it costs ~200 ms each.)
+        // The first frame after a seek can still be one from before it, though: draw each new one
+        // until mpv says the seek is over, and that's the frame asked for.
         let deadline = Date().addingTimeInterval(1.5)
-        while mpv.renderUpdate(context) & frameFlag == 0 && Date() < deadline { usleep(1000) }
-        // Draw it straight away, then ask where a keyframe seek landed.
         var pixels: [UInt8] = []
-        render(into: &pixels, width: width, height: height)
+        while Date() < deadline {
+            guard mpv.renderUpdate(context) & frameFlag != 0 else {
+                usleep(1000)
+                continue
+            }
+            render(into: &pixels, width: width, height: height)
+            if mpv.flag(handle, "seeking") != true { break }
+        }
+        if pixels.isEmpty { render(into: &pixels, width: width, height: height) }
+        // Then ask where a keyframe seek landed.
         let shown = mpv.double(handle, "time-pos") ?? time
         let data = Data(pixels) as CFData
         guard let provider = CGDataProvider(data: data) else { return nil }
