@@ -239,7 +239,7 @@ final class VideoView: NSView {
     private func startTicking() {
         tickTimer?.invalidate()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            guard let self, self.isOpen else { return }
+            guard let self, self.isOpen, !self.scrubbing else { return }  // see mouseDown: no asking mpv then
             self.ended = self.mpv.flag(self.handle, "eof-reached") ?? false
             if !self.controls.isHidden { self.updateControls() }
         }
@@ -385,19 +385,22 @@ final class VideoView: NSView {
         }
     }
 
-    private func updateControls() {
+    /// `asking`: read the playing state from mpv. Not while the timeline is held (see mouseDown):
+    /// what was read last stands, and the playhead follows the mouse.
+    private func updateControls(asking: Bool = true) {
         guard !controls.isHidden || controls.toast != nil else {
             controls.needsDisplay = true
             return
         }
-        let position = min(max(mpv.double(handle, "time-pos") ?? lastPosition, 0), max(duration, 0))
-        lastPosition = position
+        if asking && !scrubbing {
+            lastPosition = min(max(mpv.double(handle, "time-pos") ?? lastPosition, 0), max(duration, 0))
+            controls.isPaused = isPaused || ended
+            controls.isMuted = mpv.flag(handle, "mute") ?? false
+            controls.volume = min(max(mpv.double(handle, "volume") ?? 100, 0), 100)
+        }
         controls.name = showsName ? url.map { $0.deletingPathExtension().lastPathComponent } ?? "" : ""
         controls.duration = duration
-        controls.position = scrubbing ? time(atX: controls.hoverPoint.x) : position
-        controls.isPaused = isPaused || ended
-        controls.isMuted = mpv.flag(handle, "mute") ?? false
-        controls.volume = min(max(mpv.double(handle, "volume") ?? 100, 0), 100)
+        controls.position = scrubbing ? time(atX: controls.hoverPoint.x) : lastPosition
         controls.showBar = !controls.isHidden
         controls.isFullScreen = delegate?.videoViewIsFullScreen ?? false
         if (controls.hovering || scrubbing) && duration > 0 {
@@ -493,7 +496,11 @@ final class VideoView: NSView {
                 // way and then jump. It plays again when you let go: mpv holds playback until the
                 // exact seek is done.
                 scrubResume = isPlaying
-                if scrubResume { mpv.set(handle, "pause", "yes") }
+                // Nothing on the main thread may wait for mpv while the timeline is held: it draws the
+                // video here, and once a new frame is waiting it answers nothing until that's drawn,
+                // so each mouse move would stall for a few hundred milliseconds.
+                if scrubResume { mpv.runAsync(handle, ["set", "pause", "yes"]) }
+                controls.isPaused = true
                 scrubbing = true
                 controls.hoverPoint = point
                 // The exact frame at once for a click, so the picture matches the one above the
@@ -519,7 +526,7 @@ final class VideoView: NSView {
         let at = time(atX: point.x)
         if movedFromExact(point.x) {
             // Keyframes while the mouse moves: instant. Once it rests, the exact frame.
-            mpv.run(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])
+            mpv.runAsync(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])
             scrubRestTimer?.invalidate()
             scrubRestTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
                 guard let self, self.scrubbing, self.movedFromExact(self.controls.hoverPoint.x) else { return }
@@ -527,15 +534,14 @@ final class VideoView: NSView {
                 self.seekExact(atX: x)  // held still: the exact frame, and the picture above to match
                 self.requestPicture(at: self.time(atX: x))
             }
-            // The picture above follows the keyframes too: an exact frame means decoding on from
-            // one, which on a Mac is too slow to keep up with the mouse.
+            // The picture above follows the keyframes too: quick, and the frame the video shows.
             requestPicture(at: at, exact: false)
         }
         updateControls()
     }
 
     private func seekExact(atX x: CGFloat) {
-        mpv.run(handle, ["seek", String(format: "%.3f", time(atX: x)), "absolute+exact"])
+        mpv.runAsync(handle, ["seek", String(format: "%.3f", time(atX: x)), "absolute+exact"])
         exactX = x
     }
 
@@ -552,10 +558,13 @@ final class VideoView: NSView {
             // are about half a second apart).
             if movedFromExact(point.x) && !looseSeeking { seekExact(atX: point.x) }
             exactX = nil
-            if scrubResume { play() }
+            if scrubResume {
+                mpv.runAsync(handle, ["set", "pause", "no"])
+                controls.isPaused = false
+            }
             scrubResume = false
             ended = false
-            updateControls()
+            updateControls(asking: false)  // the seek just sent: mpv may not answer until its frame is drawn
         } else if pressedOnPicture && event.clickCount == 1 {
             togglePause()
         }

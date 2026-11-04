@@ -16,6 +16,7 @@ struct MPV {
     let getPropertyString: @convention(c) (Handle?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
     let command: @convention(c) (Handle?, UnsafeMutablePointer<UnsafePointer<CChar>?>?) -> Int32
+    let commandAsync: @convention(c) (Handle?, UInt64, UnsafeMutablePointer<UnsafePointer<CChar>?>?) -> Int32
     let waitEvent: @convention(c) (Handle?, Double) -> UnsafeMutablePointer<mpv_event>?
     let setWakeupCallback: @convention(c) (Handle?, (@convention(c) (UnsafeMutableRawPointer?) -> Void)?, UnsafeMutableRawPointer?) -> Void
     let renderCreate: @convention(c) (UnsafeMutablePointer<OpaquePointer?>?, Handle?, UnsafeMutablePointer<mpv_render_param>?) -> Int32
@@ -55,6 +56,7 @@ struct MPV {
             let getPropertyString = find("mpv_get_property_string", as: (@convention(c) (Handle?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?).self),
             let free = find("mpv_free", as: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self),
             let command = find("mpv_command", as: (@convention(c) (Handle?, UnsafeMutablePointer<UnsafePointer<CChar>?>?) -> Int32).self),
+            let commandAsync = find("mpv_command_async", as: (@convention(c) (Handle?, UInt64, UnsafeMutablePointer<UnsafePointer<CChar>?>?) -> Int32).self),
             let waitEvent = find("mpv_wait_event", as: (@convention(c) (Handle?, Double) -> UnsafeMutablePointer<mpv_event>?).self),
             let setWakeupCallback = find("mpv_set_wakeup_callback", as: (@convention(c) (Handle?, (@convention(c) (UnsafeMutableRawPointer?) -> Void)?, UnsafeMutableRawPointer?) -> Void).self),
             let renderCreate = find("mpv_render_context_create", as: (@convention(c) (UnsafeMutablePointer<OpaquePointer?>?, Handle?, UnsafeMutablePointer<mpv_render_param>?) -> Int32).self),
@@ -69,7 +71,7 @@ struct MPV {
         }
         return MPV(create: create, initialize: initialize, terminateDestroy: terminateDestroy,
                    setOptionString: setOptionString, setPropertyString: setPropertyString, getProperty: getProperty,
-                   getPropertyString: getPropertyString, free: free, command: command, waitEvent: waitEvent,
+                   getPropertyString: getPropertyString, free: free, command: command, commandAsync: commandAsync, waitEvent: waitEvent,
                    setWakeupCallback: setWakeupCallback, renderCreate: renderCreate,
                    renderSetUpdateCallback: renderSetUpdateCallback, renderUpdate: renderUpdate,
                    renderRender: renderRender, renderReportSwap: renderReportSwap, renderFree: renderFree)
@@ -91,6 +93,16 @@ struct MPV {
         var pointers: [UnsafePointer<CChar>?] = cStrings.map { UnsafePointer($0) }
         pointers.append(nil)
         _ = pointers.withUnsafeMutableBufferPointer { command(handle, $0.baseAddress) }
+    }
+
+    /// Like run, without waiting for mpv to take it: for the main thread while a frame may be
+    /// waiting to be drawn there (mpv answers nothing until it is, so waiting would stall).
+    func runAsync(_ handle: Handle?, _ arguments: [String]) {
+        var cStrings = arguments.map { strdup($0) }
+        defer { cStrings.forEach { Foundation.free($0) } }
+        var pointers: [UnsafePointer<CChar>?] = cStrings.map { UnsafePointer($0) }
+        pointers.append(nil)
+        _ = pointers.withUnsafeMutableBufferPointer { commandAsync(handle, 0, $0.baseAddress) }
     }
 
     func string(_ handle: Handle?, _ name: String) -> String? {
