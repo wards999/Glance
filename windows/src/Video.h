@@ -184,6 +184,7 @@ private:
     bool controlsVisible_ = false;
     bool scrubbing_ = false;
     bool scrubResume_ = false;  // it was playing when the drag began
+    bool looseSeeking_ = false; // a transport or program stream (Video::seeksLoosely)
     bool hovering_ = false;
     POINT hover_{};
     RECT barRect_{}, trackRect_{}, playRect_{}, muteRect_{}, ccRect_{}, volumeRect_{};

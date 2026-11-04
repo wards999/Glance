@@ -345,7 +345,8 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
     mpv->setPropertyString(handle, "pause", play ? "no" : "yes");
     mpv->setPropertyString(handle, "loop-file", "no");
     // For those, exact seeks start half a second early, so there's a frame before the spot.
-    mpv->setPropertyString(handle, "hr-seek-demuxer-offset", Video::seeksLoosely(path) ? "0.5" : "0");
+    looseSeeking_ = Video::seeksLoosely(path);
+    mpv->setPropertyString(handle, "hr-seek-demuxer-offset", looseSeeking_ ? "0.5" : "0");
     const std::string file = utf8(path);
     run(mpv, handle, {"loadfile", file.c_str(), "replace"});
     trace("video loadfile");
@@ -727,9 +728,14 @@ void VideoPlayer::mouseUp(POINT point) {
     }
     if (!scrubbing_) return;
     scrubbing_ = false;
-    char at[32];
-    snprintf(at, sizeof(at), "%.3f", timeAt(point.x));
-    command({"seek", at, "absolute+exact"});  // land on the exact frame when you let go
+    // Land on the exact frame when you let go. Not in a transport stream: its keyframe seeks can
+    // land just past the spot, so the exact frame is a step back from the picture you chose. It
+    // plays on from that picture instead (its keyframes are about half a second apart).
+    if (!looseSeeking_) {
+        char at[32];
+        snprintf(at, sizeof(at), "%.3f", timeAt(point.x));
+        command({"seek", at, "absolute+exact"});
+    }
     if (scrubResume_) play();
     scrubResume_ = false;
     ended_ = false;

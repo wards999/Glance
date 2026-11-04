@@ -50,6 +50,7 @@ final class VideoView: NSView {
     private var lastPosition = 0.0  // shown while mpv has no position (during a seek)
     private var scrubbing = false
     private var scrubResume = false  // it was playing when the drag began
+    private var looseSeeking = false  // a transport or program stream
     private var draggingVolume = false
     private var hideTimer: Timer?
     private var tickTimer: Timer?
@@ -166,8 +167,8 @@ final class VideoView: NSView {
         // MPEG transport and program streams have no index, so a seek can land just after the spot
         // asked for, and the exact seek then has no frame before it to start from: the first
         // frames judder. For those, exact seeks start half a second early.
-        let loose = ["ts", "m2ts", "mts", "mpg", "mpeg", "vob"].contains(url.pathExtension.lowercased())
-        mpv.set(handle, "hr-seek-demuxer-offset", loose ? "0.5" : "0")
+        looseSeeking = ["ts", "m2ts", "mts", "mpg", "mpeg", "vob"].contains(url.pathExtension.lowercased())
+        mpv.set(handle, "hr-seek-demuxer-offset", looseSeeking ? "0.5" : "0")
         mpv.run(handle, ["loadfile", url.path, "replace"])
         previews.load(options.previews ? url : nil, generation: generation)
         surface.layer?.setNeedsDisplay()
@@ -518,8 +519,12 @@ final class VideoView: NSView {
             draggingVolume = false
         } else if scrubbing {
             scrubbing = false
-            let at = time(atX: point.x)
-            mpv.run(handle, ["seek", String(format: "%.3f", at), "absolute+exact"])
+            // Land on the exact frame when you let go. Not in a transport stream: its keyframe seeks
+            // can land just past the spot, so the exact frame is a step back from the picture you
+            // chose. It plays on from that picture instead (its keyframes are about half a second apart).
+            if !looseSeeking {
+                mpv.run(handle, ["seek", String(format: "%.3f", time(atX: point.x)), "absolute+exact"])
+            }
             if scrubResume { play() }
             scrubResume = false
             ended = false
