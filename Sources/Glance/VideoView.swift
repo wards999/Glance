@@ -1118,7 +1118,27 @@ final class VideoControlsView: NSView {
 final class PreviewMaker {
     var onPicture: ((Int, Bool, Double, CGImage) -> Void)?  // generation, exact, time shown, picture
 
-    private let queue = DispatchQueue(label: "glance.video-previews", qos: .utility)
+    // Not .utility: on Apple Silicon that can mean the efficiency cores, too slow to keep up with a drag.
+    private let queue = DispatchQueue(label: "glance.video-previews", qos: .userInitiated)
+
+    /// A timing line per timeline picture, in ~/Library/Logs/Glance/previews.log, when turned on with
+    /// `defaults write local.glance.viewer tracePreviews -bool YES` (off again with NO).
+    static let tracing = UserDefaults.standard.bool(forKey: "tracePreviews")
+    private static let traceStart = Date()
+
+    static func trace(_ line: String) {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Glance")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("previews.log")
+        let text = String(format: "%8.0f ms  ", Date().timeIntervalSince(traceStart) * 1000) + line + "\n"
+        if let handle = try? FileHandle(forWritingTo: file) {
+            handle.seekToEndOfFile()
+            handle.write(Data(text.utf8))
+            try? handle.close()
+        } else {
+            try? Data(text.utf8).write(to: file)
+        }
+    }
     private let lock = NSLock()
     private var wantedURL: URL?
     private var wantedTime: Double?
@@ -1301,18 +1321,28 @@ final class PreviewMaker {
         // Take the frame the moment it's decoded. (Not "playback restarted": with this renderer mpv
         // only reports that once the frame has been drawn, so waiting for it costs ~200 ms each.)
         // The first frame after a seek can still be one from before it, though: draw each new one
-        // until mpv says the seek is over, and that's the frame asked for.
-        let deadline = Date().addingTimeInterval(1.5)
+        // until mpv says the seek is over, and that's the frame asked for. (Once one is drawn, ask
+        // again each millisecond: a paused video may send no further frame to wait for.)
+        let started = Date()
+        let deadline = started.addingTimeInterval(1.5)
         var pixels: [UInt8] = []
+        var frames = 0
         while Date() < deadline {
-            guard mpv.renderUpdate(context) & frameFlag != 0 else {
+            if mpv.renderUpdate(context) & frameFlag != 0 {
+                render(into: &pixels, width: width, height: height)
+                frames += 1
+            } else if pixels.isEmpty {
                 usleep(1000)
                 continue
             }
-            render(into: &pixels, width: width, height: height)
             if mpv.flag(handle, "seeking") != true { break }
+            usleep(1000)
         }
         if pixels.isEmpty { render(into: &pixels, width: width, height: height) }
+        if Self.tracing {
+            Self.trace(String(format: "%@ %.1f s: %.0f ms, %ld frame(s), decoder %@", exact ? "exact" : "keyframe", time,
+                              Date().timeIntervalSince(started) * 1000, frames, mpv.string(handle, "hwdec-current") ?? "?"))
+        }
         // Then ask where a keyframe seek landed.
         let shown = mpv.double(handle, "time-pos") ?? time
         let data = Data(pixels) as CFData

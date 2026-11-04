@@ -926,18 +926,21 @@ void VideoPlayer::previewWorker() {
         // Take the frame the moment it's decoded. (Not "playback restarted": with this renderer mpv
         // only reports that once the frame has been drawn, so waiting for it costs ~200 ms each.)
         // The first frame after a seek can still be one from before it, though: draw each new one
-        // until mpv says the seek is over, and that's the frame asked for.
+        // until mpv says the seek is over, and that's the frame asked for. (Once one is drawn, ask
+        // again each millisecond: a paused video may send no further frame to wait for.)
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
         auto result = std::make_unique<PreviewResult>();
         while (std::chrono::steady_clock::now() < deadline) {
-            if (!(mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME)) {
+            if (mpv->renderUpdate(context) & MPV_RENDER_UPDATE_FRAME) {
+                renderInto(result->pixels, static_cast<int>(width), height);
+            } else if (result->pixels.empty()) {
                 Sleep(1);
                 continue;
             }
-            renderInto(result->pixels, static_cast<int>(width), height);
             int seeking = 0;
             mpv->getProperty(handle, "seeking", MPV_FORMAT_FLAG, &seeking);
             if (!seeking) break;
+            Sleep(1);
         }
         if (result->pixels.empty()) renderInto(result->pixels, static_cast<int>(width), height);
         // Then ask where a keyframe seek landed.
