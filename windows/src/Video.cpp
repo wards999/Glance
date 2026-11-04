@@ -673,10 +673,12 @@ void VideoPlayer::mouseMove(POINT point) {
     hit.top = barRect_.top;
     hit.bottom = barRect_.bottom;
     const bool over = controlsVisible_ && PtInRect(&hit, point);
-    if (scrubbing_) {
+    if (scrubbing_ && point.x != exactX_) {
+        // Keyframes while the mouse moves: instant. Once it rests, the exact frame (scrubRested).
         char at[32];
         snprintf(at, sizeof(at), "%.3f", timeAt(point.x));
-        command({"seek", at, "absolute+keyframes"});  // keyframes while dragging: instant
+        command({"seek", at, "absolute+keyframes"});
+        SetTimer(parent_, kScrubTimer, 120, nullptr);
     }
     if (over || scrubbing_) requestPreview(timeAt(point.x));
     if (over != hovering_ || over || scrubbing_) {
@@ -713,6 +715,9 @@ bool VideoPlayer::mouseDown(POINT point) {
         if (scrubResume_) api()->setPropertyString(static_cast<mpv_handle*>(mpv_), "pause", "yes");
         scrubbing_ = true;
         hover_ = point;
+        // The exact frame at once for a click, so the picture matches the one above the timeline
+        // and it can play the moment you let go, even where keyframes are seconds apart.
+        seekExact(point.x);
         mouseMove(point);
     } else if (!PtInRect(&barRect_, point)) {
         return false;
@@ -728,18 +733,30 @@ void VideoPlayer::mouseUp(POINT point) {
     }
     if (!scrubbing_) return;
     scrubbing_ = false;
-    // Land on the exact frame when you let go. Not in a transport stream: its keyframe seeks can
-    // land just past the spot, so the exact frame is a step back from the picture you chose. It
-    // plays on from that picture instead (its keyframes are about half a second apart).
-    if (!looseSeeking_) {
-        char at[32];
-        snprintf(at, sizeof(at), "%.3f", timeAt(point.x));
-        command({"seek", at, "absolute+exact"});
-    }
+    KillTimer(parent_, kScrubTimer);
+    // Land on the exact frame when you let go, unless it's there already. Not in a transport
+    // stream: its keyframe seeks can land just past the spot, so the exact frame is a step back
+    // from the picture you chose. It plays on from that picture instead (its keyframes are about
+    // half a second apart).
+    if (point.x != exactX_ && !looseSeeking_) seekExact(point.x);
+    exactX_ = INT_MIN;
     if (scrubResume_) play();
     scrubResume_ = false;
     ended_ = false;
     drawControls();
+}
+
+void VideoPlayer::seekExact(int x) {
+    char at[32];
+    snprintf(at, sizeof(at), "%.3f", timeAt(x));
+    command({"seek", at, "absolute+exact"});
+    exactX_ = x;
+}
+
+void VideoPlayer::scrubRested() {
+    KillTimer(parent_, kScrubTimer);
+    // Held still: the exact frame, matching the picture above the timeline.
+    if (scrubbing_ && hover_.x != exactX_) seekExact(hover_.x);
 }
 
 void VideoPlayer::mouseLeave() {

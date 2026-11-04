@@ -50,6 +50,8 @@ final class VideoView: NSView {
     private var lastPosition = 0.0  // shown while mpv has no position (during a seek)
     private var scrubbing = false
     private var scrubResume = false  // it was playing when the drag began
+    private var exactX: CGFloat?       // where the video was last seeked exactly, during this drag
+    private var scrubRestTimer: Timer?
     private var looseSeeking = false  // a transport or program stream
     private var draggingVolume = false
     private var hideTimer: Timer?
@@ -490,7 +492,9 @@ final class VideoView: NSView {
                 if scrubResume { mpv.set(handle, "pause", "yes") }
                 scrubbing = true
                 controls.hoverPoint = point
-                mpv.run(handle, ["seek", String(format: "%.3f", time(atX: point.x)), "absolute+keyframes"])
+                // The exact frame at once for a click, so the picture matches the one above the
+                // timeline and it can play the moment you let go, even where keyframes are seconds apart.
+                seekExact(atX: point.x)
                 updateControls()
                 return
             }
@@ -508,9 +512,22 @@ final class VideoView: NSView {
         guard scrubbing else { return }
         controls.hoverPoint = point
         let at = time(atX: point.x)
-        mpv.run(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])  // keyframes while dragging: instant
+        if point.x != exactX {
+            // Keyframes while the mouse moves: instant. Once it rests, the exact frame.
+            mpv.run(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])
+            scrubRestTimer?.invalidate()
+            scrubRestTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
+                guard let self, self.scrubbing, self.controls.hoverPoint.x != self.exactX else { return }
+                self.seekExact(atX: self.controls.hoverPoint.x)  // held still: matching the picture above
+            }
+        }
         requestPicture(at: at)
         updateControls()
+    }
+
+    private func seekExact(atX x: CGFloat) {
+        mpv.run(handle, ["seek", String(format: "%.3f", time(atX: x)), "absolute+exact"])
+        exactX = x
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -519,12 +536,13 @@ final class VideoView: NSView {
             draggingVolume = false
         } else if scrubbing {
             scrubbing = false
-            // Land on the exact frame when you let go. Not in a transport stream: its keyframe seeks
-            // can land just past the spot, so the exact frame is a step back from the picture you
-            // chose. It plays on from that picture instead (its keyframes are about half a second apart).
-            if !looseSeeking {
-                mpv.run(handle, ["seek", String(format: "%.3f", time(atX: point.x)), "absolute+exact"])
-            }
+            scrubRestTimer?.invalidate()
+            // Land on the exact frame when you let go, unless it's there already. Not in a transport
+            // stream: its keyframe seeks can land just past the spot, so the exact frame is a step
+            // back from the picture you chose. It plays on from that picture instead (its keyframes
+            // are about half a second apart).
+            if point.x != exactX && !looseSeeking { seekExact(atX: point.x) }
+            exactX = nil
             if scrubResume { play() }
             scrubResume = false
             ended = false

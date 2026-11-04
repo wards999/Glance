@@ -6,6 +6,7 @@
 #include <dwrite.h>
 
 #include <atomic>
+#include <climits>
 #include <condition_variable>
 #include <map>
 #include <memory>
@@ -104,6 +105,9 @@ public:
     void mouseUp(POINT point);
     void mouseLeave();
     bool scrubbing() const { return scrubbing_ || volumeDragging_; }  // dragging the timeline or volume
+    /// Set on the parent while you drag the timeline: when it fires, the drag has rested.
+    static constexpr UINT_PTR kScrubTimer = 0x5C2B;
+    void scrubRested();  // on kScrubTimer
 
     /// The file name box at the top left (Show filename, or the info in the corner), drawn over
     /// the video like the controls, since the video window covers what Glance draws. Empty hides it.
@@ -184,6 +188,8 @@ private:
     bool controlsVisible_ = false;
     bool scrubbing_ = false;
     bool scrubResume_ = false;  // it was playing when the drag began
+    int exactX_ = INT_MIN;      // where the video was last seeked exactly, during this drag
+    void seekExact(int x);
     bool looseSeeking_ = false; // a transport or program stream (Video::seeksLoosely)
     bool hovering_ = false;
     POINT hover_{};

@@ -432,6 +432,11 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_TIMER:
+        if (wParam == VideoPlayer::kScrubTimer) {
+            if (video_) video_->scrubRested();
+            else KillTimer(hwnd_, wParam);
+            return 0;
+        }
         if (wParam == kVideoPlayTimer) {
             KillTimer(hwnd_, kVideoPlayTimer);
             if (showingVideo_ && video_ && settings_.videoAutoplay) video_->play();
