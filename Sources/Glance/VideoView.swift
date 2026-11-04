@@ -523,10 +523,14 @@ final class VideoView: NSView {
             scrubRestTimer?.invalidate()
             scrubRestTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
                 guard let self, self.scrubbing, self.movedFromExact(self.controls.hoverPoint.x) else { return }
-                self.seekExact(atX: self.controls.hoverPoint.x)  // held still: matching the picture above
+                let x = self.controls.hoverPoint.x
+                self.seekExact(atX: x)  // held still: the exact frame, and the picture above to match
+                self.requestPicture(at: self.time(atX: x))
             }
+            // The picture above follows the keyframes too: an exact frame means decoding on from
+            // one, which on a Mac is too slow to keep up with the mouse.
+            requestPicture(at: at, exact: false)
         }
-        requestPicture(at: at)
         updateControls()
     }
 
@@ -576,12 +580,13 @@ final class VideoView: NSView {
         return scrubbing ? pixel / 2 : max(0.04, pixel)
     }
 
-    /// Asks for the exact frame at `time` (the newest request replaces any waiting one).
-    private func requestPicture(at time: Double) {
+    /// Asks for the frame at `time`, exact or the keyframe before it (quick); the newest request
+    /// replaces any waiting one.
+    private func requestPicture(at time: Double, exact: Bool = true) {
         guard options.previews, duration > 0, let url else { return }
-        if let exactPicture, abs(exactPicture.time - time) <= exactTolerance { return }  // already have it
+        if exact, let exactPicture, abs(exactPicture.time - time) <= exactTolerance { return }  // already have it
         let width = Int(220 * (window?.backingScaleFactor ?? 2))
-        previews.request(url: url, time: min(max(time, 0), duration), width: width, generation: generation)
+        previews.request(url: url, time: min(max(time, 0), duration), width: width, exact: exact, generation: generation)
     }
 
     private func nearestPicture(to time: Double) -> CGImage? {
@@ -1117,6 +1122,7 @@ final class PreviewMaker {
     private let lock = NSLock()
     private var wantedURL: URL?
     private var wantedTime: Double?
+    private var wantedExact = true
     private var wantedWidth = 440
     private var wantedGeneration = 0
     private var working = false
@@ -1136,10 +1142,11 @@ final class PreviewMaker {
         kick()
     }
 
-    func request(url: URL, time: Double, width: Int, generation: Int) {
+    func request(url: URL, time: Double, width: Int, exact: Bool, generation: Int) {
         lock.lock()
         wantedURL = url
         wantedTime = time
+        wantedExact = exact
         wantedWidth = width
         wantedGeneration = generation
         lock.unlock()
@@ -1187,6 +1194,7 @@ final class PreviewMaker {
             lock.lock()
             let url = wantedURL, width = wantedWidth, generation = wantedGeneration
             var time = wantedTime
+            var exact = wantedExact
             wantedTime = nil
             let moreAhead = url != nil && url == loaded && nextAhead < ahead.count
             if url == loaded && time == nil && !moreAhead {
@@ -1215,7 +1223,6 @@ final class PreviewMaker {
                     loaded = nil
                 }
             }
-            var exact = true
             if time == nil, url != nil, url == loaded, nextAhead < ahead.count {
                 time = ahead[nextAhead]
                 nextAhead += 1
