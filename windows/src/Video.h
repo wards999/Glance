@@ -233,7 +233,7 @@ private:
     std::map<int, Preview> previews_;  // UI thread: bucket -> picture made ahead, for the open video
     Preview exact_;                    // UI thread: the exact frame for the latest hover
     double exactTime_ = -1;            // its time; < 0: none
-    double exactTolerance() const;     // seconds: about a pixel of timeline
+    double exactTolerance() const;     // seconds: about a pixel of timeline (half, while dragging)
     unsigned generation_ = 0;    // UI thread copy
     void previewWorker();
 };

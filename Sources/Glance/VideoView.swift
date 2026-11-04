@@ -495,6 +495,7 @@ final class VideoView: NSView {
                 // The exact frame at once for a click, so the picture matches the one above the
                 // timeline and it can play the moment you let go, even where keyframes are seconds apart.
                 seekExact(atX: point.x)
+                requestPicture(at: time(atX: point.x))  // and the picture above, for exactly that spot
                 updateControls()
                 return
             }
@@ -564,7 +565,12 @@ final class VideoView: NSView {
     }
 
     /// About a pixel of timeline, in seconds.
-    private var exactTolerance: Double { max(0.04, duration / Double(max(controls.trackRect.width, 1))) }
+    /// Hovering, a frame within a pixel will do (in a long film, a pixel is seconds). Holding the
+    /// playhead, the video goes to the exact spot under the mouse, so the picture must be that frame.
+    private var exactTolerance: Double {
+        let pixel = duration / Double(max(controls.trackRect.width, 1))
+        return scrubbing ? pixel / 2 : max(0.04, pixel)
+    }
 
     /// Asks for the exact frame at `time` (the newest request replaces any waiting one).
     private func requestPicture(at time: Double) {

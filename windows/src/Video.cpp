@@ -772,7 +772,10 @@ int VideoPlayer::bucketFor(double time) const {
 
 double VideoPlayer::exactTolerance() const {
     const int width = std::max<int>(1, trackRect_.right - trackRect_.left);
-    return std::max(0.04, duration_ / width);
+    const double pixel = duration_ / width;
+    // Hovering, a frame within a pixel will do (in a long film, a pixel is seconds). Holding the
+    // playhead, the video goes to the exact spot under the mouse, so the picture must be that frame.
+    return scrubbing_ ? pixel / 2 : std::max(0.04, pixel);
 }
 
 /// Asks for the exact frame at `time` (the newest request replaces any waiting one).
