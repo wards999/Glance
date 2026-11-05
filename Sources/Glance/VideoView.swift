@@ -56,7 +56,7 @@ final class VideoView: NSView {
     /// (back to a keyframe, then to the exact frame, and again when you let go).
     private func movedFromExact(_ x: CGFloat) -> Bool { exactX.map { abs(x - $0) >= 1 } ?? true }
     private var scrubRestTimer: Timer?
-    private var looseSeeking = false  // a transport or program stream
+    private var looseSeeking = false  // a transport or program stream, whatever it's called
     private var draggingVolume = false
     private var hideTimer: Timer?
     private var tickTimer: Timer?
@@ -170,11 +170,8 @@ final class VideoView: NSView {
         generation += 1
         mpv.set(handle, "pause", play ? "no" : "yes")
         mpv.set(handle, "loop-file", "no")
-        // MPEG transport and program streams have no index, so a seek can land just after the spot
-        // asked for, and the exact seek then has no frame before it to start from: the first
-        // frames judder. For those, exact seeks start half a second early.
-        looseSeeking = ["ts", "m2ts", "mts", "mpg", "mpeg", "vob"].contains(url.pathExtension.lowercased())
-        mpv.set(handle, "hr-seek-demuxer-offset", looseSeeking ? "0.5" : "0")
+        looseSeeking = false  // known once the file is loaded (MPV_EVENT_FILE_LOADED)
+        mpv.set(handle, "hr-seek-demuxer-offset", "0")
         mpv.run(handle, ["loadfile", url.path, "replace"])
         previews.load(options.previews ? url : nil, generation: generation)
         surface.layer?.setNeedsDisplay()
@@ -216,6 +213,13 @@ final class VideoView: NSView {
             guard isOpen else { continue }
             switch event.event_id {
             case MPV_EVENT_FILE_LOADED:
+                // MPEG transport and program streams have no index, so a seek can land just after the
+                // spot asked for, and the exact seek then has no frame before it to start from: the
+                // first frames judder. For those, exact seeks start half a second early. What the file
+                // is, not what it's called: saved web streams are often transport streams named .mp4.
+                let format = mpv.string(handle, "file-format") ?? ""
+                looseSeeking = format == "mpegts" || format == "mpeg"
+                mpv.set(handle, "hr-seek-demuxer-offset", looseSeeking ? "0.5" : "0")
                 duration = mpv.double(handle, "duration") ?? 0
                 videoSize = CGSize(width: mpv.double(handle, "width") ?? 0, height: mpv.double(handle, "height") ?? 0)
                 // Short silent clips (phone "live" videos and the like) loop, like GIFs.

@@ -213,16 +213,6 @@ bool isVideo(const std::wstring& path) {
     return false;
 }
 
-/// MPEG transport and program streams have no index, so a seek can land just after the spot asked
-/// for, and the exact seek then has no frame before it to start from: the first frames judder.
-bool seeksLoosely(const std::wstring& path) {
-    const std::wstring extension = Navigator::extensionOf(path);
-    for (const wchar_t* loose : {L"ts", L"m2ts", L"mts", L"mpg", L"mpeg", L"vob"}) {
-        if (samePath(extension, loose)) return true;
-    }
-    return false;
-}
-
 }  // namespace Video
 
 VideoPlayer::VideoPlayer(HWND parent, UINT eventMessage, UINT previewMessage)
@@ -345,8 +335,8 @@ bool VideoPlayer::open(const std::wstring& path, bool play) {
     mpv->setPropertyString(handle, "pause", play ? "no" : "yes");
     mpv->setPropertyString(handle, "loop-file", "no");
     // For those, exact seeks start half a second early, so there's a frame before the spot.
-    looseSeeking_ = Video::seeksLoosely(path);
-    mpv->setPropertyString(handle, "hr-seek-demuxer-offset", looseSeeking_ ? "0.5" : "0");
+    looseSeeking_ = false;  // known once the file is loaded (MPV_EVENT_FILE_LOADED)
+    mpv->setPropertyString(handle, "hr-seek-demuxer-offset", "0");
     const std::string file = utf8(path);
     run(mpv, handle, {"loadfile", file.c_str(), "replace"});
     trace("video loadfile");
@@ -428,6 +418,16 @@ bool VideoPlayer::handleEvents() {
             duration_ = property("duration");
             videoWidth_ = static_cast<int>(property("width"));
             videoHeight_ = static_cast<int>(property("height"));
+            {
+                // MPEG transport and program streams have no index, so a seek can land just after the
+                // spot asked for, and the exact seek then has no frame before it to start from: the
+                // first frames judder. For those, exact seeks start half a second early. What the file
+                // is, not what it's called: saved web streams are often transport streams named .mp4.
+                const std::string format = stringProperty("file-format");
+                looseSeeking_ = format == "mpegts" || format == "mpeg";
+                trace(("video format " + format + (looseSeeking_ ? " (seeks loosely)" : "")).c_str());
+                mpv->setPropertyString(static_cast<mpv_handle*>(mpv_), "hr-seek-demuxer-offset", looseSeeking_ ? "0.5" : "0");
+            }
             // Short silent clips (phone "live" videos and the like) loop, like GIFs.
             const bool silent = stringProperty("current-tracks/audio/id").empty();
             if (options_.loopShort && silent && duration_ > 0 && duration_ < 30) {

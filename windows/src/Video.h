@@ -190,7 +190,7 @@ private:
     bool scrubResume_ = false;  // it was playing when the drag began
     int exactX_ = INT_MIN;      // where the video was last seeked exactly, during this drag
     void seekExact(int x);
-    bool looseSeeking_ = false; // a transport or program stream (Video::seeksLoosely)
+    bool looseSeeking_ = false; // a transport or program stream, whatever it's called
     bool hovering_ = false;
     POINT hover_{};
     RECT barRect_{}, trackRect_{}, playRect_{}, muteRect_{}, ccRect_{}, volumeRect_{};
