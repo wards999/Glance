@@ -69,6 +69,7 @@ final class VideoView: NSView {
     private let previews = PreviewMaker()
     private var pictures: [Int: (time: Double, image: CGImage)] = [:]  // made ahead: bucket -> keyframe picture
     private var exactPicture: (time: Double, image: CGImage)?          // the exact frame for the latest hover
+    private var exactAsked: Double?                                       // the time it was asked for
     /// The keyframe picture last asked for (not one made ahead), and the time it was asked for.
     private var askedKeyframe: (asked: Double, picture: (time: Double, image: CGImage))?
     /// Where the video was last sent from the timeline, exactly or to the keyframe, while it's held
@@ -93,8 +94,12 @@ final class VideoView: NSView {
         addSubview(controls)
         previews.onPicture = { [weak self] generation, exact, asked, time, image in
             guard let self, generation == self.generation else { return }
+            if PreviewMaker.tracing {
+                PreviewMaker.trace(String(format: "picture %@ asked %.3f, shows %.3f", exact ? "exact" : "keyframe", asked ?? -1, time))
+            }
             if exact {
                 self.exactPicture = (time, image)
+                self.exactAsked = asked
             } else {
                 self.pictures[self.bucket(for: time)] = (time, image)
                 if let asked { self.askedKeyframe = (asked, (time, image)) }
@@ -175,6 +180,7 @@ final class VideoView: NSView {
         videoSize = .zero
         pictures = [:]
         exactPicture = nil
+        exactAsked = nil
         askedKeyframe = nil
         videoTarget = nil
         scrubResume = false
@@ -245,6 +251,9 @@ final class VideoView: NSView {
                 updateControls()
             case MPV_EVENT_PLAYBACK_RESTART:
                 if !scrubbing { settleUntil = nil }  // the seek has landed
+                if PreviewMaker.tracing {
+                    PreviewMaker.trace(String(format: "video landed at %.3f", mpv.double(handle, "time-pos") ?? -1))
+                }
                 updateControls()
             default:
                 break
@@ -552,6 +561,7 @@ final class VideoView: NSView {
             // Keyframes while the mouse moves: instant. Once it rests, the exact frame.
             mpv.runAsync(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])
             videoTarget = (at, false)
+            if PreviewMaker.tracing { PreviewMaker.trace(String(format: "video keyframe seek %.3f", at)) }
             scrubRestTimer?.invalidate()
             scrubRestTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
                 guard let self, self.scrubbing, self.movedFromExact(self.controls.hoverPoint.x) else { return }
@@ -570,11 +580,15 @@ final class VideoView: NSView {
     /// spot itself could be the other side of a cut from the picture you're looking at.
     private func seekExact(atX x: CGFloat) {
         var at = time(atX: x)
+        let snapped: Bool
         if let exactPicture, abs(exactPicture.time - at) <= exactTolerance {
             at = exactPicture.time + 0.001  // that frame: a seek shows the last frame at or before the time
+            snapped = true
         } else {
             requestPicture(at: at)
+            snapped = false
         }
+        if PreviewMaker.tracing { PreviewMaker.trace(String(format: "video exact seek %.3f%@", at, snapped ? " (the picture's frame)" : "")) }
         mpv.runAsync(handle, ["seek", String(format: "%.3f", at), "absolute+exact"])
         videoTarget = (at, true)
         exactX = x
@@ -641,8 +655,10 @@ final class VideoView: NSView {
     /// made; until then the nearest), else the one nearest `time`.
     private func pictureMatchingVideo(near time: Double) -> (time: Double, image: CGImage)? {
         if let target = videoTarget {
-            // An exact seek shows the last frame at or before the time asked for.
-            if target.exact, let exactPicture, exactPicture.time <= target.time + 0.01, target.time - exactPicture.time < 0.2 {
+            // Only the picture made for that very seek, or the one the video was sent to (see
+            // seekExact): another exact one, even a few frames off, isn't what the video shows.
+            if target.exact, let exactPicture,
+               exactAsked.map({ abs($0 - target.time) < 0.0005 }) == true || abs(exactPicture.time + 0.001 - target.time) < 0.0005 {
                 return exactPicture
             }
             if !target.exact, let askedKeyframe, abs(askedKeyframe.asked - target.time) < 0.001 {
