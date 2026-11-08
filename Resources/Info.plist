@@ -15,9 +15,9 @@
     <key>CFBundleIconFile</key>
     <string>Glance</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.6.14</string>
+    <string>0.6.15</string>
     <key>CFBundleVersion</key>
-    <string>23</string>
+    <string>24</string>
     <key>NSHumanReadableCopyright</key>
     <string>Free software under the GNU GPL, version 3.</string>
     <key>LSMinimumSystemVersion</key>
