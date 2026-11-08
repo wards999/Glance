@@ -93,7 +93,7 @@ final class VideoView: NSView {
             } else {
                 self.pictures[self.bucket(for: time)] = (time, image)
             }
-            self.updateControls()
+            self.updateControls(asking: false)  // nothing to ask mpv: see mouseMoved
         }
     }
 
@@ -417,7 +417,7 @@ final class VideoView: NSView {
         if (controls.hovering || scrubbing) && duration > 0 {
             let at = time(atX: controls.hoverPoint.x)
             controls.hoverTime = at
-            controls.picture = options.previews ? nearestPicture(to: at) : nil
+            controls.picture = options.previews ? shownPicture(near: at)?.image : nil
         } else {
             controls.hoverTime = nil
             controls.picture = nil
@@ -466,17 +466,22 @@ final class VideoView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         noteActivity()
         let over = !controls.isHidden && controls.timelineHitRect.contains(point)
-        if over { requestPicture(at: time(atX: point.x)) }
+        // The keyframe first (a few milliseconds, so the picture keeps up with the mouse), then the
+        // exact frame once the mouse stops.
+        if over { requestPicture(at: time(atX: point.x), keyframeFirst: true) }
         if over || over != controls.hovering {
             controls.hovering = over
             controls.hoverPoint = point
-            updateControls()
+            // Without asking mpv how it's playing (the tick timer does that): it draws the video on
+            // this thread, and a question can wait for the next frame to be drawn, so the picture
+            // above the timeline would lag the mouse.
+            updateControls(asking: false)
         }
     }
 
     override func mouseExited(with event: NSEvent) {
         controls.hovering = false
-        updateControls()
+        updateControls(asking: false)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -517,7 +522,6 @@ final class VideoView: NSView {
                 // The exact frame at once for a click, so the picture matches the one above the
                 // timeline and it can play the moment you let go, even where keyframes are seconds apart.
                 seekExact(atX: point.x)
-                requestPicture(at: time(atX: point.x))  // and the picture above, for exactly that spot
                 updateControls()
                 return
             }
@@ -543,7 +547,6 @@ final class VideoView: NSView {
                 guard let self, self.scrubbing, self.movedFromExact(self.controls.hoverPoint.x) else { return }
                 let x = self.controls.hoverPoint.x
                 self.seekExact(atX: x)  // held still: the exact frame, and the picture above to match
-                self.requestPicture(at: self.time(atX: x))
             }
             // The picture above follows the keyframes too: quick, and the frame the video shows.
             requestPicture(at: at, exact: false)
@@ -551,8 +554,18 @@ final class VideoView: NSView {
         updateControls()
     }
 
+    /// Seeks to the exact frame under the mouse, and the picture above the timeline shows the same one.
+    /// Where the exact picture is already within half a pixel of the spot, the video goes to its
+    /// frame: the mouse is between pixels on a Mac, and a pixel of a long film is seconds, so the
+    /// spot itself could be the other side of a cut from the picture you're looking at.
     private func seekExact(atX x: CGFloat) {
-        mpv.runAsync(handle, ["seek", String(format: "%.3f", time(atX: x)), "absolute+exact"])
+        var at = time(atX: x)
+        if let exactPicture, abs(exactPicture.time - at) <= exactTolerance {
+            at = exactPicture.time + 0.001  // that frame: a seek shows the last frame at or before the time
+        } else {
+            requestPicture(at: at)
+        }
+        mpv.runAsync(handle, ["seek", String(format: "%.3f", at), "absolute+exact"])
         exactX = x
     }
 
@@ -561,13 +574,13 @@ final class VideoView: NSView {
         if draggingVolume {
             draggingVolume = false
         } else if scrubbing {
-            scrubbing = false
             scrubRestTimer?.invalidate()
             // Land on the exact frame when you let go, unless it's there already. Not in a transport
             // stream: its keyframe seeks can land just past the spot, so the exact frame is a step
             // back from the picture you chose. It plays on from that picture instead (its keyframes
             // are about half a second apart).
             if movedFromExact(point.x) && !looseSeeking { seekExact(atX: point.x) }
+            scrubbing = false  // after seekExact, which matches the picture to within half a pixel
             exactX = nil
             if scrubResume {
                 mpv.runAsync(handle, ["set", "pause", "no"])
@@ -602,16 +615,19 @@ final class VideoView: NSView {
         return scrubbing ? pixel / 2 : max(0.04, pixel)
     }
 
-    /// Asks for the frame at `time`, exact or the keyframe before it (quick); the newest request
-    /// replaces any waiting one.
-    private func requestPicture(at time: Double, exact: Bool = true) {
+    /// Asks for the frame at `time`, exact or the keyframe before it (quick), or `keyframeFirst`:
+    /// the keyframe, then the exact frame unless something newer is asked for by then. The newest
+    /// request replaces any waiting one.
+    private func requestPicture(at time: Double, exact: Bool = true, keyframeFirst: Bool = false) {
         guard options.previews, duration > 0, let url else { return }
-        if exact, let exactPicture, abs(exactPicture.time - time) <= exactTolerance { return }  // already have it
+        if exact || keyframeFirst, let exactPicture, abs(exactPicture.time - time) <= exactTolerance { return }  // already have it
         let width = Int(220 * (window?.backingScaleFactor ?? 2))
-        previews.request(url: url, time: min(max(time, 0), duration), width: width, exact: exact, generation: generation)
+        previews.request(url: url, time: min(max(time, 0), duration), width: width, exact: exact && !keyframeFirst,
+                         thenExact: keyframeFirst, generation: generation)
     }
 
-    private func nearestPicture(to time: Double) -> CGImage? {
+    /// The picture shown above the timeline for `time`.
+    private func shownPicture(near time: Double) -> (time: Double, image: CGImage)? {
         let wanted = bucket(for: time)
         // The nearest made ahead (until the exact one arrives), but not a far-away one.
         var best: (time: Double, image: CGImage)?
@@ -623,7 +639,7 @@ final class VideoView: NSView {
            best.map({ abs(exactPicture.time - time) < abs($0.time - time) }) ?? true {
             best = exactPicture
         }
-        return best?.image
+        return best
     }
 
     // MARK: - Subtitles and audio tracks
@@ -1165,6 +1181,7 @@ final class PreviewMaker {
     private var wantedURL: URL?
     private var wantedTime: Double?
     private var wantedExact = true
+    private var wantedThenExact = false  // after the keyframe, the exact frame (unless asked for another by then)
     private var wantedWidth = 440
     private var wantedGeneration = 0
     private var working = false
@@ -1184,11 +1201,12 @@ final class PreviewMaker {
         kick()
     }
 
-    func request(url: URL, time: Double, width: Int, exact: Bool, generation: Int) {
+    func request(url: URL, time: Double, width: Int, exact: Bool, thenExact: Bool = false, generation: Int) {
         lock.lock()
         wantedURL = url
         wantedTime = time
         wantedExact = exact
+        wantedThenExact = thenExact
         wantedWidth = width
         wantedGeneration = generation
         lock.unlock()
@@ -1237,7 +1255,9 @@ final class PreviewMaker {
             let url = wantedURL, width = wantedWidth, generation = wantedGeneration
             var time = wantedTime
             var exact = wantedExact
+            let thenExact = wantedThenExact && time != nil
             wantedTime = nil
+            wantedThenExact = false
             let moreAhead = url != nil && url == loaded && nextAhead < ahead.count
             if url == loaded && time == nil && !moreAhead {
                 working = false
@@ -1272,6 +1292,14 @@ final class PreviewMaker {
             }
             guard let time, let url, url == loaded, let (shown, image) = picture(at: time, width: width, exact: exact) else { continue }
             DispatchQueue.main.async { self.onPicture?(generation, exact, shown, image) }
+            if thenExact {
+                lock.lock()
+                if wantedTime == nil {  // nothing newer: now the exact frame
+                    wantedTime = time
+                    wantedExact = true
+                }
+                lock.unlock()
+            }
         }
     }
 
