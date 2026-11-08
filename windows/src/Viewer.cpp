@@ -304,17 +304,9 @@ bool Viewer::create() {
     unsigned threads = std::clamp(std::thread::hardware_concurrency() / 4, 2u, 4u);
     pipeline_ = std::make_unique<Pipeline>(hwnd_, WM_APP_DECODED, cacheLimit(), threads);
     trace("window and decoder threads created");
-
-    // Glance's file types and icons, so it's offered in Open with and Default apps. Registered
-    // once per copy and version, in the background (a few hundred registry writes).
-    if (!FileTypes::registered()) {
-        std::thread([] {
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-            registerFileTypes();
-            CoUninitialize();
-        }).detach();
-    }
+    // Glance's file types are registered only when you ask (CmdFileTypes), not at launch: a new
+    // unsigned program quietly rewriting a few hundred "open with" entries is what Windows
+    // Defender's behaviour monitoring treats as a threat.
     return true;
 }
 
@@ -1180,8 +1172,9 @@ void Viewer::command(int id) {
         break;
     }
     case CmdFileTypes: {
-        // Glance registers its file types when it starts; Windows won't let an app make itself
-        // the default, so this opens Default apps at Glance's page for you to choose.
+        // Registers Glance's file types (for this copy, if another copy or version registered
+        // them), then opens Default apps at Glance's page: Windows won't let an app make itself
+        // the default, so you choose there.
         if (!FileTypes::registered() && !registerFileTypes()) {
             MessageBoxW(hwnd_, L"Windows didn't accept Glance's file types.", L"Glance", MB_OK | MB_ICONWARNING);
             break;
