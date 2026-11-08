@@ -728,10 +728,11 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (!current_ || endPage_) return 0;
-        // Toggle between fitting the window and 100% at the clicked point.
+        // Toggle between fitting the window and zoomed in at the clicked point: 100% when that's
+        // bigger, else (a small image enlarged to fit, or one shown at its size) twice the fit.
         double fit = fitZoom();
         if (zoomMode_ == ZoomMode::Fit || std::abs(zoom_ - fit) < 0.001) {
-            setZoom(std::abs(fit - 1) < 0.01 ? 2.0 : 1.0, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            setZoom(fit < 0.99 ? 1.0 : fit * 2, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         } else {
             zoomMode_ = ZoomMode::Fit;
             applyZoomMode();

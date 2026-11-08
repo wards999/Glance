@@ -307,10 +307,12 @@ final class ImageView: NSView {
         setZoom(target, around: nil)
     }
 
+    /// Between fitting the window and zoomed in at `point`: 100% when that's bigger, else (a small
+    /// image enlarged to fit, or one shown at its size) twice the fit.
     private func toggleZoom(at point: NSPoint) {
         let fit = fitZoom()
         if zoomMode == .fit || abs(zoom - fit) < 0.001 {
-            setZoom(abs(fit - 1) < 0.01 ? 2 : 1, around: point)
+            setZoom(fit < 0.99 ? 1 : fit * 2, around: point)
         } else {
             zoomToFit()
         }
