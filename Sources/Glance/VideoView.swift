@@ -48,6 +48,9 @@ final class VideoView: NSView {
     private var lastSubtitle = 0
     private var pressedOnPicture = false
     private var lastPosition = 0.0  // shown while mpv has no position (during a seek)
+    /// After you let go of the timeline, the playhead stays where you let go until mpv says the
+    /// seek is done (or this passes): asked sooner, mpv can still give the old position.
+    private var settleUntil: Date?
     private var scrubbing = false
     private var scrubResume = false  // it was playing when the drag began
     private var exactX: CGFloat?       // where the video was last seeked exactly, during this drag
@@ -233,6 +236,7 @@ final class VideoView: NSView {
                 delegate?.videoViewDidLoadFile(self)
                 updateControls()
             case MPV_EVENT_PLAYBACK_RESTART:
+                if !scrubbing { settleUntil = nil }  // the seek has landed
                 updateControls()
             default:
                 break
@@ -396,8 +400,11 @@ final class VideoView: NSView {
             controls.needsDisplay = true
             return
         }
+        if let until = settleUntil, Date() >= until { settleUntil = nil }
         if asking && !scrubbing {
-            lastPosition = min(max(mpv.double(handle, "time-pos") ?? lastPosition, 0), max(duration, 0))
+            if settleUntil == nil {
+                lastPosition = min(max(mpv.double(handle, "time-pos") ?? lastPosition, 0), max(duration, 0))
+            }
             controls.isPaused = isPaused || ended
             controls.isMuted = mpv.flag(handle, "mute") ?? false
             controls.volume = min(max(mpv.double(handle, "volume") ?? 100, 0), 100)
@@ -568,6 +575,8 @@ final class VideoView: NSView {
             }
             scrubResume = false
             ended = false
+            lastPosition = time(atX: point.x)  // where you let go, not where it was before the drag
+            settleUntil = Date().addingTimeInterval(1)
             updateControls(asking: false)  // the seek just sent: mpv may not answer until its frame is drawn
         } else if pressedOnPicture && event.clickCount == 1 {
             togglePause()
