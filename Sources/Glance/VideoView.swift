@@ -1,5 +1,6 @@
 import AppKit
 import CMpv
+import ImageIO
 import OpenGL.GL3
 import QuartzCore
 
@@ -96,6 +97,7 @@ final class VideoView: NSView {
             guard let self, generation == self.generation else { return }
             if PreviewMaker.tracing {
                 PreviewMaker.trace(String(format: "picture %@ asked %.3f, shows %.3f", exact ? "exact" : "keyframe", asked ?? -1, time))
+                if exact { PreviewMaker.save(image, as: String(format: "picture-%.3f.png", time)) }
             }
             if exact {
                 self.exactPicture = (time, image)
@@ -252,7 +254,11 @@ final class VideoView: NSView {
             case MPV_EVENT_PLAYBACK_RESTART:
                 if !scrubbing { settleUntil = nil }  // the seek has landed
                 if PreviewMaker.tracing {
-                    PreviewMaker.trace(String(format: "video landed at %.3f", mpv.double(handle, "time-pos") ?? -1))
+                    let landed = mpv.double(handle, "time-pos") ?? -1
+                    PreviewMaker.trace(String(format: "video landed at %.3f", landed))
+                    // The frame the video is on, to compare with the picture of the same time.
+                    let file = PreviewMaker.logFolder.appendingPathComponent(String(format: "video-%.3f.png", landed))
+                    mpv.runAsync(handle, ["screenshot-to-file", file.path, "video"])
                 }
                 updateControls()
             default:
@@ -1207,8 +1213,19 @@ final class PreviewMaker {
     static let tracing = UserDefaults.standard.bool(forKey: "tracePreviews")
     private static let traceStart = Date()
 
+    static let logFolder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Glance")
+
+    /// With tracing on, each exact picture is also saved beside the log (picture-<time>.png), and
+    /// the video's frame wherever it lands (video-<time>.png), so the two can be compared.
+    static func save(_ image: CGImage, as name: String) {
+        let file = logFolder.appendingPathComponent(name)
+        guard let destination = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationFinalize(destination)
+    }
+
     static func trace(_ line: String) {
-        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Glance")
+        let folder = logFolder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let file = folder.appendingPathComponent("previews.log")
         let text = String(format: "%8.0f ms  ", Date().timeIntervalSince(traceStart) * 1000) + line + "\n"
