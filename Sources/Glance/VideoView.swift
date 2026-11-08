@@ -69,6 +69,11 @@ final class VideoView: NSView {
     private let previews = PreviewMaker()
     private var pictures: [Int: (time: Double, image: CGImage)] = [:]  // made ahead: bucket -> keyframe picture
     private var exactPicture: (time: Double, image: CGImage)?          // the exact frame for the latest hover
+    /// The keyframe picture last asked for (not one made ahead), and the time it was asked for.
+    private var askedKeyframe: (asked: Double, picture: (time: Double, image: CGImage))?
+    /// Where the video was last sent from the timeline, exactly or to the keyframe, while it's held
+    /// (and until the mouse moves on after): the picture above shows that frame, so the two match.
+    private var videoTarget: (time: Double, exact: Bool)?
     private var generation = 0
 
     init?(delegate: VideoViewDelegate) {
@@ -86,12 +91,13 @@ final class VideoView: NSView {
         controls.autoresizingMask = [.width, .height]
         controls.isHidden = true
         addSubview(controls)
-        previews.onPicture = { [weak self] generation, exact, time, image in
+        previews.onPicture = { [weak self] generation, exact, asked, time, image in
             guard let self, generation == self.generation else { return }
             if exact {
                 self.exactPicture = (time, image)
             } else {
                 self.pictures[self.bucket(for: time)] = (time, image)
+                if let asked { self.askedKeyframe = (asked, (time, image)) }
             }
             self.updateControls(asking: false)  // nothing to ask mpv: see mouseMoved
         }
@@ -169,6 +175,8 @@ final class VideoView: NSView {
         videoSize = .zero
         pictures = [:]
         exactPicture = nil
+        askedKeyframe = nil
+        videoTarget = nil
         scrubResume = false
         generation += 1
         mpv.set(handle, "pause", play ? "no" : "yes")
@@ -417,7 +425,7 @@ final class VideoView: NSView {
         if (controls.hovering || scrubbing) && duration > 0 {
             let at = time(atX: controls.hoverPoint.x)
             controls.hoverTime = at
-            controls.picture = options.previews ? shownPicture(near: at)?.image : nil
+            controls.picture = options.previews ? pictureMatchingVideo(near: at)?.image : nil
         } else {
             controls.hoverTime = nil
             controls.picture = nil
@@ -466,6 +474,7 @@ final class VideoView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         noteActivity()
         let over = !controls.isHidden && controls.timelineHitRect.contains(point)
+        videoTarget = nil  // the picture follows the pointer again
         // The keyframe first (a few milliseconds, so the picture keeps up with the mouse), then the
         // exact frame once the mouse stops.
         if over { requestPicture(at: time(atX: point.x), keyframeFirst: true) }
@@ -542,6 +551,7 @@ final class VideoView: NSView {
         if movedFromExact(point.x) {
             // Keyframes while the mouse moves: instant. Once it rests, the exact frame.
             mpv.runAsync(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])
+            videoTarget = (at, false)
             scrubRestTimer?.invalidate()
             scrubRestTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
                 guard let self, self.scrubbing, self.movedFromExact(self.controls.hoverPoint.x) else { return }
@@ -566,6 +576,7 @@ final class VideoView: NSView {
             requestPicture(at: at)
         }
         mpv.runAsync(handle, ["seek", String(format: "%.3f", at), "absolute+exact"])
+        videoTarget = (at, true)
         exactX = x
     }
 
@@ -624,6 +635,22 @@ final class VideoView: NSView {
         let width = Int(220 * (window?.backingScaleFactor ?? 2))
         previews.request(url: url, time: min(max(time, 0), duration), width: width, exact: exact && !keyframeFirst,
                          thenExact: keyframeFirst, generation: generation)
+    }
+
+    /// The picture above the timeline: while it's held, the frame the video was sent to (once it's
+    /// made; until then the nearest), else the one nearest `time`.
+    private func pictureMatchingVideo(near time: Double) -> (time: Double, image: CGImage)? {
+        if let target = videoTarget {
+            // An exact seek shows the last frame at or before the time asked for.
+            if target.exact, let exactPicture, exactPicture.time <= target.time + 0.01, target.time - exactPicture.time < 0.2 {
+                return exactPicture
+            }
+            if !target.exact, let askedKeyframe, abs(askedKeyframe.asked - target.time) < 0.001 {
+                return askedKeyframe.picture
+            }
+            return shownPicture(near: target.time)
+        }
+        return shownPicture(near: time)
     }
 
     /// The picture shown above the timeline for `time`.
@@ -1154,7 +1181,7 @@ final class VideoControlsView: NSView {
 /// A second, silent mpv: no audio, software decoding of the nearest keyframe only, drawn small by
 /// mpv's software renderer. It runs below normal priority so playback never waits for it.
 final class PreviewMaker {
-    var onPicture: ((Int, Bool, Double, CGImage) -> Void)?  // generation, exact, time shown, picture
+    var onPicture: ((Int, Bool, Double?, Double, CGImage) -> Void)?  // generation, exact, time asked (nil: made ahead), time shown, picture
 
     // Not .utility: on Apple Silicon that can mean the efficiency cores, too slow to keep up with a drag.
     private let queue = DispatchQueue(label: "glance.video-previews", qos: .userInitiated)
@@ -1280,18 +1307,23 @@ final class PreviewMaker {
                     if loaded != nil, let duration = mpv?.double(handle, "duration") {
                         ahead = Self.aheadTimes(duration: duration)
                     }
+                    // As the video does (see VideoView): exact seeks in transport and program streams
+                    // start half a second early, else they can land past the spot.
+                    let format = mpv?.string(handle, "file-format") ?? ""
+                    mpv?.set(handle, "hr-seek-demuxer-offset", format == "mpegts" || format == "mpeg" ? "0.5" : "0")
                 } else {
                     mpv?.run(handle, ["stop"])
                     loaded = nil
                 }
             }
+            let asked = time
             if time == nil, url != nil, url == loaded, nextAhead < ahead.count {
                 time = ahead[nextAhead]
                 nextAhead += 1
                 exact = false  // made ahead: the keyframe is enough, and quick
             }
             guard let time, let url, url == loaded, let (shown, image) = picture(at: time, width: width, exact: exact) else { continue }
-            DispatchQueue.main.async { self.onPicture?(generation, exact, shown, image) }
+            DispatchQueue.main.async { self.onPicture?(generation, exact, asked, shown, image) }
             if thenExact {
                 lock.lock()
                 if wantedTime == nil {  // nothing newer: now the exact frame
