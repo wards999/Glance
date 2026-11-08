@@ -75,7 +75,9 @@ final class VideoView: NSView {
     private var askedKeyframe: (asked: Double, picture: (time: Double, image: CGImage))?
     /// Where the video was last sent from the timeline, exactly or to the keyframe, while it's held
     /// (and until the mouse moves on after): the picture above shows that frame, so the two match.
-    private var videoTarget: (time: Double, exact: Bool)?
+    private var videoTarget: (time: Double, exact: Bool, picture: (time: Double, image: CGImage)?)?
+    /// The picture above the timeline right now (what a click sends the video to).
+    private var displayedPicture: (time: Double, image: CGImage)?
     private var generation = 0
 
     init?(delegate: VideoViewDelegate) {
@@ -185,6 +187,7 @@ final class VideoView: NSView {
         exactAsked = nil
         askedKeyframe = nil
         videoTarget = nil
+        displayedPicture = nil
         scrubResume = false
         generation += 1
         mpv.set(handle, "pause", play ? "no" : "yes")
@@ -440,9 +443,11 @@ final class VideoView: NSView {
         if (controls.hovering || scrubbing) && duration > 0 {
             let at = time(atX: controls.hoverPoint.x)
             controls.hoverTime = at
-            controls.picture = options.previews ? pictureMatchingVideo(near: at)?.image : nil
+            displayedPicture = options.previews ? pictureMatchingVideo(near: at) : nil
+            controls.picture = displayedPicture?.image
         } else {
             controls.hoverTime = nil
+            displayedPicture = nil
             controls.picture = nil
         }
         controls.needsDisplay = true
@@ -536,9 +541,8 @@ final class VideoView: NSView {
                 // way and then jump. It plays again when you let go: mpv holds playback until the
                 // exact seek is done.
                 scrubResume = isPlaying
-                // The picture you're looking at was kept while hovering if it was within a pixel of
-                // the mouse; the click goes to its frame under the same rule (see seekExact).
-                let hoverTolerance = exactTolerance
+                // The picture on screen when you pressed: the video goes to its frame (see seekExact).
+                let looking = controls.hovering ? displayedPicture : nil
                 // Nothing on the main thread may wait for mpv while the timeline is held: it draws the
                 // video here, and once a new frame is waiting it answers nothing until that's drawn,
                 // so each mouse move would stall for a few hundred milliseconds.
@@ -548,7 +552,7 @@ final class VideoView: NSView {
                 controls.hoverPoint = point
                 // The exact frame at once for a click, so the picture matches the one above the
                 // timeline and it can play the moment you let go, even where keyframes are seconds apart.
-                seekExact(atX: point.x, snapWithin: hoverTolerance)
+                seekExact(atX: point.x, toPicture: looking)
                 updateControls()
                 return
             }
@@ -569,7 +573,7 @@ final class VideoView: NSView {
         if movedFromExact(point.x) {
             // Keyframes while the mouse moves: instant. Once it rests, the exact frame.
             mpv.runAsync(handle, ["seek", String(format: "%.3f", at), "absolute+keyframes"])
-            videoTarget = (at, false)
+            videoTarget = (at, false, nil)
             if PreviewMaker.tracing { PreviewMaker.trace(String(format: "video keyframe seek %.3f", at)) }
             scrubRestTimer?.invalidate()
             scrubRestTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
@@ -587,22 +591,27 @@ final class VideoView: NSView {
     /// Where the exact picture is already within half a pixel of the spot, the video goes to its
     /// frame: the mouse is between pixels on a Mac, and a pixel of a long film is seconds, so the
     /// spot itself could be the other side of a cut from the picture you're looking at.
-    /// `snapWithin`: how near the picture must be to count (else `exactTolerance`).
-    private func seekExact(atX x: CGFloat, snapWithin tolerance: Double? = nil) {
+    /// `toPicture`: the picture on screen when the timeline was pressed. The video goes to its
+    /// frame, whatever kind it is (exact, keyframe or made ahead), and it stays up while held: the
+    /// two are the same frame, not merely near each other.
+    private func seekExact(atX x: CGFloat, toPicture picture: (time: Double, image: CGImage)? = nil) {
         var at = time(atX: x)
-        let snapped: Bool
-        // For a click, only if that's the picture showing (not one made ahead that's nearer).
-        let showing = tolerance == nil || shownPicture(near: at)?.time == exactPicture?.time
-        if showing, let exactPicture, abs(exactPicture.time - at) <= (tolerance ?? exactTolerance) {
-            at = exactPicture.time + 0.001  // that frame: a seek shows the last frame at or before the time
-            snapped = true
+        var shown: (time: Double, image: CGImage)?
+        if let picture {
+            shown = picture
+        } else if let exactPicture, abs(exactPicture.time - at) <= exactTolerance {
+            shown = exactPicture
+        }
+        if let shown {
+            // That frame: an exact seek lands on the first frame from 5 ms before the time asked.
+            at = shown.time + 0.001
         } else {
             requestPicture(at: at, evenIfNear: true)  // this very frame, so the picture matches
-            snapped = false
         }
+        let snapped = shown != nil
         if PreviewMaker.tracing { PreviewMaker.trace(String(format: "video exact seek %.3f%@", at, snapped ? " (the picture's frame)" : "")) }
         mpv.runAsync(handle, ["seek", String(format: "%.3f", at), "absolute+exact"])
-        videoTarget = (at, true)
+        videoTarget = (at, true, shown)
         exactX = x
     }
 
@@ -667,6 +676,7 @@ final class VideoView: NSView {
     /// made; until then the nearest), else the one nearest `time`.
     private func pictureMatchingVideo(near time: Double) -> (time: Double, image: CGImage)? {
         if let target = videoTarget {
+            if let picture = target.picture { return picture }  // the very picture the video went to
             // Only the picture made for that very seek, or the one the video was sent to (see
             // seekExact): another exact one, even a few frames off, isn't what the video shows.
             if target.exact, let exactPicture,
@@ -684,11 +694,9 @@ final class VideoView: NSView {
     /// The picture shown above the timeline for `time`.
     private func shownPicture(near time: Double) -> (time: Double, image: CGImage)? {
         let wanted = bucket(for: time)
-        // The nearest made ahead (until the exact one arrives), but not a far-away one.
-        var best: (time: Double, image: CGImage)?
-        if let nearest = pictures.keys.min(by: { abs($0 - wanted) < abs($1 - wanted) }), abs(nearest - wanted) <= 8 {
-            best = pictures[nearest]
-        }
+        // The nearest made ahead or on the way (until the exact one arrives), but not a far-away one.
+        var best = pictures.values.filter { abs(bucket(for: $0.time) - wanted) <= 8 }
+            .min(by: { abs($0.time - time) < abs($1.time - time) })
         // The exact frame wins whenever it's nearer the pointer.
         if let exactPicture, abs(bucket(for: exactPicture.time) - wanted) <= 8,
            best.map({ abs(exactPicture.time - time) < abs($0.time - time) }) ?? true {
