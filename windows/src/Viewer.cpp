@@ -2135,6 +2135,7 @@ void Viewer::showEndPage(int side) {
         endLeftVideo_ = true;
     }
     endPage_ = side;
+    coverKeys_.clear();
     endButtonHover_ = false;
     hasSelection_ = false;
     if (magnifying_) endMagnify();
@@ -2377,8 +2378,8 @@ void Viewer::onDecoded(std::unique_ptr<DecodeResult> result) {
         return;
     }
     if (!result->image) return;
-    if (endPage_ && result->key == coverKey_) {
-        render();  // this PDF's small cover, for the page between PDFs
+    if (endPage_ && std::find(coverKeys_.begin(), coverKeys_.end(), result->key) != coverKeys_.end()) {
+        render();  // a picture for the end page
         return;
     }
     if (current_ && !edited_ && result->key == levelKey_ && result->image->longSide() > current_->longSide()) {
@@ -3098,8 +3099,8 @@ std::shared_ptr<GpuImage> Viewer::pdfCover(const std::wstring& path, const Decod
     const DecodeKey key = keyFor(path, 0, request);
     if (auto it = gpuCache_.find(key); it != gpuCache_.end()) return it->second;
     if (auto image = pipeline_->cached(key)) return gpuFor(key, image);
-    if (load && !(key == coverKey_)) {
-        coverKey_ = key;
+    if (load && std::find(coverKeys_.begin(), coverKeys_.end(), key) == coverKeys_.end()) {
+        coverKeys_.push_back(key);  // asked for once; render() runs again when it's decoded
         pipeline_->load(key);
     }
     return nullptr;
@@ -3126,7 +3127,11 @@ void Viewer::drawEndPage() {
     // The cover you're heading to is decoded ahead like any neighbouring file. This PDF's own cover
     // usually isn't still cached by its last page: it's asked for at a small size, and appears when
     // it's ready.
-    const std::shared_ptr<GpuImage> heading = next && Pdf::isPdf(*next) ? pdfCover(*next, openingRequest(), false) : nullptr;
+    // The file you're heading to, large: a PDF's cover or the photo itself (a movie has none).
+    // Usually decoded ahead already; if not, asked for small, and it appears when it's ready.
+    const bool toVideo = next && isVideoFile(*next);
+    std::shared_ptr<GpuImage> heading = next && !toVideo ? pdfCover(*next, openingRequest(), false) : nullptr;
+    if (!heading && next && !toVideo) heading = pdfCover(*next, DecodeRequest{0, 0, 1024}, true);
     const bool fromVideo = now && isVideoFile(*now);
     std::shared_ptr<GpuImage> leaving = now && !fromVideo ? pdfCover(*now, openingRequest(), false) : nullptr;
     if (!leaving && now && !fromVideo) leaving = pdfCover(*now, DecodeRequest{0, 0, 1024}, true);

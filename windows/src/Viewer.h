@@ -253,7 +253,7 @@ private:
     bool restorePdfView_ = false;  // arriving at a PDF: open at the zoom remembered in pdfPlace_
     bool announceResume_ = false;  // ...and say which page it's resuming from
     std::wstring notice_;
-    DecodeKey coverKey_;           // the small cover the page between PDFs asked for
+    std::vector<DecodeKey> coverKeys_;  // the pictures the end page asked for (both sides)
 
     ZoomMode zoomMode_ = ZoomMode::Fit;
     double zoom_ = 1;      // device pixels per full-resolution pixel

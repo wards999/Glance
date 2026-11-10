@@ -1005,7 +1005,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         endPageView.isHidden = false
         // The cover you're heading to is usually decoded ahead already. This PDF's own cover isn't
         // often still cached by its last page: it's asked for small, and appears when it's ready.
-        if let other, otherIsPDF {
+        // A PDF's cover or the photo itself (a movie has none).
+        if let other, !VideoFiles.isPlayable(other) {
             cover(of: other, size: openingDecodeSize, side: side) { [weak self] in self?.endPageView.setDestinationCover($0) }
         }
         // The file you're leaving, small: a PDF's cover or the photo itself (a movie has none).
