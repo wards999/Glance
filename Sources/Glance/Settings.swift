@@ -44,6 +44,16 @@ enum PDFNavigation: Int {
     func includesPDFs(openedPDF: Bool) -> Bool { self == .always || (self == .whenOpenedFromPDF && openedPDF) }
 }
 
+/// What Next does past a PDF's last page (and Previous before its first).
+enum PDFAtEnd: Int {
+    /// Nothing: a document doesn't run on into the next file (⌥↓ moves on).
+    case stop = 0
+    /// A page with the next PDF's cover first.
+    case cover
+    /// Straight on to the next file.
+    case goOn
+}
+
 /// User preferences, kept in UserDefaults.
 /// Setting any value posts `Settings.didChange`; the viewer and the Settings window both follow it.
 final class Settings {
@@ -81,7 +91,9 @@ final class Settings {
         static let pdfRightToLeft = "pdfRightToLeft"
         static let includePDFs = "includePDFsInFolders"  // before pdfNavigation: on or off
         static let pdfNavigation = "pdfNavigation"
-        static let pdfEndPage = "pdfEndPage"
+        static let pdfEndPage = "pdfEndPage"  // before pdfAtEnd: the cover page between PDFs, on or off
+        static let pdfAtEnd = "pdfAtEnd"
+        static let pdfToPDF = "pdfToPDF"
         static let rememberPDFZoom = "rememberPDFZoom"
         static let holdToZoom = "holdToZoom"
         static let holdZoomFactor = "holdZoomFactor"
@@ -128,7 +140,7 @@ final class Settings {
             Key.pdfPageMode: PDFPageMode.automatic.rawValue,
             Key.pdfRightToLeft: false,
             Key.includePDFs: false,
-            Key.pdfEndPage: true,
+            Key.pdfToPDF: true,
             Key.rememberPDFZoom: false,
             Key.holdToZoom: HoldToZoom.pdfsOnly.rawValue,
             Key.holdZoomFactor: 2.5,
@@ -325,10 +337,21 @@ final class Settings {
         set { store(newValue.rawValue, Key.pdfNavigation) }
     }
 
-    /// A blank page between two PDFs (going forward or back), with the other one's cover.
-    var pdfEndPage: Bool {
-        get { defaults.bool(forKey: Key.pdfEndPage) }
-        set { store(newValue, Key.pdfEndPage) }
+    var pdfAtEnd: PDFAtEnd {
+        get {
+            // Until it's chosen, the older cover-page setting says whether it went straight on.
+            guard defaults.object(forKey: Key.pdfAtEnd) != nil else {
+                return defaults.object(forKey: Key.pdfEndPage) != nil && !defaults.bool(forKey: Key.pdfEndPage) ? .goOn : .stop
+            }
+            return PDFAtEnd(rawValue: defaults.integer(forKey: Key.pdfAtEnd)) ?? .stop
+        }
+        set { store(newValue.rawValue, Key.pdfAtEnd) }
+    }
+
+    /// From a PDF, Next File (and Next past its end) is the nearest PDF that way, past photos and videos.
+    var pdfToPDF: Bool {
+        get { defaults.bool(forKey: Key.pdfToPDF) }
+        set { store(newValue, Key.pdfToPDF) }
     }
 
     /// Each PDF reopens at the zoom, and the place on the page, you left it at.

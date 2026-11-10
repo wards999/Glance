@@ -56,12 +56,23 @@ books. The choice is remembered.
 top for a few seconds. Turn on **Remember each PDF's zoom and position** in Settings ▸ PDF and it
 also reopens at the zoom you left it at and, zoomed in, the same part of the page.
 
-**Turning pages.** Pages turn before Glance moves on to the next file in the folder. When that
-file is another PDF, a blank **page between them** comes first, so it's obvious one document has
-ended: both covers side by side in reading order, the next PDF's large and this one's small and
-dimmed, with the next one's name. Space goes on to it, Backspace (Delete on the Mac) goes back.
-Going backwards works the same way: before the first page, the previous PDF's cover is the large one. (Turn it
-off in Settings ▸ PDF.)
+**Turning pages.** Next and previous turn a PDF's pages, and stop at its last page (and its
+first): a document doesn't run on into the next file without your asking. To move on, use the keys
+below. Settings ▸ PDF ▸ **At the end of a PDF** offers two more ways, handy for flicking through a
+folder of payslips or statements:
+
+- **Show the next PDF's cover.** A blank **page between them** comes first, so it's obvious one
+  document has ended: both covers side by side in reading order, the next PDF's large and this
+  one's small and dimmed, with the next one's name. Space goes on to it, Backspace (Delete on the
+  Mac) goes back. Going backwards works the same way.
+- **Go straight on** to the next file.
+
+Either way, it takes a new scroll or key press to leave a PDF: a wheel still turning from the scroll
+that reached the last page (or a smoothing app's tail), or a held key repeating, stops there.
+
+From a PDF, the next file is the next **PDF** in the folder, past any photos and videos between
+them. (Turn off **From a PDF, the next file is the next PDF** in Settings ▸ PDF to go through
+everything in order.)
 
 | | Next page | Previous page |
 |---|---|---|

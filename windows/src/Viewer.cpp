@@ -2063,8 +2063,9 @@ void Viewer::go(int delta, bool wheel) {
     direction_ = delta < 0 ? -1 : 1;
     // In a PDF, pages turn before moving on to the next file.
     if (showingPdf()) {
-        // Out of a PDF with the wheel only on a new scroll, not the one that reached its end.
-        const bool heldBack = wheel && wheelSpinning_;
+        // Out of a PDF only on a new scroll or key press, not the one that reached its end
+        // (a wheel still turning, a smoothing app's tail, a held key repeating).
+        const bool heldBack = (wheel && wheelSpinning_) || keyRepeating_;
         if (endPage_) {
             // From the page between PDFs: on to the other PDF, or back to this one's page (still
             // there behind it).

@@ -700,7 +700,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 if !keys.contains(key) { keys.append(key) }
                 continue
             }
-            guard let url = navigator.url(at: offset), url != navigator.current else { continue }
+            // From a PDF, the file Next goes to (the nearest PDF, if that's the setting).
+            let fileOffset = currentPDF != nil ? fileStep(offset > 0 ? 1 : -1) : offset
+            guard fileOffset != 0, let url = navigator.url(at: fileOffset), url != navigator.current else { continue }
             if VideoFiles.isPlayable(url) {
                 // Videos aren't decoded ahead (that's what keeps browsing past them instant), but
                 // one right next to you gets the player ready, so it opens without a pause.
@@ -762,7 +764,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     func imageView(_ view: ImageView, navigate delta: Int) {
-        go(delta)
+        go(delta, heldBack: view.navigatingBySpinningWheel)
     }
 
     func imageView(_ view: ImageView, didReceiveDrop urls: [URL]) {
@@ -908,12 +910,16 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     // MARK: - Navigation
 
-    private func go(_ delta: Int) {
+    /// `heldBack`: the wheel is still turning from the scroll that got here (or a smoothing app's
+    /// tail). That turns pages but doesn't leave a PDF; nor does a held key's repeating.
+    private func go(_ delta: Int, heldBack wheelSpinning: Bool = false) {
         direction = delta < 0 ? -1 : 1
+        let heldBack = wheelSpinning || keyRepeating
         if pdfBoundary != 0 {
             // From the page between PDFs: on to the other PDF, or back to this one's page (still
             // there behind it).
             let side = pdfBoundary
+            if (delta > 0) == (side > 0) && heldBack { return }
             hideEndPage()
             if (delta > 0) == (side > 0) { goToFile(side) }
             return
@@ -925,11 +931,25 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             showCurrent(keepPage: true)
             return
         }
-        if let pdf = currentPDF, abs(delta) == 1, page + delta == (delta > 0 ? pdf.info.pageCount : -1),
-           let other = neighbourPDF(delta) {
-            // Past the last page (or before the first) with another PDF beside it: a blank page
-            // first, with that PDF's cover, so the step from one document to the next is obvious.
-            showEndPage(side: delta, current: pdf.info.url, other: other)
+        if let pdf = currentPDF, abs(delta) == 1, page + delta == (delta > 0 ? pdf.info.pageCount : -1) {
+            // Past the last page (or before the first).
+            switch settings.pdfAtEnd {
+            case .stop:
+                // A document doesn't run on into the next file without your asking.
+                showNotice(delta > 0 ? "End of the document – ⌥↓ for the next file" : "Start of the document – ⌥↑ for the previous file")
+                return
+            case .cover:
+                if heldBack { return }
+                if let other = neighbourPDF(delta) {
+                    // A blank page first, with the other PDF's cover, so the step from one document
+                    // to the next is obvious.
+                    showEndPage(side: delta, current: pdf.info.url, other: other)
+                    return
+                }
+            case .goOn:
+                if heldBack { return }
+            }
+            goToFile(delta)
             return
         }
         guard navigator.move(by: delta) else {
@@ -939,9 +959,22 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         showCurrent()
     }
 
-    /// The next (side 1) or previous (side -1) file, if it's another PDF and the page between PDFs is on.
+    /// How far the next (side 1) or previous (-1) file is: the one beside, or from a PDF (with "the
+    /// next file is the next PDF" on) the nearest other PDF that way, past photos and videos. 0: none.
+    private func fileStep(_ side: Int) -> Int {
+        guard settings.pdfToPDF, let now = navigator.current, PDFRenderer.isPDF(now) else { return side }
+        for step in 1..<max(navigator.count, 1) {
+            guard let other = navigator.url(at: side * step), other != now else { return 0 }  // the folder's end, or round to this one
+            if PDFRenderer.isPDF(other) { return side * step }
+        }
+        return 0
+    }
+
+    /// The next (side 1) or previous (side -1) PDF, if the page between PDFs is the setting.
     private func neighbourPDF(_ side: Int) -> URL? {
-        guard settings.pdfEndPage, let other = navigator.url(at: side), other != navigator.current, PDFRenderer.isPDF(other) else { return nil }
+        let step = fileStep(side)
+        guard settings.pdfAtEnd == .cover, step != 0, let other = navigator.url(at: step), other != navigator.current,
+              PDFRenderer.isPDF(other) else { return nil }
         return other
     }
 
@@ -1634,7 +1667,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func goToFile(_ delta: Int) {
         direction = delta < 0 ? -1 : 1
-        guard navigator.move(by: delta) else {
+        let step = abs(delta) == 1 ? fileStep(delta) : delta
+        guard step != 0 else {
+            NSSound.beep()
+            showNotice(delta > 0 ? "No more PDFs after this one" : "No PDFs before this one")
+            return
+        }
+        guard navigator.move(by: step) else {
             NSSound.beep()
             return
         }
