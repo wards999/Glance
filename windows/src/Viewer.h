@@ -95,8 +95,9 @@ private:
     void requestResolutionIfNeeded();
     DecodeRequest openingRequest() const;
     void scanFolder(const std::wstring& folder, const std::wstring& selected);
-    void go(int delta);
+    void go(int delta, bool wheel = false);
     void goToFile(int delta);
+    int fileStep(int side) const;
     /// The next (side 1) or previous (side -1) file, if it's another PDF and the page between PDFs is on.
     const std::wstring* neighbourPdf(int side) const;
     /// Puts the zoom and position on screen into pdfPlace_, if Settings remembers them.
@@ -257,6 +258,8 @@ private:
     POINT dragStart_{};
     POINT dragLast_{};
     int wheelRemainder_ = 0;
+    ULONGLONG lastWheel_ = 0;     // when the last wheel message came
+    bool wheelSpinning_ = false;  // it came within moments of the one before: the same scroll
 
     bool hasSelection_ = false;
     D2D1_RECT_F selection_{};  // image coordinates

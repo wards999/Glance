@@ -588,10 +588,15 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (settings_.wheelNavigates && !control) {
+            // One scroll or another: a wheel still turning (or a smoothing app's tail) doesn't
+            // carry you out of a PDF (see go).
+            const ULONGLONG now = GetTickCount64();
+            wheelSpinning_ = now - lastWheel_ < 400;
+            lastWheel_ = now;
             // High-resolution wheels send small steps; act on whole notches.
             wheelRemainder_ += delta;
             while (std::abs(wheelRemainder_) >= WHEEL_DELTA) {
-                go(wheelRemainder_ > 0 ? -1 : 1);
+                go(wheelRemainder_ > 0 ? -1 : 1, true);
                 wheelRemainder_ -= wheelRemainder_ > 0 ? WHEEL_DELTA : -WHEEL_DELTA;
             }
         } else if (current_ && !endPage_) {
@@ -2053,15 +2058,18 @@ DecodeRequest Viewer::openingRequest() const {
     return DecodeRequest{bucket(width), bucket(height), 0};
 }
 
-void Viewer::go(int delta) {
+void Viewer::go(int delta, bool wheel) {
     trace(delta > 0 ? "go: next" : "go: previous");
     direction_ = delta < 0 ? -1 : 1;
     // In a PDF, pages turn before moving on to the next file.
     if (showingPdf()) {
+        // Out of a PDF with the wheel only on a new scroll, not the one that reached its end.
+        const bool heldBack = wheel && wheelSpinning_;
         if (endPage_) {
             // From the page between PDFs: on to the other PDF, or back to this one's page (still
             // there behind it).
             const int side = endPage_;
+            if ((delta > 0) == (side > 0) && heldBack) return;
             endPage_ = 0;
             if ((delta > 0) == (side > 0)) {
                 goToFile(side);
@@ -2079,22 +2087,52 @@ void Viewer::go(int delta) {
             return;
         }
         const int side = target == static_cast<long long>(pdfScreens_) ? 1 : target == -1 ? -1 : 0;
-        if (side && side == delta && current_ && current_->info.isPdf && neighbourPdf(side)) {
-            // Past the last page (or before the first) with another PDF beside it: a blank page
-            // first, with that PDF's cover, so the step from one document to the next is obvious.
-            endPage_ = side;
-            hasSelection_ = false;
-            if (magnifying_) endMagnify();
-            updateTitle();
-            render();
-            return;
+        if (side && side == delta && current_ && current_->info.isPdf) {
+            // Past the last page (or before the first).
+            if (settings_.pdfAtEnd == 0) {
+                // Stop: a document doesn't run on into the next file without your asking.
+                showNotice(side > 0 ? L"End of the document  -  Ctrl+Page Down for the next file"
+                                    : L"Start of the document  -  Ctrl+Page Up for the previous file");
+                return;
+            }
+            if (heldBack) return;
+            if (settings_.pdfAtEnd == 1 && neighbourPdf(side)) {
+                // A blank page first, with the other PDF's cover, so the step from one document
+                // to the next is obvious.
+                endPage_ = side;
+                hasSelection_ = false;
+                if (magnifying_) endMagnify();
+                updateTitle();
+                render();
+                return;
+            }
         }
     }
     goToFile(delta);
 }
 
+/// How far the next (side 1) or previous (-1) file is: the one beside, or from a PDF (with "the
+/// next file is the next PDF" on) the nearest other PDF that way, past photos and videos. 0: none.
+int Viewer::fileStep(int side) const {
+    const std::wstring* now = navigator_.current();
+    if (!settings_.pdfToPdf || !now || !Pdf::isPdf(*now)) return side;
+    const int count = static_cast<int>(navigator_.count());
+    for (int step = 1; step < count; ++step) {
+        const std::wstring* other = navigator_.at(side * step);
+        if (!other || samePath(*other, *now)) return 0;  // the end of the folder, or round to this one
+        if (Pdf::isPdf(*other)) return side * step;
+    }
+    return 0;
+}
+
 void Viewer::goToFile(int delta) {
-    if (!navigator_.move(delta)) {
+    const int step = delta == 1 || delta == -1 ? fileStep(delta) : delta;
+    if (step == 0) {
+        MessageBeep(MB_OK);
+        showNotice(delta > 0 ? L"No more PDFs after this one" : L"No PDFs before this one");
+        return;
+    }
+    if (!navigator_.move(step)) {
         MessageBeep(MB_OK);
         return;
     }
@@ -2103,9 +2141,10 @@ void Viewer::goToFile(int delta) {
 }
 
 const std::wstring* Viewer::neighbourPdf(int side) const {
-    if (!settings_.pdfEndPage) return nullptr;
+    if (settings_.pdfAtEnd != 1) return nullptr;
     const std::wstring* now = navigator_.current();
-    const std::wstring* other = navigator_.at(side);
+    const int step = fileStep(side);
+    const std::wstring* other = step ? navigator_.at(step) : nullptr;
     if (!now || !other || samePath(*now, *other) || !Pdf::isPdf(*other)) return nullptr;
     return other;
 }
@@ -2326,7 +2365,9 @@ void Viewer::prefetchNeighbors() {
         if (pdf && page >= 0 && page < static_cast<long long>(pdfScreens_)) {
             key = keyFor(*now, static_cast<UINT>(page), request);  // the PDF's other pages
         } else {
-            const std::wstring* path = navigator_.at(offset > 0 ? (pdf ? 1 : offset) : (pdf ? -1 : offset));
+            // From a PDF, the file next/previous goes to (the nearest PDF, if that's the setting).
+            const int step = pdf ? fileStep(offset > 0 ? 1 : -1) : offset;
+            const std::wstring* path = step ? navigator_.at(step) : nullptr;
             if (!path || (now && samePath(*path, *now))) continue;
             if (isVideoFile(*path)) {
                 // Videos aren't decoded ahead (that's what keeps browsing past them instant), but

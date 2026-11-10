@@ -41,7 +41,8 @@ enum Id {
     IdPdfLayout,
     IdPdfRightToLeft,
     IdPdfNavigation,
-    IdPdfEndPage,
+    IdPdfAtEnd,
+    IdPdfToPdf,
     IdRememberPdfZoom,
     IdHoldToZoom,
     IdHoldZoom,
@@ -168,12 +169,14 @@ SIZE build() {
                 indexOf(kQuality, s.saveQuality, 2));
     right.checkbox(IdKeepAdjustments, L"Keep adjustments for the next image (F4)", s.keepAdjustments);
     right.endGroup();
-    right.group(L"PDF", 7);
+    right.group(L"PDF", 8);
     right.combo(IdPdfLayout, L"Page layout:", {L"Automatic", L"Single page", L"Two pages", L"Two pages with cover"}, s.pdfLayout);
     right.checkbox(IdPdfRightToLeft, L"Right to left (manga)", s.pdfRightToLeft);
     right.combo(IdPdfNavigation, L"Next / previous file:",
                 {L"Other PDFs when you opened a PDF", L"Includes PDFs, even among photos", L"Skips PDFs"}, s.pdfNavigation);
-    right.checkbox(IdPdfEndPage, L"A page between PDFs, with the other's cover", s.pdfEndPage);
+    right.combo(IdPdfAtEnd, L"At the end of a PDF:",
+                {L"Stop (Ctrl+Page Down moves on)", L"Show the next PDF's cover", L"Go straight on"}, s.pdfAtEnd);
+    right.checkbox(IdPdfToPdf, L"From a PDF, the next file is the next PDF", s.pdfToPdf);
     right.checkbox(IdRememberPdfZoom, L"Remember each PDF's zoom and position", s.rememberPdfZoom);
     right.combo(IdHoldToZoom, L"Hold to zoom:", {L"Off", L"PDFs only", L"PDFs and images"}, s.holdToZoom);
     right.combo(IdHoldZoom, L"Magnification:", {L"1.5x", L"2x", L"2.5x", L"3x", L"4x"}, indexOf(kHoldZoom, s.holdZoomPercent, 2));
@@ -238,7 +241,8 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case IdPdfLayout: s.pdfLayout = selection; break;
         case IdPdfRightToLeft: s.pdfRightToLeft = checked; break;
         case IdPdfNavigation: if (picked) s.pdfNavigation = selection; break;
-        case IdPdfEndPage: s.pdfEndPage = checked; break;
+        case IdPdfAtEnd: if (picked) s.pdfAtEnd = selection; break;
+        case IdPdfToPdf: s.pdfToPdf = checked; break;
         case IdRememberPdfZoom: s.rememberPdfZoom = checked; break;
         case IdIncludeVideos: s.includeVideos = checked; break;
         case IdVideoAutoplay: s.videoAutoplay = checked; break;
