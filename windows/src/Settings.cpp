@@ -105,9 +105,9 @@ Settings Settings::load() {
     s.keepAdjustments = flag(L"KeepAdjustments", s.keepAdjustments);
     s.pdfLayout = std::clamp(number(L"PdfLayout", s.pdfLayout), 0, 3);
     s.pdfRightToLeft = flag(L"PdfRightToLeft", s.pdfRightToLeft);
-    // PdfNavigation replaced IncludePdfs (on/off); an older Glance.ini still says which it was.
-    s.pdfNavigation = std::clamp(number(L"PdfNavigation", flag(L"IncludePdfs", false) ? 1 : 0), 0, 2);
-    s.pdfToPdf = flag(L"PdfToPdf", s.pdfToPdf);
+    s.includePictures = flag(L"IncludePictures", s.includePictures);
+    // Until it's saved, an older Glance.ini's PdfNavigation says: on unless it skipped PDFs (2).
+    s.includePdfs = flag(L"IncludePdfs", number(L"PdfNavigation", 0) != 2);
     s.rememberPdfZoom = flag(L"RememberPdfZoom", s.rememberPdfZoom);
     s.includeVideos = flag(L"IncludeVideos", s.includeVideos);
     s.videoAutoplay = flag(L"VideoAutoplay", s.videoAutoplay);
@@ -156,8 +156,8 @@ void Settings::save() const {
     put(L"KeepAdjustments", keepAdjustments);
     put(L"PdfLayout", pdfLayout);
     put(L"PdfRightToLeft", pdfRightToLeft);
-    put(L"PdfNavigation", pdfNavigation);
-    put(L"PdfToPdf", pdfToPdf);
+    put(L"IncludePictures", includePictures);
+    put(L"IncludePdfs", includePdfs);
     put(L"RememberPdfZoom", rememberPdfZoom);
     put(L"IncludeVideos", includeVideos);
     put(L"VideoAutoplay", videoAutoplay);

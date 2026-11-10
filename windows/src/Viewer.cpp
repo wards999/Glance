@@ -149,12 +149,13 @@ D2D1_COLOR_F colour(COLORREF c, float alpha = 1) {
 
 /// Everything WIC can decode, plus PDF and videos when asked for and available. Asks WIC once;
 /// the caller's thread must have COM initialised.
-std::unordered_set<std::wstring> supportedExtensions(bool withPdf, bool withVideo) {
-    static const std::unordered_set<std::wstring> images = [] {
-        auto list = Decoder::supportedExtensions();
-        return std::unordered_set<std::wstring>(list.begin(), list.end());
-    }();
-    auto extensions = images;
+std::unordered_set<std::wstring> supportedExtensions(bool withPictures, bool withPdf, bool withVideo) {
+    std::unordered_set<std::wstring> extensions;
+    if (withPictures) {
+        for (const std::wstring& extension : Decoder::supportedExtensions()) {
+            if (extension != L"pdf") extensions.insert(extension);
+        }
+    }
     if (withPdf && Pdf::available()) extensions.insert(L"pdf");
     if (withVideo && Video::available()) extensions.insert(Video::extensions().begin(), Video::extensions().end());
     return extensions;
@@ -248,8 +249,9 @@ Viewer::Viewer(HINSTANCE instance) : instance_(instance), settings_(Settings::lo
     appliedSort_ = settings_.sortOrder;
     appliedDescending_ = settings_.descending;
     appliedPdfLayout_ = pdfLayout();
-    appliedPdfNavigation_ = settings_.pdfNavigation;
+    appliedIncludePictures_ = settings_.includePictures;
     appliedIncludeVideos_ = settings_.includeVideos;
+    appliedIncludePdfs_ = settings_.includePdfs;
     navigator_.wraps = settings_.loop;
 }
 
@@ -1341,10 +1343,12 @@ void Viewer::applySettings() {
         appliedDescending_ = settings_.descending;
         navigator_.sort(settings_.sortOrder, settings_.descending);
     }
-    if (settings_.pdfNavigation != appliedPdfNavigation_ || settings_.includeVideos != appliedIncludeVideos_) {
+    if (settings_.includePictures != appliedIncludePictures_ || settings_.includeVideos != appliedIncludeVideos_ ||
+        settings_.includePdfs != appliedIncludePdfs_) {
         // Which files the folder lists changed: list it again, staying on the file you're viewing.
-        appliedPdfNavigation_ = settings_.pdfNavigation;
+        appliedIncludePictures_ = settings_.includePictures;
         appliedIncludeVideos_ = settings_.includeVideos;
+        appliedIncludePdfs_ = settings_.includePdfs;
         if (const std::wstring* path = navigator_.current()) scanFolder(Navigator::folderOf(*path), *path);
     }
     if (pdfLayout() != appliedPdfLayout_) {
@@ -1386,7 +1390,7 @@ bool Viewer::openDialog() {
     wchar_t buffer[32768] = L"";
     // Everything Glance can open: pictures WIC decodes, plus PDFs and videos when they're there.
     std::vector<std::wstring> sorted;
-    for (const std::wstring& extension : supportedExtensions(true, true)) sorted.push_back(extension);
+    for (const std::wstring& extension : supportedExtensions(true, true, true)) sorted.push_back(extension);
     std::sort(sorted.begin(), sorted.end());
     std::wstring patterns;
     for (const std::wstring& extension : sorted) patterns += (patterns.empty() ? L"*." : L";*.") + extension;
@@ -2058,14 +2062,14 @@ void Viewer::scanFolder(const std::wstring& folder, const std::wstring& selected
     HWND hwnd = hwnd_;
     const SortOrder order = settings_.sortOrder;
     const bool descending = settings_.descending;
-    // Opening a PDF (or video) directly means you're reading PDFs, so its neighbours count too,
-    // unless Settings says next/previous always include or always skip PDFs.
-    const bool withPdf = settings_.includePdfsFrom(Pdf::isPdf(selected));
-    const bool withVideo = settings_.includeVideos || Video::isVideo(selected);
-    std::thread([hwnd, folder, selected, order, descending, withPdf, withVideo] {
+    // Next/previous visit the kinds ticked in Settings, in the sort order, the same either way.
+    const bool withPictures = settings_.includePictures;
+    const bool withPdf = settings_.includePdfs;
+    const bool withVideo = settings_.includeVideos;
+    std::thread([hwnd, folder, selected, order, descending, withPictures, withPdf, withVideo] {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        auto files = Navigator::scan(folder, supportedExtensions(withPdf, withVideo));
-        // The file you opened is always listed (a PDF when PDFs are skipped), in its place in the order.
+        auto files = Navigator::scan(folder, supportedExtensions(withPictures, withPdf, withVideo));
+        // The file you opened is always listed (even a kind that isn't ticked), in its place in the order.
         if (!selected.empty() &&
             std::none_of(files.begin(), files.end(), [&](const FileEntry& f) { return samePath(f.path, selected); })) {
             files.push_back(Navigator::entryFor(selected));
@@ -2144,29 +2148,8 @@ void Viewer::showEndPage(int side) {
     render();
 }
 
-/// How far the next (side 1) or previous (-1) file is: the one beside, or from a PDF (with "the
-/// next file is the next PDF" on) the nearest other PDF that way, past photos and videos. With no
-/// other PDF that way (or PDFs skipped), the file beside after all, so a PDF never shuts you in.
-int Viewer::fileStep(int side) const {
-    const std::wstring* now = navigator_.current();
-    if (!settings_.pdfToPdf || !now || !Pdf::isPdf(*now)) return side;
-    const int count = static_cast<int>(navigator_.count());
-    for (int step = 1; step < count; ++step) {
-        const std::wstring* other = navigator_.at(side * step);
-        if (!other || samePath(*other, *now)) break;  // the end of the folder, or round to this one
-        if (Pdf::isPdf(*other)) return side * step;
-    }
-    return side;
-}
-
 void Viewer::goToFile(int delta) {
-    const int step = delta == 1 || delta == -1 ? fileStep(delta) : delta;
-    if (step == 0) {
-        MessageBeep(MB_OK);
-        showNotice(delta > 0 ? L"No more PDFs after this one" : L"No PDFs before this one");
-        return;
-    }
-    if (!navigator_.move(step)) {
+    if (!navigator_.move(delta)) {
         MessageBeep(MB_OK);
         return;
     }
@@ -2175,11 +2158,10 @@ void Viewer::goToFile(int delta) {
     showCurrent();
 }
 
-/// The file the end page's button goes to (see fileStep), if there is one.
+/// The file the end page's button goes to: the next (side 1) or previous one, if there is one.
 const std::wstring* Viewer::neighbourPdf(int side) const {
     const std::wstring* now = navigator_.current();
-    const int step = fileStep(side);
-    const std::wstring* other = step ? navigator_.at(step) : nullptr;
+    const std::wstring* other = navigator_.at(side);
     if (!now || !other || samePath(*now, *other)) return nullptr;
     return other;
 }
@@ -2228,19 +2210,19 @@ void Viewer::showCurrent() {
         render();
         return;
     }
-    if (isVideoFile(*path)) {
-        showVideo(*path);
-        return;
-    }
-    if (showingVideo_) leaveVideo();
     if (!pdfPath_.empty() && !samePath(*path, pdfPath_)) {
-        // Moved on from a PDF: remember where you were in it, for next time (if you read it; see
+        // Moved on from a PDF (to a movie too): remember where you were in it, for next time (if you read it; see
         // pdfMoved_).
         rememberPdfView();
         if (pdfMoved_ || pdfPlace_.zoom > 0) PdfPlaces::save(pdfPath_, pdfPlace_);
         pdfPath_.clear();
         pdfScreens_ = 0;
     }
+    if (isVideoFile(*path)) {
+        showVideo(*path);
+        return;
+    }
+    if (showingVideo_) leaveVideo();
     if (pdfPath_.empty() && Pdf::isPdf(*path) && arrival) {
         // Moved to from another file (Next document, Ctrl+Page Down...): from the start, or moving
         // back, the end, as if the pages ran on. Where you left it is for opening it directly.
@@ -2417,9 +2399,7 @@ void Viewer::prefetchNeighbors() {
         if (pdf && page >= 0 && page < static_cast<long long>(pdfScreens_)) {
             key = keyFor(*now, static_cast<UINT>(page), request);  // the PDF's other pages
         } else {
-            // From a PDF, the file next/previous goes to (the nearest PDF, if that's the setting).
-            const int step = pdf ? fileStep(offset > 0 ? 1 : -1) : offset;
-            const std::wstring* path = step ? navigator_.at(step) : nullptr;
+            const std::wstring* path = navigator_.at(offset);
             if (!path || (now && samePath(*path, *now))) continue;
             if (isVideoFile(*path)) {
                 // Videos aren't decoded ahead (that's what keeps browsing past them instant), but

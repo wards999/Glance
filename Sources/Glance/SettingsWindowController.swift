@@ -53,6 +53,9 @@ final class SettingsWindowController: NSWindowController {
             [label("Sort images by:"), popup(SortOrder.allCases.map(\.title), { s.sortOrder.rawValue }, { s.sortOrder = SortOrder(rawValue: $0) ?? .name })],
             [empty, checkbox("Descending order", { s.descending }, { s.descending = $0 })],
             [empty, checkbox("Loop back to the first image at the end of a folder", { s.loop }, { s.loop = $0 })],
+            [label("Next / previous include:"), checkbox("Pictures", { s.includePicturesInFolders }, { s.includePicturesInFolders = $0 })],
+            [empty, checkbox("Videos", { s.includeVideosInFolders }, { s.includeVideosInFolders = $0 })],
+            [empty, checkbox("PDFs", { s.includePDFsInFolders }, { s.includePDFsInFolders = $0 })],
             [label("Mouse wheel:"), popup(["Zooms in and out", "Goes to the next or previous image"], { s.wheelAction.rawValue }, { s.wheelAction = WheelAction(rawValue: $0) ?? .zoom })],
             [empty, note("Hold ⌘ while scrolling to zoom either way. Trackpads always pan.")],
             [label("Slideshow interval:"), popup(
@@ -93,12 +96,6 @@ final class SettingsWindowController: NSWindowController {
             [label("Page layout:"), popup(PDFPageMode.allCases.map(\.title), { s.pdfPageMode.rawValue }, { s.pdfPageMode = PDFPageMode(rawValue: $0) ?? .automatic })],
             [empty, note("Automatic shows magazine-like PDFs as a cover followed by two-page spreads, and other PDFs one page at a time.")],
             [empty, checkbox("Right to left (manga)", { s.pdfRightToLeft }, { s.pdfRightToLeft = $0 })],
-            [label("Next / previous file:"), popup(
-                ["Other PDFs when you opened a PDF", "Includes PDFs, even among photos", "Skips PDFs"],
-                { s.pdfNavigation.rawValue },
-                { s.pdfNavigation = PDFNavigation(rawValue: $0) ?? .whenOpenedFromPDF }
-            )],
-            [empty, checkbox("From a PDF, the next file is the next PDF", { s.pdfToPDF }, { s.pdfToPDF = $0 })],
             [empty, checkbox("Remember each PDF's zoom and position", { s.rememberPDFZoom }, { s.rememberPDFZoom = $0 })],
             [label("Hold to zoom:"), popup(["Off", "PDFs only", "PDFs and images"], { s.holdToZoom.rawValue }, { s.holdToZoom = HoldToZoom(rawValue: $0) ?? .pdfsOnly })],
             [label("Magnification:"), popup(
@@ -113,7 +110,6 @@ final class SettingsWindowController: NSWindowController {
     private func videoRows() -> [[NSView]] {
         let s = Settings.shared
         return [
-            [empty, checkbox("Include videos when browsing folders", { s.includeVideosInFolders }, { s.includeVideosInFolders = $0 })],
             [empty, checkbox("Play videos when you stop on them", { s.videoAutoplay }, { s.videoAutoplay = $0 })],
             [empty, checkbox("Show pictures above the timeline as you hover", { s.videoTimelinePictures }, { s.videoTimelinePictures = $0 })],
             [empty, checkbox("Loop silent clips under 30 seconds", { s.videoLoopShortClips }, { s.videoLoopShortClips = $0 })],

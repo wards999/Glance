@@ -40,8 +40,8 @@ enum Id {
     IdKeepAdjustments,
     IdPdfLayout,
     IdPdfRightToLeft,
-    IdPdfNavigation,
-    IdPdfToPdf,
+    IdIncludePictures,
+    IdIncludePdfs,
     IdRememberPdfZoom,
     IdHoldToZoom,
     IdHoldZoom,
@@ -121,11 +121,14 @@ int indexOf(const int (&values)[N], int value, int fallback) {
 SIZE build() {
     const Settings& s = *g_settings;
     Column left{12, 520};
-    left.group(L"General", 6);
+    left.group(L"General", 9);
     left.combo(IdSort, L"Sort images by:", {L"Name", L"Date modified", L"Date created", L"Size", L"Random"},
                static_cast<int>(s.sortOrder));
     left.checkbox(IdDescending, L"Descending order", s.descending);
     left.checkbox(IdLoop, L"Loop back to the first image at the end", s.loop);
+    left.checkbox(IdIncludePictures, L"Next / previous include pictures", s.includePictures);
+    left.checkbox(IdIncludeVideos, L"Next / previous include videos", s.includeVideos);
+    left.checkbox(IdIncludePdfs, L"Next / previous include PDFs", s.includePdfs);
     left.combo(IdWheel, L"Mouse wheel:", {L"Goes to the next or previous image", L"Zooms in and out"}, s.wheelNavigates ? 0 : 1);
     left.combo(IdEscape, L"Escape key:", {L"Closes Glance", L"Leaves full screen"}, s.escapeCloses ? 0 : 1);
     left.combo(IdSlideshow, L"Slideshow interval:",
@@ -143,8 +146,7 @@ SIZE build() {
     left.checkbox(IdControls, L"Show buttons when the mouse nears the bottom", s.showControls);
     left.checkbox(IdHideCursor, L"Hide the mouse pointer in full screen", s.hideCursor);
     left.endGroup();
-    left.group(L"Video", 6);
-    left.checkbox(IdIncludeVideos, L"Include videos when browsing folders", s.includeVideos);
+    left.group(L"Video", 5);
     left.checkbox(IdVideoAutoplay, L"Play videos when you stop on them", s.videoAutoplay);
     left.checkbox(IdVideoPreviews, L"Show pictures above the timeline as you hover", s.videoPreviews);
     left.checkbox(IdVideoLoopShort, L"Loop silent clips under 30 seconds", s.videoLoopShort);
@@ -168,12 +170,9 @@ SIZE build() {
                 indexOf(kQuality, s.saveQuality, 2));
     right.checkbox(IdKeepAdjustments, L"Keep adjustments for the next image (F4)", s.keepAdjustments);
     right.endGroup();
-    right.group(L"PDF", 7);
+    right.group(L"PDF", 5);
     right.combo(IdPdfLayout, L"Page layout:", {L"Automatic", L"Single page", L"Two pages", L"Two pages with cover"}, s.pdfLayout);
     right.checkbox(IdPdfRightToLeft, L"Right to left (manga)", s.pdfRightToLeft);
-    right.combo(IdPdfNavigation, L"Next / previous file:",
-                {L"Other PDFs when you opened a PDF", L"Includes PDFs, even among photos", L"Skips PDFs"}, s.pdfNavigation);
-    right.checkbox(IdPdfToPdf, L"From a PDF, the next file is the next PDF", s.pdfToPdf);
     right.checkbox(IdRememberPdfZoom, L"Remember each PDF's zoom and position", s.rememberPdfZoom);
     right.combo(IdHoldToZoom, L"Hold to zoom:", {L"Off", L"PDFs only", L"PDFs and images"}, s.holdToZoom);
     right.combo(IdHoldZoom, L"Magnification:", {L"1.5x", L"2x", L"2.5x", L"3x", L"4x"}, indexOf(kHoldZoom, s.holdZoomPercent, 2));
@@ -237,8 +236,8 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         case IdKeepAdjustments: s.keepAdjustments = checked; break;
         case IdPdfLayout: s.pdfLayout = selection; break;
         case IdPdfRightToLeft: s.pdfRightToLeft = checked; break;
-        case IdPdfNavigation: if (picked) s.pdfNavigation = selection; break;
-        case IdPdfToPdf: s.pdfToPdf = checked; break;
+        case IdIncludePictures: s.includePictures = checked; break;
+        case IdIncludePdfs: s.includePdfs = checked; break;
         case IdRememberPdfZoom: s.rememberPdfZoom = checked; break;
         case IdIncludeVideos: s.includeVideos = checked; break;
         case IdVideoAutoplay: s.videoAutoplay = checked; break;

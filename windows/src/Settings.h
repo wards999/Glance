@@ -43,20 +43,19 @@ struct Settings {
     int saveQuality = 90;         // JPEG quality, percent
     bool keepAdjustments = false; // carry brightness etc. on to the next image (F4)
 
+    // What next/previous visit in a folder, in the sort order (the file you opened is always there).
+    bool includePictures = true;
+    bool includeVideos = true;
+    bool includePdfs = true;
+
     // PDF
     int pdfLayout = 0;            // 0 automatic, 1 single page, 2 two pages, 3 two pages with cover
     bool pdfRightToLeft = false;
-    // Which PDFs next/previous visit: 0 a PDF's neighbours when you opened a PDF, else none;
-    // 1 always (PDFs among photos too); 2 never (only the PDF you opened).
-    int pdfNavigation = 0;
-    bool includePdfsFrom(bool openedPdf) const { return pdfNavigation == 1 || (pdfNavigation == 0 && openedPdf); }
-    bool pdfToPdf = true;         // from a PDF, the next/previous file is the nearest PDF that way
     bool rememberPdfZoom = true;  // each PDF reopens at the zoom (and position) you left it at
     int holdToZoom = 1;           // 0 off, 1 PDFs only, 2 PDFs and images
     int holdZoomPercent = 250;
 
     // Video (needs libmpv-2.dll beside Glance.exe)
-    bool includeVideos = true;    // when browsing folders; opening a video always includes its neighbours
     bool videoAutoplay = true;    // start playing when you stop on a video
     bool videoPreviews = true;    // pictures above the timeline as you hover along it
     bool videoLoopShort = true;   // loop silent clips under 30 seconds, like GIFs

@@ -64,13 +64,13 @@ PDF's large and this one's small and dimmed, with its name, and a **Next documen
 That's as far as page turning goes: scrolling, Space or the arrows go no further, and Backspace
 (Delete on the Mac) goes back to the last page. To go on, click the button, press Return, or use
 the keys below. Before the first page, the same with **Previous document**. The same page comes
-between a photo or movie and a PDF beside it (when PDFs are among your photos), so you always see
-when you're going into a document or out of one; a movie stops for it, and comes back if you go back.
+between a photo or movie and a PDF beside it, so you always see when you're going into a document
+or out of one; a movie stops for it, and comes back if you go back.
 
-From a PDF, the next document is the next **PDF** in the folder, past any photos and videos
-between them; when there's no other PDF that way, the button is **Next file**, to whatever comes
-next. (Turn off **From a PDF, the next file is the next PDF** in Settings ▸ PDF to go
-through everything in order.)
+Next and previous go through the folder in the sort order, the same both ways (a > b > c, then
+c > b > a), visiting the kinds ticked in Settings ▸ General ▸ **Next / previous include**:
+pictures, videos and PDFs (all three by default). The file you open is always shown, even a kind
+that isn't ticked.
 
 | | Next page | Previous page |
 |---|---|---|
@@ -96,9 +96,6 @@ Settings.
 **Also:**
 
 - Password-protected PDFs ask for their password. It's kept in memory only, until Glance closes.
-- Settings ▸ PDF ▸ **Next / previous file** decides which PDFs next and previous visit: other PDFs
-  in the folder when you opened a PDF (the default; browsing photos skips them), PDFs always, even
-  among photos, or never (only the PDF you opened). Opening a PDF directly always works.
 - Glance never changes a PDF. Save As exports the page or spread on screen as an image.
 
 **PDF covers in Explorer (Windows).** Windows doesn't show PDF pages as thumbnails on its own.
@@ -239,8 +236,8 @@ and the window always agree.
 
 | Tab | Options |
 |---|---|
-| PDF | Page layout (automatic / single / two pages / two pages with cover), right to left, which PDFs next / previous visit, a page between PDFs with the other's cover, remember each PDF's zoom and position, hold to zoom (off / PDFs / everything) and its magnification |
-| General | Sort order and direction, loop at end of folder, mouse wheel zooms or flips images, slideshow interval, keep adjustments between images |
+| PDF | Page layout (automatic / single / two pages / two pages with cover), right to left, a page between PDFs with the other's cover, remember each PDF's zoom and position, hold to zoom (off / PDFs / everything) and its magnification |
+| General | Sort order and direction, loop at end of folder, which kinds next / previous include (pictures, videos, PDFs), mouse wheel zooms or flips images, slideshow interval, keep adjustments between images |
 | Display | Open in full screen, a window, or as you left it (the default), full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, info when the mouse is in the top-left corner, hover controls, hide cursor in full screen, pixel view above 400% |
 | Saving | JPEG/HEIC quality, ask before re-encoding the original |
 | Performance | How many images to decode ahead (0–8), memory cache size |

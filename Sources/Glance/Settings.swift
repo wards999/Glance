@@ -33,17 +33,6 @@ enum HoldToZoom: Int {
 }
 
 /// Which PDFs Next and Previous visit.
-enum PDFNavigation: Int {
-    /// A PDF's neighbouring PDFs when you opened a PDF; none when browsing photos.
-    case whenOpenedFromPDF = 0
-    /// Always, PDFs among photos too.
-    case always
-    /// Never: only the PDF you opened.
-    case never
-
-    func includesPDFs(openedPDF: Bool) -> Bool { self == .always || (self == .whenOpenedFromPDF && openedPDF) }
-}
-
 /// User preferences, kept in UserDefaults.
 /// Setting any value posts `Settings.didChange`; the viewer and the Settings window both follow it.
 final class Settings {
@@ -79,9 +68,9 @@ final class Settings {
         static let quickPreview = "quickPreview"
         static let pdfPageMode = "pdfPageMode"
         static let pdfRightToLeft = "pdfRightToLeft"
-        static let includePDFs = "includePDFsInFolders"  // before pdfNavigation: on or off
-        static let pdfNavigation = "pdfNavigation"
-        static let pdfToPDF = "pdfToPDF"
+        static let pdfNavigation = "pdfNavigation"  // before the ticks: 2 skipped PDFs
+        static let includePictures = "includePicturesInFolders"
+        static let includePDFs = "nextIncludesPDFs"
         static let rememberPDFZoom = "rememberPDFZoom"
         static let holdToZoom = "holdToZoom"
         static let holdZoomFactor = "holdZoomFactor"
@@ -127,8 +116,7 @@ final class Settings {
             Key.quickPreview: false,
             Key.pdfPageMode: PDFPageMode.automatic.rawValue,
             Key.pdfRightToLeft: false,
-            Key.includePDFs: false,
-            Key.pdfToPDF: true,
+            Key.includePictures: true,
             Key.rememberPDFZoom: true,
             Key.holdToZoom: HoldToZoom.pdfsOnly.rawValue,
             Key.holdZoomFactor: 2.5,
@@ -312,23 +300,20 @@ final class Settings {
 
     var pdfLayout: PDFLayout { PDFLayout(mode: pdfPageMode, rightToLeft: pdfRightToLeft) }
 
-    /// PDFs aren't listed among photos by default, so flipping through a photo folder never stops
-    /// to render one.
-    var pdfNavigation: PDFNavigation {
+    /// Next/previous visit PDFs in a folder, in the sort order, among the other ticked kinds.
+    var includePDFsInFolders: Bool {
         get {
-            // Until it's chosen, the older on/off setting says which it was.
-            guard defaults.object(forKey: Key.pdfNavigation) != nil else {
-                return defaults.bool(forKey: Key.includePDFs) ? .always : .whenOpenedFromPDF
-            }
-            return PDFNavigation(rawValue: defaults.integer(forKey: Key.pdfNavigation)) ?? .whenOpenedFromPDF
+            if let on = defaults.object(forKey: Key.includePDFs) as? Bool { return on }
+            // Until it's chosen, the older setting says: on unless it skipped PDFs.
+            return defaults.integer(forKey: Key.pdfNavigation) != 2
         }
-        set { store(newValue.rawValue, Key.pdfNavigation) }
+        set { store(newValue, Key.includePDFs) }
     }
 
-    /// From a PDF, Next File (and Next past its end) is the nearest PDF that way, past photos and videos.
-    var pdfToPDF: Bool {
-        get { defaults.bool(forKey: Key.pdfToPDF) }
-        set { store(newValue, Key.pdfToPDF) }
+    /// Next/previous visit pictures in a folder.
+    var includePicturesInFolders: Bool {
+        get { defaults.bool(forKey: Key.includePictures) }
+        set { store(newValue, Key.includePictures) }
     }
 
     /// Each PDF reopens at the zoom, and the place on the page, you left it at.
@@ -349,7 +334,7 @@ final class Settings {
 
     // MARK: Video
 
-    /// Listed alongside pictures when browsing a folder (opening a video always lists its neighbours).
+    /// Next/previous visit videos in a folder.
     var includeVideosInFolders: Bool {
         get { defaults.bool(forKey: Key.includeVideos) }
         set { store(newValue, Key.includeVideos) }

@@ -98,7 +98,6 @@ private:
     void go(int delta);
     void showEndPage(int side);
     void goToFile(int delta);
-    int fileStep(int side) const;
     /// The next (side 1) or previous (side -1) file, if it's another PDF and the page between PDFs is on.
     const std::wstring* neighbourPdf(int side) const;
     /// Puts the zoom and position on screen into pdfPlace_, if Settings remembers them.
@@ -192,8 +191,7 @@ private:
     SortOrder appliedSort_ = SortOrder::Name;
     bool appliedDescending_ = false;
     int appliedPdfLayout_ = 0;
-    int appliedPdfNavigation_ = 0;
-    bool appliedIncludeVideos_ = true;
+    bool appliedIncludePictures_ = true, appliedIncludeVideos_ = true, appliedIncludePdfs_ = true;
     /// Creating the Direct3D device loads the GPU driver, which is slow; it starts on another
     /// thread the moment the app does, in parallel with the window and the first decode.
     std::future<ComPtr<ID3D11Device>> pendingDevice_;

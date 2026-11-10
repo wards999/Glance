@@ -45,7 +45,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var settingsObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
     private var appliedPDFLayout = PDFLayout()
-    private var appliedIncludes: (pdfs: PDFNavigation, videos: Bool)?
+    private var appliedIncludes: (pictures: Bool, videos: Bool, pdfs: Bool)?
     /// Core Image work (adjustments, crop, save) runs here, one job at a time.
     private let renderQueue = DispatchQueue(label: "glance.render", qos: .userInitiated)
 
@@ -148,7 +148,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             navigator.resort()
             updateTitle()
         }
-        let includes = (settings.pdfNavigation, settings.includeVideosInFolders)
+        let includes = (settings.includePicturesInFolders, settings.includeVideosInFolders, settings.includePDFsInFolders)
         if let applied = appliedIncludes, applied != includes, let current = navigator.current {
             // Which files the folder lists changed: list it again, staying on the file you're viewing.
             scanFolder(current.deletingLastPathComponent(), keeping: current)
@@ -421,14 +421,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func scanFolder(_ folder: URL, keeping selected: URL?) {
         let order = navigator.sortOrder
         let descending = navigator.descending
-        // Opening a PDF directly means you're reading PDFs, so its neighbours count too, unless
-        // Settings says next/previous always include or always skip PDFs.
-        let includePDFs = settings.pdfNavigation.includesPDFs(openedPDF: selected.map(PDFRenderer.isPDF) ?? false)
-        let includeVideos = settings.includeVideosInFolders || (selected.map(VideoFiles.isPlayable) ?? false)
+        // Next/previous visit the kinds ticked in Settings, in the sort order, the same either way.
+        let includePictures = settings.includePicturesInFolders
+        let includePDFs = settings.includePDFsInFolders
+        let includeVideos = settings.includeVideosInFolders
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var files = FolderNavigator.scan(folder: folder, order: order, descending: descending,
-                                             includePDFs: includePDFs, includeVideos: includeVideos)
-            // The file you opened is always listed (a PDF when PDFs are skipped), in its place in the order.
+                                             includePictures: includePictures, includePDFs: includePDFs,
+                                             includeVideos: includeVideos)
+            // The file you opened is always listed (even a kind that isn't ticked), in its place in the order.
             if let selected, !files.contains(where: { $0.standardizedFileURL == selected.standardizedFileURL }) {
                 files = FolderNavigator.sort(files + [selected], by: order, descending: descending)
             }
@@ -718,9 +719,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 if !keys.contains(key) { keys.append(key) }
                 continue
             }
-            // From a PDF, the file Next goes to (the nearest PDF, if that's the setting).
-            let fileOffset = currentPDF != nil ? fileStep(offset > 0 ? 1 : -1) : offset
-            guard fileOffset != 0, let url = navigator.url(at: fileOffset), url != navigator.current else { continue }
+            guard let url = navigator.url(at: offset), url != navigator.current else { continue }
             if VideoFiles.isPlayable(url) {
                 // Videos aren't decoded ahead (that's what keeps browsing past them instant), but
                 // one right next to you gets the player ready, so it opens without a pause.
@@ -969,22 +968,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         showCurrent()
     }
 
-    /// How far the next (side 1) or previous (-1) file is: the one beside, or from a PDF (with "the
-    /// next file is the next PDF" on) the nearest other PDF that way, past photos and videos. With no
-    /// other PDF that way (or PDFs skipped), the file beside after all, so a PDF never shuts you in.
-    private func fileStep(_ side: Int) -> Int {
-        guard settings.pdfToPDF, let now = navigator.current, PDFRenderer.isPDF(now) else { return side }
-        for step in 1..<max(navigator.count, 1) {
-            guard let other = navigator.url(at: side * step), other != now else { break }  // the folder's end, or round to this one
-            if PDFRenderer.isPDF(other) { return side * step }
-        }
-        return side
-    }
-
-    /// The file the end page's button goes to (see fileStep), if there is one.
+    /// The file the end page's button goes to: the next (side 1) or previous one, if there is one.
     private func neighbourPDF(_ side: Int) -> URL? {
-        let step = fileStep(side)
-        guard step != 0, let other = navigator.url(at: step), other != navigator.current else { return nil }
+        guard let other = navigator.url(at: side), other != navigator.current else { return nil }
         return other
     }
 
@@ -1703,13 +1689,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func goToFile(_ delta: Int) {
         direction = delta < 0 ? -1 : 1
-        let step = abs(delta) == 1 ? fileStep(delta) : delta
-        guard step != 0 else {
-            NSSound.beep()
-            showNotice(delta > 0 ? "No more PDFs after this one" : "No PDFs before this one")
-            return
-        }
-        guard navigator.move(by: step) else {
+        guard navigator.move(by: delta) else {
             NSSound.beep()
             return
         }
