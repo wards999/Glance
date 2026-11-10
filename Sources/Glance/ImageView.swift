@@ -132,10 +132,6 @@ final class ImageView: NSView {
     private var swipeDistance: CGFloat = 0
     private var swipeHandled = false
     private var wheelSteps = WheelSteps()
-    private var lastWheelTime: TimeInterval = 0
-    /// While the delegate is told to navigate: the wheel came within moments of its last turn,
-    /// so it's the same scroll (or a smoothing app's tail), not a new one.
-    private(set) var navigatingBySpinningWheel = false
 
     /// Bitmaps larger than this are split into tiles. GPUs top out at 16384² textures.
     private static let tileSize = 4096
@@ -709,14 +705,8 @@ final class ImageView: NSView {
     override func scrollWheel(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if event.isMouseWheel && wheelNavigates && !event.modifierFlags.contains(.command) {
-            let spinning = event.timestamp - lastWheelTime < 0.4
-            lastWheelTime = event.timestamp
             let step = wheelSteps.step(for: event)
-            if step != 0 {
-                navigatingBySpinningWheel = spinning
-                delegate?.imageView(self, navigate: -step)
-                navigatingBySpinningWheel = false
-            }
+            if step != 0 { delegate?.imageView(self, navigate: -step) }
             return
         }
         if event.isMouseWheel || event.modifierFlags.contains(.command) {

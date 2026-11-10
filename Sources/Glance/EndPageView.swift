@@ -1,13 +1,19 @@
 import AppKit
 
-/// Between two PDFs, after the last page going forward or before the first going back: a blank
-/// page with both covers in reading order, so the step from one document to the next is obvious.
-/// The one Space or Delete goes to is large; the one you're leaving is half the size and dimmed.
+/// After a PDF's last page (or before its first): a blank page with both covers in reading order,
+/// and the next (or previous) document is a button, not another page turn, so nobody lands in it
+/// without noticing. The one the button goes to is large; the one you're leaving is half the size
+/// and dimmed.
 final class EndPageView: NSView {
     private let destination = NSImageView()
     private let origin = NSImageView()
     private let covers = NSStackView()
     private let label = NSTextField(wrappingLabelWithString: "")
+    private let button = NSButton(title: "", target: nil, action: nil)
+    private let keys = NSTextField(wrappingLabelWithString: "")
+    private let texts = NSStackView()
+    /// The button (or Return): on to the other document.
+    var onButton: (() -> Void)?
     /// Gets the wheel and trackpad, so they still turn pages (and leave this page).
     weak var scrollTarget: NSView?
 
@@ -34,9 +40,23 @@ final class EndPageView: NSView {
         label.textColor = NSColor.white.withAlphaComponent(0.85)
         label.alignment = .center
         label.isSelectable = false
-        label.translatesAutoresizingMaskIntoConstraints = false
+        button.bezelStyle = .rounded
+        button.controlSize = .large
+        button.target = self
+        button.action = #selector(pressed)
+        keys.font = .systemFont(ofSize: 12)
+        keys.textColor = NSColor.white.withAlphaComponent(0.6)
+        keys.alignment = .center
+        keys.isSelectable = false
+        texts.orientation = .vertical
+        texts.alignment = .centerX
+        texts.spacing = 14
+        texts.translatesAutoresizingMaskIntoConstraints = false
+        texts.addArrangedSubview(label)
+        texts.addArrangedSubview(button)
+        texts.addArrangedSubview(keys)
         addSubview(covers)
-        addSubview(label)
+        addSubview(texts)
         // In the view tree before any constraint ties them to this view: AppKit refuses (with an
         // exception) a constraint between views with no common ancestor. show() sets the order.
         covers.addArrangedSubview(origin)
@@ -50,9 +70,9 @@ final class EndPageView: NSView {
             height,
             destination.heightAnchor.constraint(lessThanOrEqualTo: heightAnchor, multiplier: 0.45),
             origin.heightAnchor.constraint(equalTo: destination.heightAnchor, multiplier: 0.5),
-            label.topAnchor.constraint(equalTo: covers.bottomAnchor, constant: 20),
-            label.centerXAnchor.constraint(equalTo: centerXAnchor),
-            label.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -80),
+            texts.topAnchor.constraint(equalTo: covers.bottomAnchor, constant: 20),
+            texts.centerXAnchor.constraint(equalTo: centerXAnchor),
+            texts.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -80),
         ])
         setAspect(of: destination, 0.7)
         setAspect(of: origin, 0.7)
@@ -63,12 +83,21 @@ final class EndPageView: NSView {
     }
 
     /// `forward`: past this PDF's last page, heading for the next one; otherwise before its first,
-    /// heading for the previous one. Covers arrive afterwards, as they're decoded.
-    func show(forward: Bool, rightToLeft: Bool, current: String, other: String, background: NSColor) {
+    /// heading for the previous one. `other`: the file the button goes to (nil: none that way, no
+    /// button). Covers arrive afterwards, as they're decoded.
+    func show(forward: Bool, rightToLeft: Bool, current: String, other: String?, otherIsPDF: Bool,
+              noneText: String, background: NSColor) {
         layer?.backgroundColor = background.cgColor
-        label.stringValue = forward
-            ? "End of \(current)\n\nNext: \(other)\nSpace for the next PDF  ·  Delete to go back"
-            : "Start of \(current)\n\nPrevious: \(other)\nDelete for the previous PDF  ·  Space to go back"
+        if let other {
+            label.stringValue = forward ? "End of \(current)\n\nNext: \(other)" : "Start of \(current)\n\nPrevious: \(other)"
+            let kind = otherIsPDF ? "document" : "file"
+            button.title = forward ? "Next \(kind)  ›" : "‹  Previous \(kind)"
+            keys.stringValue = forward ? "⌥↓  ·  Delete back to the last page" : "⌥↑  ·  Space back to the first page"
+        } else {
+            label.stringValue = (forward ? "End of \(current)" : "Start of \(current)") + "\n\n" + noneText
+            keys.stringValue = forward ? "Delete back to the last page" : "Space back to the first page"
+        }
+        button.isHidden = other == nil
         // Reading order: going forward, this PDF comes first; going back, the previous one does.
         let originFirst = forward != rightToLeft
         // Moving one to the front reorders them; both stay in the stack, and their constraints with them.
@@ -100,6 +129,10 @@ final class EndPageView: NSView {
         let aspect = view.widthAnchor.constraint(equalTo: view.heightAnchor, multiplier: ratio)
         aspect.identifier = "aspect"
         aspect.isActive = true
+    }
+
+    @objc private func pressed() {
+        onButton?()
     }
 
     override func scrollWheel(with event: NSEvent) {

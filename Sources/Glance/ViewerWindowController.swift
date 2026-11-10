@@ -153,7 +153,6 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         saveQuality = settings.saveQuality
         showInfo = settings.showInfo
         if !settings.showInfoInCorner { cornerInfo = false }
-        if pdfBoundary != 0 && neighbourPDF(pdfBoundary) == nil { hideEndPage() }  // turned off, or that file isn't a PDF now
         updateInfo()
         if !settings.showControls { setControlsVisible(false) }
         videoView?.options = videoOptions
@@ -332,6 +331,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         endPageView.isHidden = true
         endPageView.menu = contextMenu
         endPageView.scrollTarget = imageView
+        endPageView.onButton = { [weak self] in self?.leaveEndPage() }
         content.addSubview(endPageView)
         content.addSubview(infoBox)
 
@@ -764,7 +764,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     func imageView(_ view: ImageView, navigate delta: Int) {
-        go(delta, heldBack: view.navigatingBySpinningWheel)
+        go(delta)
     }
 
     func imageView(_ view: ImageView, didReceiveDrop urls: [URL]) {
@@ -839,6 +839,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             case NSLeftArrowFunctionKey, NSUpArrowFunctionKey:
                 go(-1)
                 return true
+            case 0x0D, 0x03:  // Return or Enter: the end page's button
+                leaveEndPage()
+                return true
             default:
                 break
             }
@@ -910,18 +913,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     // MARK: - Navigation
 
-    /// `heldBack`: the wheel is still turning from the scroll that got here (or a smoothing app's
-    /// tail). That turns pages but doesn't leave a PDF; nor does a held key's repeating.
-    private func go(_ delta: Int, heldBack wheelSpinning: Bool = false) {
+    private func go(_ delta: Int) {
         direction = delta < 0 ? -1 : 1
-        let heldBack = wheelSpinning || keyRepeating
+        // In a PDF, pages turn; past the last one (or before the first) is the end page, and that's
+        // as far as they go: the next document is a button there, or ⌥↓, never another page turn,
+        // so you don't land in it without noticing.
         if pdfBoundary != 0 {
-            // From the page between PDFs: on to the other PDF, or back to this one's page (still
-            // there behind it).
-            let side = pdfBoundary
-            if (delta > 0) == (side > 0) && heldBack { return }
-            hideEndPage()
-            if (delta > 0) == (side > 0) { goToFile(side) }
+            if (delta > 0) == (pdfBoundary > 0) { return }  // no further this way
+            hideEndPage()  // back to the page behind it
             return
         }
         // In a PDF, Space, arrows and the wheel turn its pages before moving to the next file.
@@ -932,24 +931,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return
         }
         if let pdf = currentPDF, abs(delta) == 1, page + delta == (delta > 0 ? pdf.info.pageCount : -1) {
-            // Past the last page (or before the first).
-            switch settings.pdfAtEnd {
-            case .stop:
-                // A document doesn't run on into the next file without your asking.
-                showNotice(delta > 0 ? "End of the document – ⌥↓ for the next file" : "Start of the document – ⌥↑ for the previous file")
-                return
-            case .cover:
-                if heldBack { return }
-                if let other = neighbourPDF(delta) {
-                    // A blank page first, with the other PDF's cover, so the step from one document
-                    // to the next is obvious.
-                    showEndPage(side: delta, current: pdf.info.url, other: other)
-                    return
-                }
-            case .goOn:
-                if heldBack { return }
-            }
-            goToFile(delta)
+            showEndPage(side: delta, current: pdf.info.url, other: neighbourPDF(delta))
             return
         }
         guard navigator.move(by: delta) else {
@@ -970,23 +952,36 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         return 0
     }
 
-    /// The next (side 1) or previous (side -1) PDF, if the page between PDFs is the setting.
+    /// The file the end page's button goes to (see fileStep), if there is one.
     private func neighbourPDF(_ side: Int) -> URL? {
         let step = fileStep(side)
-        guard settings.pdfAtEnd == .cover, step != 0, let other = navigator.url(at: step), other != navigator.current,
-              PDFRenderer.isPDF(other) else { return nil }
+        guard step != 0, let other = navigator.url(at: step), other != navigator.current else { return nil }
         return other
     }
 
-    private func showEndPage(side: Int, current: URL, other: URL) {
+    /// The end page's button: on to the next (or previous) document.
+    private func leaveEndPage() {
+        let side = pdfBoundary
+        guard side != 0, neighbourPDF(side) != nil else { return }
+        hideEndPage()
+        goToFile(side)
+    }
+
+    private func showEndPage(side: Int, current: URL, other: URL?) {
         pdfBoundary = side
         setControlsVisible(false)
+        let otherIsPDF = other.map(PDFRenderer.isPDF) ?? false
+        let none = settings.pdfToPDF ? (side > 0 ? "No more PDFs after this one" : "No PDFs before this one")
+                                     : (side > 0 ? "Nothing after this one" : "Nothing before this one")
         endPageView.show(forward: side > 0, rightToLeft: settings.pdfRightToLeft, current: current.lastPathComponent,
-                         other: other.lastPathComponent, background: settings.backgroundColor)
+                         other: other?.lastPathComponent, otherIsPDF: otherIsPDF, noneText: none,
+                         background: settings.backgroundColor)
         endPageView.isHidden = false
         // The cover you're heading to is usually decoded ahead already. This PDF's own cover isn't
         // often still cached by its last page: it's asked for small, and appears when it's ready.
-        cover(of: other, size: openingDecodeSize, side: side) { [weak self] in self?.endPageView.setDestinationCover($0) }
+        if let other, otherIsPDF {
+            cover(of: other, size: openingDecodeSize, side: side) { [weak self] in self?.endPageView.setDestinationCover($0) }
+        }
         if let hit = pipeline.cached(pipelineKey(current, page: 0, size: openingDecodeSize)) {
             endPageView.setOriginCover(hit.image)
         } else {

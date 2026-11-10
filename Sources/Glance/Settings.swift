@@ -44,16 +44,6 @@ enum PDFNavigation: Int {
     func includesPDFs(openedPDF: Bool) -> Bool { self == .always || (self == .whenOpenedFromPDF && openedPDF) }
 }
 
-/// What Next does past a PDF's last page (and Previous before its first).
-enum PDFAtEnd: Int {
-    /// Nothing: a document doesn't run on into the next file (⌥↓ moves on).
-    case stop = 0
-    /// A page with the next PDF's cover first.
-    case cover
-    /// Straight on to the next file.
-    case goOn
-}
-
 /// User preferences, kept in UserDefaults.
 /// Setting any value posts `Settings.didChange`; the viewer and the Settings window both follow it.
 final class Settings {
@@ -91,8 +81,6 @@ final class Settings {
         static let pdfRightToLeft = "pdfRightToLeft"
         static let includePDFs = "includePDFsInFolders"  // before pdfNavigation: on or off
         static let pdfNavigation = "pdfNavigation"
-        static let pdfEndPage = "pdfEndPage"  // before pdfAtEnd: the cover page between PDFs, on or off
-        static let pdfAtEnd = "pdfAtEnd"
         static let pdfToPDF = "pdfToPDF"
         static let rememberPDFZoom = "rememberPDFZoom"
         static let holdToZoom = "holdToZoom"
@@ -335,17 +323,6 @@ final class Settings {
             return PDFNavigation(rawValue: defaults.integer(forKey: Key.pdfNavigation)) ?? .whenOpenedFromPDF
         }
         set { store(newValue.rawValue, Key.pdfNavigation) }
-    }
-
-    var pdfAtEnd: PDFAtEnd {
-        get {
-            // Until it's chosen, the older cover-page setting says whether it went straight on.
-            guard defaults.object(forKey: Key.pdfAtEnd) != nil else {
-                return defaults.object(forKey: Key.pdfEndPage) != nil && !defaults.bool(forKey: Key.pdfEndPage) ? .goOn : .stop
-            }
-            return PDFAtEnd(rawValue: defaults.integer(forKey: Key.pdfAtEnd)) ?? .stop
-        }
-        set { store(newValue.rawValue, Key.pdfAtEnd) }
     }
 
     /// From a PDF, Next File (and Next past its end) is the nearest PDF that way, past photos and videos.
