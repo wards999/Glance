@@ -85,17 +85,21 @@ final class EndPageView: NSView {
     /// `forward`: past this PDF's last page, heading for the next one; otherwise before its first,
     /// heading for the previous one. `other`: the file the button goes to (nil: none that way, no
     /// button). Covers arrive afterwards, as they're decoded.
-    func show(forward: Bool, rightToLeft: Bool, current: String, other: String?, otherIsPDF: Bool,
+    /// `currentIsPDF`: leaving a PDF (its end or start); else a photo or movie with a PDF beside it.
+    func show(forward: Bool, rightToLeft: Bool, current: String, currentIsPDF: Bool, other: String?, otherIsPDF: Bool,
               noneText: String, background: NSColor) {
         layer?.backgroundColor = background.cgColor
+        let heading = currentIsPDF ? (forward ? "End of \(current)" : "Start of \(current)") : current
+        let back = currentIsPDF ? (forward ? "Delete back to the last page" : "Space back to the first page")
+                                : (forward ? "Delete back to \(current)" : "Space back to \(current)")
         if let other {
-            label.stringValue = forward ? "End of \(current)\n\nNext: \(other)" : "Start of \(current)\n\nPrevious: \(other)"
+            label.stringValue = heading + (forward ? "\n\nNext: \(other)" : "\n\nPrevious: \(other)")
             let kind = otherIsPDF ? "document" : "file"
             button.title = forward ? "Next \(kind)  ›" : "‹  Previous \(kind)"
-            keys.stringValue = forward ? "⌥↓  ·  Delete back to the last page" : "⌥↑  ·  Space back to the first page"
+            keys.stringValue = (forward ? "⌥↓  ·  " : "⌥↑  ·  ") + back
         } else {
-            label.stringValue = (forward ? "End of \(current)" : "Start of \(current)") + "\n\n" + noneText
-            keys.stringValue = forward ? "Delete back to the last page" : "Space back to the first page"
+            label.stringValue = heading + "\n\n" + noneText
+            keys.stringValue = back
         }
         button.isHidden = other == nil
         // Reading order: going forward, this PDF comes first; going back, the previous one does.

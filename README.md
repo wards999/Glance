@@ -63,7 +63,9 @@ documents, so it's obvious one has ended: both covers side by side in reading or
 PDF's large and this one's small and dimmed, with its name, and a **Next document** button.
 That's as far as page turning goes: scrolling, Space or the arrows go no further, and Backspace
 (Delete on the Mac) goes back to the last page. To go on, click the button, press Return, or use
-the keys below. Before the first page, the same with **Previous document**.
+the keys below. Before the first page, the same with **Previous document**. The same page comes
+between a photo or movie and a PDF beside it (when PDFs are among your photos), so you always see
+when you're going into a document or out of one; a movie stops for it, and comes back if you go back.
 
 From a PDF, the next document is the next **PDF** in the folder, past any photos and videos
 between them; when there's no other PDF that way, the button is **Next file**, to whatever comes
