@@ -60,6 +60,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var pdfBoundary = 0
     /// Arriving in a PDF partway through: say so when its page appears.
     private var announceResume: URL?
+    /// How the next file shown was reached: 1 moving on to it, -1 moving back, 0 opened directly.
+    /// A PDF opens where you left it only when opened directly; moved to, it opens at its first page
+    /// (or, moving back, its last).
+    private var arrival = 0
     /// The mouse is in the top-left corner, showing the info (Settings).
     private var cornerInfo = false
     /// Bumped whenever the picture changes, so late results for an old picture are ignored.
@@ -511,6 +515,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func showCurrent(keepPage: Bool = false) {
+        let arrival = self.arrival
+        self.arrival = 0
         hideEndPage()
         imageView.restoredView = nil  // only for the PDF it was meant for, below
         animation?.cancel()
@@ -539,7 +545,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if pdfURL == nil, PDFRenderer.isPDF(url) {
             // Arriving at a PDF: open it where you left it.
             pdfURL = url
-            if !keepPage, let place = PDFPlaces.place(for: url) {
+            if !keepPage, arrival < 0 {
+                // Moved back to from the next file: its last page, as if the pages ran on.
+                let spreads = PDFRenderer.spreads(for: url, layout: settings.pdfLayout, password: pipeline.password(for: url))
+                page = max(spreads.count - 1, 0)
+            } else if !keepPage, arrival == 0, let place = PDFPlaces.place(for: url) {
                 if settings.rememberPDFZoom, let view = place.view { imageView.restoredView = view }
                 if place.screen > 0 { announceResume = url }
                 let layout = settings.pdfLayout
@@ -938,6 +948,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             NSSound.beep()
             return
         }
+        arrival = delta > 0 ? 1 : -1
         showCurrent()
     }
 
@@ -1018,12 +1029,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     @objc func firstImage(_ sender: Any?) {
         direction = 1
         navigator.moveToFirst()
+        arrival = 1
         showCurrent()
     }
 
     @objc func lastImage(_ sender: Any?) {
         direction = -1
         navigator.moveToLast()
+        arrival = 1
         showCurrent()
     }
 
@@ -1672,6 +1685,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             NSSound.beep()
             return
         }
+        arrival = delta > 0 ? 1 : -1
         showCurrent()
     }
 

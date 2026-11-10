@@ -54,7 +54,9 @@ books. The choice is remembered.
 
 **Where you left off.** A PDF reopens at the page you were on, with "Resuming from page 12" at the
 top for a few seconds. Turn on **Remember each PDF's zoom and position** in Settings ▸ PDF and it
-also reopens at the zoom you left it at and, zoomed in, the same part of the page.
+also reopens at the zoom you left it at and, zoomed in, the same part of the page. That's when
+you open the PDF itself: moving to it from another file (Next document, the next-file keys) opens
+it at its first page, or going back, its last.
 
 **Turning pages.** Next and previous turn a PDF's pages. After the last page comes a page between
 documents, so it's obvious one has ended: both covers side by side in reading order, the next
