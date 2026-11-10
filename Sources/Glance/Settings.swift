@@ -129,7 +129,7 @@ final class Settings {
             Key.pdfRightToLeft: false,
             Key.includePDFs: false,
             Key.pdfToPDF: true,
-            Key.rememberPDFZoom: false,
+            Key.rememberPDFZoom: true,
             Key.holdToZoom: HoldToZoom.pdfsOnly.rawValue,
             Key.holdZoomFactor: 2.5,
             Key.cacheGB: Self.defaultCacheGB,

@@ -51,7 +51,7 @@ struct Settings {
     int pdfNavigation = 0;
     bool includePdfsFrom(bool openedPdf) const { return pdfNavigation == 1 || (pdfNavigation == 0 && openedPdf); }
     bool pdfToPdf = true;         // from a PDF, the next/previous file is the nearest PDF that way
-    bool rememberPdfZoom = false; // each PDF reopens at the zoom (and position) you left it at
+    bool rememberPdfZoom = true;  // each PDF reopens at the zoom (and position) you left it at
     int holdToZoom = 1;           // 0 off, 1 PDFs only, 2 PDFs and images
     int holdZoomPercent = 250;
 

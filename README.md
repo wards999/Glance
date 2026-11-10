@@ -53,8 +53,8 @@ this straight from the right-click menu on a PDF, or in Settings ▸ PDF: automa
 books. The choice is remembered.
 
 **Where you left off.** A PDF reopens at the page you were on, with "Resuming from page 12" at the
-top for a few seconds. Turn on **Remember each PDF's zoom and position** in Settings ▸ PDF and it
-also reopens at the zoom you left it at and, zoomed in, the same part of the page. That's when
+top for a few seconds, and at the zoom you left it at and, zoomed in, the same part of the page
+(turn off **Remember each PDF's zoom and position** in Settings ▸ PDF for the page alone). That's when
 you open the PDF itself: moving to it from another file (Next document, the next-file keys) opens
 it at its first page, or going back, its last.
 
