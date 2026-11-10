@@ -95,7 +95,7 @@ private:
     void requestResolutionIfNeeded();
     DecodeRequest openingRequest() const;
     void scanFolder(const std::wstring& folder, const std::wstring& selected);
-    void go(int delta, bool wheel = false);
+    void go(int delta);
     void goToFile(int delta);
     int fileStep(int side) const;
     /// The next (side 1) or previous (side -1) file, if it's another PDF and the page between PDFs is on.
@@ -239,7 +239,9 @@ private:
     std::wstring pdfPath_;
     PdfPlaces::Place pdfPlace_;  // where you are in it, remembered when you leave
     UINT pdfScreens_ = 0;
-    int endPage_ = 0;              // between PDFs: 1 past the last screen, -1 before the first, else 0
+    int endPage_ = 0;              // after a PDF's last screen 1, before its first -1, else 0
+    D2D1_RECT_F endButton_{};      // its Next (or Previous) document button, where last drawn; empty if none
+    bool endButtonHover_ = false;
     bool restorePdfView_ = false;  // arriving at a PDF: open at the zoom remembered in pdfPlace_
     bool announceResume_ = false;  // ...and say which page it's resuming from
     std::wstring notice_;
@@ -258,8 +260,6 @@ private:
     POINT dragStart_{};
     POINT dragLast_{};
     int wheelRemainder_ = 0;
-    ULONGLONG lastWheel_ = 0;     // when the last wheel message came
-    bool wheelSpinning_ = false;  // it came within moments of the one before: the same scroll
 
     bool hasSelection_ = false;
     D2D1_RECT_F selection_{};  // image coordinates

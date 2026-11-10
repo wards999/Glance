@@ -107,9 +107,6 @@ Settings Settings::load() {
     s.pdfRightToLeft = flag(L"PdfRightToLeft", s.pdfRightToLeft);
     // PdfNavigation replaced IncludePdfs (on/off); an older Glance.ini still says which it was.
     s.pdfNavigation = std::clamp(number(L"PdfNavigation", flag(L"IncludePdfs", false) ? 1 : 0), 0, 2);
-    // PdfAtEnd replaced PdfEndPage (a cover page between PDFs, on/off): off meant straight on.
-    const int atEndBefore = values.count(L"PdfEndPage") && !flag(L"PdfEndPage", true) ? 2 : s.pdfAtEnd;
-    s.pdfAtEnd = std::clamp(number(L"PdfAtEnd", atEndBefore), 0, 2);
     s.pdfToPdf = flag(L"PdfToPdf", s.pdfToPdf);
     s.rememberPdfZoom = flag(L"RememberPdfZoom", s.rememberPdfZoom);
     s.includeVideos = flag(L"IncludeVideos", s.includeVideos);
@@ -160,7 +157,6 @@ void Settings::save() const {
     put(L"PdfLayout", pdfLayout);
     put(L"PdfRightToLeft", pdfRightToLeft);
     put(L"PdfNavigation", pdfNavigation);
-    put(L"PdfAtEnd", pdfAtEnd);
     put(L"PdfToPdf", pdfToPdf);
     put(L"RememberPdfZoom", rememberPdfZoom);
     put(L"IncludeVideos", includeVideos);

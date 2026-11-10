@@ -30,6 +30,10 @@
 
 namespace {
 
+bool pointInRect(const D2D1_RECT_F& rect, POINT p) {
+    return p.x >= rect.left && p.x < rect.right && p.y >= rect.top && p.y < rect.bottom;
+}
+
 constexpr UINT WM_APP_DECODED = WM_APP + 1;
 constexpr UINT WM_APP_FOLDER = WM_APP + 2;
 constexpr UINT WM_APP_GPU_READY = WM_APP + 3;
@@ -498,6 +502,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_SETCURSOR:
+        if (endButtonHover_ && endPage_ && LOWORD(lParam) == HTCLIENT) {
+            SetCursor(LoadCursorW(nullptr, IDC_HAND));
+            return TRUE;
+        }
         if (cursorHidden_) {
             // Any movement at all brings it back, even one whose WM_MOUSEMOVE went elsewhere.
             POINT pointer{};
@@ -588,15 +596,10 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (settings_.wheelNavigates && !control) {
-            // One scroll or another: a wheel still turning (or a smoothing app's tail) doesn't
-            // carry you out of a PDF (see go).
-            const ULONGLONG now = GetTickCount64();
-            wheelSpinning_ = now - lastWheel_ < 400;
-            lastWheel_ = now;
             // High-resolution wheels send small steps; act on whole notches.
             wheelRemainder_ += delta;
             while (std::abs(wheelRemainder_) >= WHEEL_DELTA) {
-                go(wheelRemainder_ > 0 ? -1 : 1, true);
+                go(wheelRemainder_ > 0 ? -1 : 1);
                 wheelRemainder_ -= wheelRemainder_ > 0 ? WHEEL_DELTA : -WHEEL_DELTA;
             }
         } else if (current_ && !endPage_) {
@@ -636,6 +639,11 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
             render();
             return 0;
         }
+        if (endPage_ && neighbourPdf(endPage_) && pointInRect(endButton_, p)) {
+            goToFile(endPage_);  // Next (or Previous) document
+            render();
+            return 0;
+        }
         if (!current_ || endPage_) return 0;
         SetCapture(hwnd_);
         dragging_ = true;
@@ -653,6 +661,13 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
 
     case WM_MOUSEMOVE:
         mouseActivity(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        if (endPage_) {
+            const bool over = pointInRect(endButton_, POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            if (over != endButtonHover_) {
+                endButtonHover_ = over;
+                render();
+            }
+        }
         if (showingVideo_) {
             if (video_) video_->mouseMove(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
             return 0;
@@ -813,8 +828,13 @@ bool Viewer::onKey(WPARAM key, bool control, bool shift) {
         return true;
     }
     if (endPage_ && (key == VK_RIGHT || key == VK_DOWN || key == VK_LEFT || key == VK_UP)) {
-        // Nothing to pan on the end page: the arrows go on to the next PDF or back.
+        // Nothing to pan on the end page: the arrows go back to the document (onward is its button).
         go(key == VK_RIGHT || key == VK_DOWN ? 1 : -1);
+        render();
+        return true;
+    }
+    if (endPage_ && key == VK_RETURN) {
+        if (neighbourPdf(endPage_)) goToFile(endPage_);  // the end page's button
         render();
         return true;
     }
@@ -934,8 +954,8 @@ void Viewer::updateTitle() {
             if (const std::wstring details = video_->describe(); !details.empty()) title += L"  -  " + details;
         }
     } else if (endPage_) {
-        title += endPage_ > 0 ? L"  -  end of the document (Space for the next PDF)"
-                              : L"  -  start of the document (Backspace for the previous PDF)";
+        title += endPage_ > 0 ? L"  -  end of the document (Ctrl+Page Down for the next file)"
+                              : L"  -  start of the document (Ctrl+Page Up for the previous file)";
     } else if (current_ && samePath(current_->info.path, *path)) {
         if (current_->info.isPdf) {
             title += L"  -  " + current_->info.pdfPages;
@@ -1335,7 +1355,6 @@ void Viewer::applySettings() {
     }
     if (slideshow_) SetTimer(hwnd_, kSlideshowTimer, UINT(settings_.slideshowSeconds) * 1000, nullptr);
     if (!settings_.infoInCorner) cornerInfo_ = false;
-    if (endPage_ && !neighbourPdf(endPage_)) endPage_ = 0;  // turned off, or that file isn't a PDF now
     if (!settings_.showControls) {
         barVisible_ = false;
         barHover_ = -1;
@@ -2058,26 +2077,18 @@ DecodeRequest Viewer::openingRequest() const {
     return DecodeRequest{bucket(width), bucket(height), 0};
 }
 
-void Viewer::go(int delta, bool wheel) {
+void Viewer::go(int delta) {
     trace(delta > 0 ? "go: next" : "go: previous");
     direction_ = delta < 0 ? -1 : 1;
-    // In a PDF, pages turn before moving on to the next file.
+    // In a PDF, pages turn; past the last one (or before the first) is the end page, and that's as
+    // far as they go: the next document is a button there, or Ctrl+Page Down, never another
+    // page turn, so you don't land in it without noticing.
     if (showingPdf()) {
-        // Out of a PDF only on a new scroll or key press, not the one that reached its end
-        // (a wheel still turning, a smoothing app's tail, a held key repeating).
-        const bool heldBack = (wheel && wheelSpinning_) || keyRepeating_;
         if (endPage_) {
-            // From the page between PDFs: on to the other PDF, or back to this one's page (still
-            // there behind it).
-            const int side = endPage_;
-            if ((delta > 0) == (side > 0) && heldBack) return;
-            endPage_ = 0;
-            if ((delta > 0) == (side > 0)) {
-                goToFile(side);
-            } else {
-                updateTitle();
-                render();
-            }
+            if ((delta > 0) == (endPage_ > 0)) return;  // no further this way
+            endPage_ = 0;  // back to the page behind it
+            updateTitle();
+            render();
             return;
         }
         const long long target = static_cast<long long>(frame_) + delta;
@@ -2089,24 +2100,13 @@ void Viewer::go(int delta, bool wheel) {
         }
         const int side = target == static_cast<long long>(pdfScreens_) ? 1 : target == -1 ? -1 : 0;
         if (side && side == delta && current_ && current_->info.isPdf) {
-            // Past the last page (or before the first).
-            if (settings_.pdfAtEnd == 0) {
-                // Stop: a document doesn't run on into the next file without your asking.
-                showNotice(side > 0 ? L"End of the document  -  Ctrl+Page Down for the next file"
-                                    : L"Start of the document  -  Ctrl+Page Up for the previous file");
-                return;
-            }
-            if (heldBack) return;
-            if (settings_.pdfAtEnd == 1 && neighbourPdf(side)) {
-                // A blank page first, with the other PDF's cover, so the step from one document
-                // to the next is obvious.
-                endPage_ = side;
-                hasSelection_ = false;
-                if (magnifying_) endMagnify();
-                updateTitle();
-                render();
-                return;
-            }
+            endPage_ = side;
+            endButtonHover_ = false;
+            hasSelection_ = false;
+            if (magnifying_) endMagnify();
+            updateTitle();
+            render();
+            return;
         }
     }
     goToFile(delta);
@@ -2141,12 +2141,12 @@ void Viewer::goToFile(int delta) {
     showCurrent();
 }
 
+/// The file the end page's button goes to (see fileStep), if there is one.
 const std::wstring* Viewer::neighbourPdf(int side) const {
-    if (settings_.pdfAtEnd != 1) return nullptr;
     const std::wstring* now = navigator_.current();
     const int step = fileStep(side);
     const std::wstring* other = step ? navigator_.at(step) : nullptr;
-    if (!now || !other || samePath(*now, *other) || !Pdf::isPdf(*other)) return nullptr;
+    if (!now || !other || samePath(*now, *other)) return nullptr;
     return other;
 }
 
@@ -3080,23 +3080,40 @@ void Viewer::drawEndPage() {
     // The cover you're heading to is decoded ahead like any neighbouring file. This PDF's own cover
     // usually isn't still cached by its last page: it's asked for at a small size, and appears when
     // it's ready.
-    const std::shared_ptr<GpuImage> heading = next ? pdfCover(*next, openingRequest(), false) : nullptr;
+    const std::shared_ptr<GpuImage> heading = next && Pdf::isPdf(*next) ? pdfCover(*next, openingRequest(), false) : nullptr;
     std::shared_ptr<GpuImage> leaving = now ? pdfCover(*now, openingRequest(), false) : nullptr;
     if (!leaving && now) leaving = pdfCover(*now, DecodeRequest{0, 0, 1024}, true);
     const bool forward = endPage_ > 0;
+    const bool toPdf = next && Pdf::isPdf(*next);
     std::wstring text = (forward ? L"End of " : L"Start of ") + (now ? fileName(*now) : std::wstring());
-    if (next) text += (forward ? L"\n\nNext: " : L"\n\nPrevious: ") + fileName(*next);
-    text += forward ? L"\nSpace for the next PDF  \u00B7  Backspace to go back"
-                    : L"\nBackspace for the previous PDF  \u00B7  Space to go back";
-    const float maxWidth = std::max(static_cast<float>(width) - 80 * scale, 100 * scale);
-    ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), textFormat_.get(), maxWidth,
-                                         1000.0f * scale, layout.put()))) {
-        return;
+    if (next) {
+        text += (forward ? L"\n\nNext: " : L"\n\nPrevious: ") + fileName(*next);
+    } else {
+        text += settings_.pdfToPdf ? (forward ? L"\n\nNo more PDFs after this one" : L"\n\nNo PDFs before this one")
+                                   : (forward ? L"\n\nNothing after this one" : L"\n\nNothing before this one");
     }
-    layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    DWRITE_TEXT_METRICS metrics{};
+    const std::wstring buttonText = forward ? (toPdf ? L"Next document  \u203A" : L"Next file  \u203A")
+                                            : (toPdf ? L"\u2039  Previous document" : L"\u2039  Previous file");
+    std::wstring keysText = forward ? L"Ctrl+Page Down  \u00B7  Backspace back to the last page"
+                                    : L"Ctrl+Page Up  \u00B7  Space back to the first page";
+    if (!next) keysText = forward ? L"Backspace back to the last page" : L"Space back to the first page";
+    const float maxWidth = std::max(static_cast<float>(width) - 80 * scale, 100 * scale);
+    auto makeLayout = [&](const std::wstring& t, ComPtr<IDWriteTextLayout>& out) {
+        if (FAILED(dwrite_->CreateTextLayout(t.c_str(), static_cast<UINT32>(t.size()), textFormat_.get(), maxWidth,
+                                             1000.0f * scale, out.put()))) {
+            return false;
+        }
+        out->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        return true;
+    };
+    ComPtr<IDWriteTextLayout> layout, buttonLayout, keysLayout;
+    if (!makeLayout(text, layout) || !makeLayout(buttonText, buttonLayout) || !makeLayout(keysText, keysLayout)) return;
+    DWRITE_TEXT_METRICS metrics{}, buttonMetrics{}, keysMetrics{};
     layout->GetMetrics(&metrics);
+    buttonLayout->GetMetrics(&buttonMetrics);
+    keysLayout->GetMetrics(&keysMetrics);
+    const float buttonH = buttonMetrics.height + 24 * scale, buttonW = buttonMetrics.width + 48 * scale;
+    const float below = 20 * scale + (next ? buttonH + 14 * scale : 0) + keysMetrics.height;
 
     // Both covers side by side in reading order (previous on the left, unless right to left), bottoms
     // lined up: the one Space or Backspace goes to is large, the one you're leaving half the size and
@@ -3117,7 +3134,7 @@ void Viewer::drawEndPage() {
         smallW *= shrink;
     }
     const bool showCovers = heading || leaving;
-    const float total = (showCovers ? bigH + gap : 0) + metrics.height;
+    const float total = (showCovers ? bigH + gap : 0) + metrics.height + below;
     float y = (static_cast<float>(height) - total) / 2;
     if (showCovers) {
         // Forward, this PDF comes first in reading order; going back, the previous one does.
@@ -3142,6 +3159,22 @@ void Viewer::drawEndPage() {
                                 8 * scale, 8 * scale};
     context_->FillRoundedRectangle(&box, overlayBrush_.get());
     context_->DrawTextLayout(D2D1_POINT_2F{(static_cast<float>(width) - maxWidth) / 2, y}, layout.get(), brush_.get(),
+                             D2D1_DRAW_TEXT_OPTIONS_NONE);
+    y += metrics.height + 20 * scale;
+    endButton_ = {};
+    if (next) {
+        // The way on: a button, not another page turn.
+        const float x = (static_cast<float>(width) - buttonW) / 2;
+        endButton_ = {x, y, x + buttonW, y + buttonH};
+        const D2D1_ROUNDED_RECT button{endButton_, 8 * scale, 8 * scale};
+        context_->FillRoundedRectangle(&button, overlayBrush_.get());
+        if (endButtonHover_) context_->FillRoundedRectangle(&button, overlayBrush_.get());
+        context_->DrawRoundedRectangle(&button, brush_.get(), (endButtonHover_ ? 2.0f : 1.0f) * scale);
+        context_->DrawTextLayout(D2D1_POINT_2F{(static_cast<float>(width) - maxWidth) / 2, y + 12 * scale}, buttonLayout.get(),
+                                 brush_.get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        y += buttonH + 14 * scale;
+    }
+    context_->DrawTextLayout(D2D1_POINT_2F{(static_cast<float>(width) - maxWidth) / 2, y}, keysLayout.get(), brush_.get(),
                              D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
 

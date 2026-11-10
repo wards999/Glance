@@ -50,9 +50,6 @@ struct Settings {
     // 1 always (PDFs among photos too); 2 never (only the PDF you opened).
     int pdfNavigation = 0;
     bool includePdfsFrom(bool openedPdf) const { return pdfNavigation == 1 || (pdfNavigation == 0 && openedPdf); }
-    // Next/previous past a PDF's last page (or before its first): 0 stops there (Ctrl+Page Down
-    // moves on), 1 a page with the next PDF's cover first, 2 straight on to the next file.
-    int pdfAtEnd = 0;
     bool pdfToPdf = true;         // from a PDF, the next/previous file is the nearest PDF that way
     bool rememberPdfZoom = false; // each PDF reopens at the zoom (and position) you left it at
     int holdToZoom = 1;           // 0 off, 1 PDFs only, 2 PDFs and images
