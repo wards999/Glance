@@ -2115,17 +2115,18 @@ void Viewer::go(int delta) {
 }
 
 /// How far the next (side 1) or previous (-1) file is: the one beside, or from a PDF (with "the
-/// next file is the next PDF" on) the nearest other PDF that way, past photos and videos. 0: none.
+/// next file is the next PDF" on) the nearest other PDF that way, past photos and videos. With no
+/// other PDF that way (or PDFs skipped), the file beside after all, so a PDF never shuts you in.
 int Viewer::fileStep(int side) const {
     const std::wstring* now = navigator_.current();
     if (!settings_.pdfToPdf || !now || !Pdf::isPdf(*now)) return side;
     const int count = static_cast<int>(navigator_.count());
     for (int step = 1; step < count; ++step) {
         const std::wstring* other = navigator_.at(side * step);
-        if (!other || samePath(*other, *now)) return 0;  // the end of the folder, or round to this one
+        if (!other || samePath(*other, *now)) break;  // the end of the folder, or round to this one
         if (Pdf::isPdf(*other)) return side * step;
     }
-    return 0;
+    return side;
 }
 
 void Viewer::goToFile(int delta) {
@@ -3105,8 +3106,7 @@ void Viewer::drawEndPage() {
     if (next) {
         text += (forward ? L"\n\nNext: " : L"\n\nPrevious: ") + fileName(*next);
     } else {
-        text += settings_.pdfToPdf ? (forward ? L"\n\nNo more PDFs after this one" : L"\n\nNo PDFs before this one")
-                                   : (forward ? L"\n\nNothing after this one" : L"\n\nNothing before this one");
+        text += forward ? L"\n\nNothing after this one" : L"\n\nNothing before this one";
     }
     const std::wstring buttonText = forward ? (toPdf ? L"Next document  \u203A" : L"Next file  \u203A")
                                             : (toPdf ? L"\u2039  Previous document" : L"\u2039  Previous file");

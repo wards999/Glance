@@ -953,14 +953,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     /// How far the next (side 1) or previous (-1) file is: the one beside, or from a PDF (with "the
-    /// next file is the next PDF" on) the nearest other PDF that way, past photos and videos. 0: none.
+    /// next file is the next PDF" on) the nearest other PDF that way, past photos and videos. With no
+    /// other PDF that way (or PDFs skipped), the file beside after all, so a PDF never shuts you in.
     private func fileStep(_ side: Int) -> Int {
         guard settings.pdfToPDF, let now = navigator.current, PDFRenderer.isPDF(now) else { return side }
         for step in 1..<max(navigator.count, 1) {
-            guard let other = navigator.url(at: side * step), other != now else { return 0 }  // the folder's end, or round to this one
+            guard let other = navigator.url(at: side * step), other != now else { break }  // the folder's end, or round to this one
             if PDFRenderer.isPDF(other) { return side * step }
         }
-        return 0
+        return side
     }
 
     /// The file the end page's button goes to (see fileStep), if there is one.
@@ -982,8 +983,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         pdfBoundary = side
         setControlsVisible(false)
         let otherIsPDF = other.map(PDFRenderer.isPDF) ?? false
-        let none = settings.pdfToPDF ? (side > 0 ? "No more PDFs after this one" : "No PDFs before this one")
-                                     : (side > 0 ? "Nothing after this one" : "Nothing before this one")
+        let none = side > 0 ? "Nothing after this one" : "Nothing before this one"
         endPageView.show(forward: side > 0, rightToLeft: settings.pdfRightToLeft, current: current.lastPathComponent,
                          other: other?.lastPathComponent, otherIsPDF: otherIsPDF, noneText: none,
                          background: settings.backgroundColor)

@@ -66,7 +66,8 @@ That's as far as page turning goes: scrolling, Space or the arrows go no further
 the keys below. Before the first page, the same with **Previous document**.
 
 From a PDF, the next document is the next **PDF** in the folder, past any photos and videos
-between them. (Turn off **From a PDF, the next file is the next PDF** in Settings ▸ PDF to go
+between them; when there's no other PDF that way, the button is **Next file**, to whatever comes
+next. (Turn off **From a PDF, the next file is the next PDF** in Settings ▸ PDF to go
 through everything in order.)
 
 | | Next page | Previous page |
