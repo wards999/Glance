@@ -954,8 +954,13 @@ void Viewer::updateTitle() {
             if (const std::wstring details = video_->describe(); !details.empty()) title += L"  -  " + details;
         }
     } else if (endPage_) {
-        title += endPage_ > 0 ? L"  -  end of the document (Ctrl+Page Down for the next file)"
-                              : L"  -  start of the document (Ctrl+Page Up for the previous file)";
+        if (Pdf::isPdf(*path)) {
+            title += endPage_ > 0 ? L"  -  end of the document (Ctrl+Page Down for the next file)"
+                                  : L"  -  start of the document (Ctrl+Page Up for the previous file)";
+        } else {
+            title += endPage_ > 0 ? L"  -  a PDF next (Ctrl+Page Down to open it)"
+                                  : L"  -  a PDF before (Ctrl+Page Up to open it)";
+        }
     } else if (current_ && samePath(current_->info.path, *path)) {
         if (current_->info.isPdf) {
             title += L"  -  " + current_->info.pdfPages;
@@ -2082,17 +2087,32 @@ DecodeRequest Viewer::openingRequest() const {
 void Viewer::go(int delta) {
     trace(delta > 0 ? "go: next" : "go: previous");
     direction_ = delta < 0 ? -1 : 1;
-    // In a PDF, pages turn; past the last one (or before the first) is the end page, and that's as
-    // far as they go: the next document is a button there, or Ctrl+Page Down, never another
-    // page turn, so you don't land in it without noticing.
-    if (showingPdf()) {
-        if (endPage_) {
-            if ((delta > 0) == (endPage_ > 0)) return;  // no further this way
-            endPage_ = 0;  // back to the page behind it
-            updateTitle();
-            render();
+    // Between a PDF and the file next to it, whichever way, comes the end page, and that's as far
+    // as next/previous go: the other file is a button there, or Ctrl+Page Down, so you never land
+    // in (or out of) a document without noticing.
+    if (endPage_) {
+        if ((delta > 0) == (endPage_ > 0)) return;  // no further this way
+        endPage_ = 0;  // back to the page (or picture) behind it
+        if (endLeftVideo_) {
+            endLeftVideo_ = false;
+            showCurrent();  // the movie it replaced
             return;
         }
+        updateTitle();
+        render();
+        return;
+    }
+    // A photo or movie with a PDF next to it.
+    if (!showingPdf() && (delta == 1 || delta == -1)) {
+        const std::wstring* now = navigator_.current();
+        const std::wstring* other = navigator_.at(delta);
+        if (now && other && !samePath(*now, *other) && !Pdf::isPdf(*now) && Pdf::isPdf(*other)) {
+            showEndPage(delta);
+            return;
+        }
+    }
+    // In a PDF, pages turn; past the last one (or before the first) is the end page.
+    if (showingPdf()) {
         const long long target = static_cast<long long>(frame_) + delta;
         if (target >= 0 && target < static_cast<long long>(pdfScreens_)) {
             carryZoomForPageTurn(delta > 0);
@@ -2102,16 +2122,24 @@ void Viewer::go(int delta) {
         }
         const int side = target == static_cast<long long>(pdfScreens_) ? 1 : target == -1 ? -1 : 0;
         if (side && side == delta && current_ && current_->info.isPdf) {
-            endPage_ = side;
-            endButtonHover_ = false;
-            hasSelection_ = false;
-            if (magnifying_) endMagnify();
-            updateTitle();
-            render();
+            showEndPage(side);
             return;
         }
     }
     goToFile(delta);
+}
+
+void Viewer::showEndPage(int side) {
+    if (showingVideo_) {
+        leaveVideo();  // it stops; going back opens it again
+        endLeftVideo_ = true;
+    }
+    endPage_ = side;
+    endButtonHover_ = false;
+    hasSelection_ = false;
+    if (magnifying_) endMagnify();
+    updateTitle();
+    render();
 }
 
 /// How far the next (side 1) or previous (-1) file is: the one beside, or from a PDF (with "the
@@ -2172,6 +2200,7 @@ void Viewer::showCurrent() {
     const int arrival = std::exchange(arrival_, 0);  // see arrival_
     const std::wstring* path = navigator_.current();
     endPage_ = 0;
+    endLeftVideo_ = false;
     if (waiting_) pipeline_->drop(wantedKey_);
     edited_.reset();
     hasSelection_ = false;
@@ -3098,11 +3127,13 @@ void Viewer::drawEndPage() {
     // usually isn't still cached by its last page: it's asked for at a small size, and appears when
     // it's ready.
     const std::shared_ptr<GpuImage> heading = next && Pdf::isPdf(*next) ? pdfCover(*next, openingRequest(), false) : nullptr;
-    std::shared_ptr<GpuImage> leaving = now ? pdfCover(*now, openingRequest(), false) : nullptr;
-    if (!leaving && now) leaving = pdfCover(*now, DecodeRequest{0, 0, 1024}, true);
+    const bool fromVideo = now && isVideoFile(*now);
+    std::shared_ptr<GpuImage> leaving = now && !fromVideo ? pdfCover(*now, openingRequest(), false) : nullptr;
+    if (!leaving && now && !fromVideo) leaving = pdfCover(*now, DecodeRequest{0, 0, 1024}, true);
     const bool forward = endPage_ > 0;
     const bool toPdf = next && Pdf::isPdf(*next);
-    std::wstring text = (forward ? L"End of " : L"Start of ") + (now ? fileName(*now) : std::wstring());
+    const bool fromPdf = now && Pdf::isPdf(*now);
+    std::wstring text = fromPdf ? (forward ? L"End of " : L"Start of ") + fileName(*now) : now ? fileName(*now) : std::wstring();
     if (next) {
         text += (forward ? L"\n\nNext: " : L"\n\nPrevious: ") + fileName(*next);
     } else {
@@ -3110,9 +3141,10 @@ void Viewer::drawEndPage() {
     }
     const std::wstring buttonText = forward ? (toPdf ? L"Next document  \u203A" : L"Next file  \u203A")
                                             : (toPdf ? L"\u2039  Previous document" : L"\u2039  Previous file");
-    std::wstring keysText = forward ? L"Ctrl+Page Down  \u00B7  Backspace back to the last page"
-                                    : L"Ctrl+Page Up  \u00B7  Space back to the first page";
-    if (!next) keysText = forward ? L"Backspace back to the last page" : L"Space back to the first page";
+    const std::wstring back = fromPdf ? (forward ? L"Backspace back to the last page" : L"Space back to the first page")
+                                      : (forward ? L"Backspace back to " : L"Space back to ") + (now ? fileName(*now) : std::wstring());
+    std::wstring keysText = (forward ? L"Ctrl+Page Down  \u00B7  " : L"Ctrl+Page Up  \u00B7  ") + back;
+    if (!next) keysText = back;
     const float maxWidth = std::max(static_cast<float>(width) - 80 * scale, 100 * scale);
     auto makeLayout = [&](const std::wstring& t, ComPtr<IDWriteTextLayout>& out) {
         if (FAILED(dwrite_->CreateTextLayout(t.c_str(), static_cast<UINT32>(t.size()), textFormat_.get(), maxWidth,

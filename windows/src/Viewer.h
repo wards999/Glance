@@ -96,6 +96,7 @@ private:
     DecodeRequest openingRequest() const;
     void scanFolder(const std::wstring& folder, const std::wstring& selected);
     void go(int delta);
+    void showEndPage(int side);
     void goToFile(int delta);
     int fileStep(int side) const;
     /// The next (side 1) or previous (side -1) file, if it's another PDF and the page between PDFs is on.
@@ -243,7 +244,10 @@ private:
     // A PDF opens where you left it only when opened directly; moved to, it opens at its first
     // page (or, moving back, its last).
     int arrival_ = 0;
-    int endPage_ = 0;              // after a PDF's last screen 1, before its first -1, else 0
+    // The page between a PDF and the file next to it: 1 after this file (a PDF's last screen, or a
+    // photo or movie with a PDF next), -1 before it, else 0.
+    int endPage_ = 0;
+    bool endLeftVideo_ = false;    // it replaced a movie, which comes back if you go back
     D2D1_RECT_F endButton_{};      // its Next (or Previous) document button, where last drawn; empty if none
     bool endButtonHover_ = false;
     bool restorePdfView_ = false;  // arriving at a PDF: open at the zoom remembered in pdfPlace_
