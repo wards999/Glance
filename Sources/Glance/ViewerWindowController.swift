@@ -64,6 +64,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// A PDF opens where you left it only when opened directly; moved to, it opens at its first page
     /// (or, moving back, its last).
     private var arrival = 0
+    /// A page turned in the PDF on screen since it opened. Its place is saved (for opening it again)
+    /// only then, or when it's left zoomed in: passing through, opened at its first or last page,
+    /// doesn't overwrite where you were reading.
+    private var pdfMoved = false
     /// The end page replaced a movie, which comes back if you go back.
     private var endLeftVideo = false
     /// The mouse is in the top-left corner, showing the info (Settings).
@@ -284,6 +288,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     func rememberPDFView() {
         guard let url = pdfURL, let current, current.info.url == url, let first = current.info.pdf?.pages.first else { return }
         let view = settings.rememberPDFZoom && editedImage == nil ? imageView.savedView : nil
+        guard pdfMoved || view != nil else { return }  // only passed through
         PDFPlaces.save(.init(page: first, screen: current.page, layout: "\(settings.pdfLayout)", view: view), for: url)
     }
 
@@ -547,6 +552,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if pdfURL == nil, PDFRenderer.isPDF(url) {
             // Arriving at a PDF: open it where you left it.
             pdfURL = url
+            pdfMoved = false
             if !keepPage, arrival < 0 {
                 // Moved back to from the next file: its last page, as if the pages ran on.
                 let spreads = PDFRenderer.spreads(for: url, layout: settings.pdfLayout, password: pipeline.password(for: url))
@@ -636,8 +642,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func present(_ decoded: DecodedImage, resetView: Bool) {
         current = decoded
         if let first = decoded.info.pdf?.pages.first {
-            // Where you are in this PDF, for next time.
-            PDFPlaces.save(.init(page: first, screen: decoded.page, layout: "\(settings.pdfLayout)"), for: decoded.info.url)
+            // Where you are in this PDF, for next time (once you've turned a page: see pdfMoved).
+            if pdfMoved { PDFPlaces.save(.init(page: first, screen: decoded.page, layout: "\(settings.pdfLayout)"), for: decoded.info.url) }
         }
         updateHoldToZoom()
         if messageIsSticky { hideMessage() }
@@ -947,6 +953,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if let pdf = currentPDF, (0..<pdf.info.pageCount).contains(page + delta) {
             carryZoomForPageTurn(forward: delta > 0)
             page += delta
+            pdfMoved = true
             showCurrent(keepPage: true)
             return
         }
@@ -1071,6 +1078,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
         if currentPDF != nil { carryZoomForPageTurn(forward: delta > 0) }
         page += delta
+        pdfMoved = true
         showCurrent(keepPage: true)
     }
 

@@ -808,7 +808,7 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
         settings_.save();
         if (!pdfPath_.empty()) {
             rememberPdfView();
-            PdfPlaces::save(pdfPath_, pdfPlace_);  // the PDF on screen, too
+            if (pdfMoved_ || pdfPlace_.zoom > 0) PdfPlaces::save(pdfPath_, pdfPlace_);  // the PDF on screen, too
         }
         video_.reset();     // mpv and its windows first, while the parent still exists
         pipeline_.reset();  // stop the workers before the window goes away
@@ -2117,6 +2117,7 @@ void Viewer::go(int delta) {
         if (target >= 0 && target < static_cast<long long>(pdfScreens_)) {
             carryZoomForPageTurn(delta > 0);
             frame_ = static_cast<UINT>(target);
+            pdfMoved_ = true;
             showCurrent();
             return;
         }
@@ -2233,9 +2234,10 @@ void Viewer::showCurrent() {
     }
     if (showingVideo_) leaveVideo();
     if (!pdfPath_.empty() && !samePath(*path, pdfPath_)) {
-        // Moved on from a PDF: remember where you were in it, for next time.
+        // Moved on from a PDF: remember where you were in it, for next time (if you read it; see
+        // pdfMoved_).
         rememberPdfView();
-        PdfPlaces::save(pdfPath_, pdfPlace_);
+        if (pdfMoved_ || pdfPlace_.zoom > 0) PdfPlaces::save(pdfPath_, pdfPlace_);
         pdfPath_.clear();
         pdfScreens_ = 0;
     }
@@ -2244,6 +2246,7 @@ void Viewer::showCurrent() {
         // back, the end, as if the pages ran on. Where you left it is for opening it directly.
         pdfPath_ = *path;
         pdfPlace_ = PdfPlaces::Place{};
+        pdfMoved_ = false;
         frame_ = 0;
         restorePdfView_ = announceResume_ = false;
         if (arrival < 0) {
@@ -2254,6 +2257,7 @@ void Viewer::showCurrent() {
     if (pdfPath_.empty() && Pdf::isPdf(*path)) {
         // Opening a PDF: where you left it.
         pdfPath_ = *path;
+        pdfMoved_ = false;
         pdfPlace_ = PdfPlaces::load(*path).value_or(PdfPlaces::Place{});
         frame_ = 0;
         restorePdfView_ = settings_.rememberPdfZoom && pdfPlace_.zoom > 0;
