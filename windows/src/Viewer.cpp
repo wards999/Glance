@@ -1229,12 +1229,14 @@ void Viewer::command(int id) {
         direction_ = 1;
         navigator_.first();
         frame_ = 0;
+        arrival_ = 1;
         showCurrent();
         break;
     case CmdLast:
         direction_ = -1;
         navigator_.last();
         frame_ = 0;
+        arrival_ = 1;
         showCurrent();
         break;
     case CmdLoop:
@@ -2138,6 +2140,7 @@ void Viewer::goToFile(int delta) {
         return;
     }
     frame_ = 0;
+    arrival_ = delta > 0 ? 1 : -1;
     showCurrent();
 }
 
@@ -2165,6 +2168,7 @@ void Viewer::rememberPdfView() {
 }
 
 void Viewer::showCurrent() {
+    const int arrival = std::exchange(arrival_, 0);  // see arrival_
     const std::wstring* path = navigator_.current();
     endPage_ = 0;
     if (waiting_) pipeline_->drop(wantedKey_);
@@ -2204,8 +2208,20 @@ void Viewer::showCurrent() {
         pdfPath_.clear();
         pdfScreens_ = 0;
     }
+    if (pdfPath_.empty() && Pdf::isPdf(*path) && arrival) {
+        // Moved to from another file (Next document, Ctrl+Page Down...): from the start, or moving
+        // back, the end, as if the pages ran on. Where you left it is for opening it directly.
+        pdfPath_ = *path;
+        pdfPlace_ = PdfPlaces::Place{};
+        frame_ = 0;
+        restorePdfView_ = announceResume_ = false;
+        if (arrival < 0) {
+            const auto spreads = Pdf::spreads(*path, pdfLayout());
+            if (!spreads.empty()) frame_ = static_cast<UINT>(spreads.size() - 1);
+        }
+    }
     if (pdfPath_.empty() && Pdf::isPdf(*path)) {
-        // Arriving at a PDF: open it where you left it.
+        // Opening a PDF: where you left it.
         pdfPath_ = *path;
         pdfPlace_ = PdfPlaces::load(*path).value_or(PdfPlaces::Place{});
         frame_ = 0;

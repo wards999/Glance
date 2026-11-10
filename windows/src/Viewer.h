@@ -239,6 +239,10 @@ private:
     std::wstring pdfPath_;
     PdfPlaces::Place pdfPlace_;  // where you are in it, remembered when you leave
     UINT pdfScreens_ = 0;
+    // How the next file shown was reached: 1 moving on to it, -1 moving back, 0 opened directly.
+    // A PDF opens where you left it only when opened directly; moved to, it opens at its first
+    // page (or, moving back, its last).
+    int arrival_ = 0;
     int endPage_ = 0;              // after a PDF's last screen 1, before its first -1, else 0
     D2D1_RECT_F endButton_{};      // its Next (or Previous) document button, where last drawn; empty if none
     bool endButtonHover_ = false;
