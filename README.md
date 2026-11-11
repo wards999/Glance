@@ -54,9 +54,10 @@ books. The choice is remembered.
 
 **Where you left off.** A PDF reopens at the page you were on, with "Resuming from page 12" at the
 top for a few seconds, and at the zoom you left it at and, zoomed in, the same part of the page
-(turn off **Remember each PDF's zoom and position** in Settings ▸ PDF for the page alone). That's when
-you open the PDF itself: moving to it from another file (Next document, the next-file keys) opens
-it at its first page, or going back, its last.
+(turn off **Remember each PDF's zoom and position** in Settings ▸ PDF for the page alone). The place
+is saved when you close Glance on a PDF (the close box, Escape, quitting), and used when you open
+that PDF itself. Moving on from a PDF to another file forgets its place, and moving to a PDF from
+another file (Next document, the next-file keys) opens it at its first page, or going back, its last.
 
 **Turning pages.** Next and previous turn a PDF's pages. After the last page comes a page between
 documents, so it's obvious one has ended: both covers side by side in reading order, the next

@@ -242,10 +242,6 @@ private:
     // A PDF opens where you left it only when opened directly; moved to, it opens at its first
     // page (or, moving back, its last).
     int arrival_ = 0;
-    // A page turned in the PDF on screen since it opened. Its place is saved (for opening it
-    // again) only then, or when it's left zoomed in: passing through, opened at its first or last
-    // page, doesn't overwrite where you were reading.
-    bool pdfMoved_ = false;
     // The page between a PDF and the file next to it: 1 after this file (a PDF's last screen, or a
     // photo or movie with a PDF next), -1 before it, else 0.
     int endPage_ = 0;
