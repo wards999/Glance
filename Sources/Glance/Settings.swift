@@ -241,6 +241,8 @@ final class Settings {
         set { store(newValue, Key.showControls) }
     }
 
+    /// Hide the pointer over the picture after it stops, full screen or in a window (the name is
+    /// from when it was full screen only).
     var hideCursorInFullScreen: Bool {
         get { defaults.bool(forKey: Key.hideCursor) }
         set { store(newValue, Key.hideCursor) }

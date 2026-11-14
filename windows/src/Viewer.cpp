@@ -490,11 +490,16 @@ LRESULT Viewer::handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 barHover_ = -1;
                 render();
             }
-            // Only while the pointer is over this window: hiding it over another app (after a
-            // quick move to another monitor, say) could leave it invisible there.
+            // Only while the pointer is over the picture (full screen or in a window, not the title
+            // bar): hiding it over another app (after a quick move to another monitor, say) could
+            // leave it invisible there.
             POINT pointer{};
             GetCursorPos(&pointer);
-            if (fullScreen_ && settings_.hideCursor && !dragging_ && WindowFromPoint(pointer) == hwnd_ &&
+            POINT inside = pointer;
+            ScreenToClient(hwnd_, &inside);
+            RECT client{};
+            GetClientRect(hwnd_, &client);
+            if (settings_.hideCursor && !dragging_ && WindowFromPoint(pointer) == hwnd_ && PtInRect(&client, inside) &&
                 !(showingVideo_ && video_ && video_->overControls(lastMouse_))) {
                 cursorHidden_ = true;
                 hiddenAt_ = pointer;

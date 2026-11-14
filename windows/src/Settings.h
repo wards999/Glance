@@ -33,7 +33,7 @@ struct Settings {
     bool infoInCorner = false;  // show the info while the mouse is in the top-left corner
     bool pixelatedZoom = true;  // individual pixels above 400%
     bool showControls = true;   // button bar when the mouse nears the bottom (navigation buttons)
-    bool hideCursor = true;     // in full screen, after the mouse stops
+    bool hideCursor = true;     // over the picture (full screen or a window), after the mouse stops
 
     // Performance
     int prefetchCount = 3;

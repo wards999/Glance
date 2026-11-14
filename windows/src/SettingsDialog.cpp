@@ -144,7 +144,7 @@ SIZE build() {
     left.checkbox(IdInfoInCorner, L"Show info when the mouse is in the top-left corner", s.infoInCorner);
     left.checkbox(IdPixels, L"Show individual pixels above 400% zoom", s.pixelatedZoom);
     left.checkbox(IdControls, L"Show buttons when the mouse nears the bottom", s.showControls);
-    left.checkbox(IdHideCursor, L"Hide the mouse pointer in full screen", s.hideCursor);
+    left.checkbox(IdHideCursor, L"Hide the mouse pointer when it stops", s.hideCursor);
     left.endGroup();
     left.group(L"Video", 5);
     left.checkbox(IdVideoAutoplay, L"Play videos when you stop on them", s.videoAutoplay);

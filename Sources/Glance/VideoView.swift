@@ -416,7 +416,8 @@ final class VideoView: NSView {
             let mouse = self.convert(self.window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
             if self.scrubbing || self.draggingVolume || self.isPaused || self.controls.barRect.insetBy(dx: 0, dy: -8).contains(mouse) { return }
             self.setControlsVisible(false)
-            if self.delegate?.videoViewIsFullScreen == true && Settings.shared.hideCursorInFullScreen {
+            // Over the movie, full screen or in a window.
+            if Settings.shared.hideCursorInFullScreen && self.bounds.contains(mouse) && self.window?.isKeyWindow == true {
                 NSCursor.setHiddenUntilMouseMoves(true)
             }
         }

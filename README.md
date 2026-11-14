@@ -239,7 +239,7 @@ and the window always agree.
 |---|---|
 | PDF | Page layout (automatic / single / two pages / two pages with cover), right to left, a page between PDFs with the other's cover, remember each PDF's zoom and position, hold to zoom (off / PDFs / everything) and its magnification |
 | General | Sort order and direction, loop at end of folder, which kinds next / previous include (pictures, videos, PDFs), mouse wheel zooms or flips images, slideshow interval, keep adjustments between images |
-| Display | Open in full screen, a window, or as you left it (the default), full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, info when the mouse is in the top-left corner, hover controls, hide cursor in full screen, pixel view above 400% |
+| Display | Open in full screen, a window, or as you left it (the default), full screen style (instant or macOS), initial zoom (fit / fill / 100%), enlarge small images, background color, info overlay, info when the mouse is in the top-left corner, hover controls, hide the pointer when it stops (full screen or in a window), pixel view above 400% |
 | Saving | JPEG/HEIC quality, ask before re-encoding the original |
 | Performance | How many images to decode ahead (0–8), memory cache size |
 

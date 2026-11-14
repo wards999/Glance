@@ -805,7 +805,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             let mouse = self.controlBar.convert(window.mouseLocationOutsideOfEventStream, from: nil)
             if self.controlBar.bounds.contains(mouse) { return }
             self.setControlsVisible(false)
-            if self.isFullScreen && self.settings.hideCursorInFullScreen {
+            // Over the picture, full screen or in a window.
+            if self.settings.hideCursorInFullScreen, window.isKeyWindow, let content = window.contentView,
+               content.bounds.contains(content.convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
                 NSCursor.setHiddenUntilMouseMoves(true)
             }
         }

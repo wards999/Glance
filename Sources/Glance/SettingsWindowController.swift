@@ -84,7 +84,7 @@ final class SettingsWindowController: NSWindowController {
             [empty, checkbox("Show the file name", { s.showFilename }, { s.showFilename = $0 })],
             [empty, checkbox("Show the info when the mouse is in the top-left corner", { s.showInfoInCorner }, { s.showInfoInCorner = $0 })],
             [empty, checkbox("Show controls when the mouse nears the bottom", { s.showControls }, { s.showControls = $0 })],
-            [empty, checkbox("Hide the cursor in full screen", { s.hideCursorInFullScreen }, { s.hideCursorInFullScreen = $0 })],
+            [empty, checkbox("Hide the pointer when it stops", { s.hideCursorInFullScreen }, { s.hideCursorInFullScreen = $0 })],
             [empty, checkbox("Show individual pixels above 400% zoom", { s.pixelatedZoom }, { s.pixelatedZoom = $0 })],
         ]
     }
