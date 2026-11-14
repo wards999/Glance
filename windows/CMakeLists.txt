@@ -23,12 +23,16 @@ target_link_libraries(glance-bench PRIVATE ${SYSTEM_LIBS})
 add_executable(make-test-images tools/make_test_images.cpp)
 target_link_libraries(make-test-images PRIVATE windowscodecs ole32 oleaut32 uuid)
 
+# Checks for code that writes to the user's files: run glance-tests.exe (CI does, on every build).
+add_executable(glance-tests tests/editing_test.cpp src/Editing.cpp)
+target_link_libraries(glance-tests PRIVATE windowscodecs ole32 oleaut32 uuid)
+
 # Explorer thumbnails for PDFs (first page, via the same pdfium.dll). Registered per user with
 # regsvr32; see thumbnails/GlanceThumbnails.cpp.
 add_library(GlanceThumbnails SHARED thumbnails/GlanceThumbnails.cpp thumbnails/GlanceThumbnails.def)
 target_link_libraries(GlanceThumbnails PRIVATE shlwapi shell32 ole32 gdi32 advapi32 user32 uuid)
 
-foreach(target Glance glance-bench make-test-images GlanceThumbnails)
+foreach(target Glance glance-bench make-test-images glance-tests GlanceThumbnails)
     target_include_directories(${target} PRIVATE src)
     target_compile_definitions(${target} PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
     if(MINGW)
