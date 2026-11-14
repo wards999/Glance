@@ -287,13 +287,27 @@ bool elevated() {
     return result;
 }
 
+// Where the handler that was there before Glance (Adobe Reader's, say) is kept, beside ours.
+constexpr wchar_t kPreviousValue[] = L"GlancePrevious";
+
+std::wstring readString(HKEY root, const wchar_t* key, const wchar_t* name) {
+    wchar_t value[64] = L"";
+    DWORD size = sizeof(value);
+    if (RegGetValueW(root, key, name, RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return L"";
+    return value;
+}
+
 void removeFrom(HKEY root) {
-    // Only remove the PDF handler entry if it's still ours.
-    wchar_t current[64] = L"";
-    DWORD size = sizeof(current);
-    if (RegGetValueW(root, kThumbnailHandlerKey, nullptr, RRF_RT_REG_SZ, nullptr, current, &size) == ERROR_SUCCESS &&
-        _wcsicmp(current, kClsidString) == 0) {
-        RegDeleteKeyW(root, kThumbnailHandlerKey);
+    // Only touch the PDF handler entry if it's still ours; then put back the one it replaced.
+    if (_wcsicmp(readString(root, kThumbnailHandlerKey, nullptr).c_str(), kClsidString) == 0) {
+        const std::wstring previous = readString(root, kThumbnailHandlerKey, kPreviousValue);
+        if (previous.empty()) {
+            RegDeleteKeyW(root, kThumbnailHandlerKey);
+        } else {
+            RegSetKeyValueW(root, kThumbnailHandlerKey, nullptr, REG_SZ, previous.c_str(),
+                            static_cast<DWORD>((previous.size() + 1) * sizeof(wchar_t)));
+            RegDeleteKeyValueW(root, kThumbnailHandlerKey, kPreviousValue);
+        }
     }
     RegDeleteTreeW(root, kClsidKey);
 }
@@ -312,6 +326,12 @@ STDAPI DllRegisterServer() {
     const HKEY root = allUsers ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
     // A per-user entry would hide the machine-wide one, so installing for everyone replaces it.
     if (allUsers) removeFrom(HKEY_CURRENT_USER);
+    // Remember the handler we replace (not ourselves, when registering again), for removal.
+    const std::wstring previous = readString(root, kThumbnailHandlerKey, nullptr);
+    if (!previous.empty() && _wcsicmp(previous.c_str(), kClsidString) != 0 &&
+        setString(root, kThumbnailHandlerKey, kPreviousValue, previous)) {
+        return SELFREG_E_CLASS;
+    }
     const DWORD kOne = 1;
     if (setString(root, kClsidKey, nullptr, L"Glance PDF thumbnails") ||
         setString(root, server.c_str(), nullptr, dll) ||
