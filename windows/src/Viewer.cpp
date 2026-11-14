@@ -1842,14 +1842,16 @@ void Viewer::moveToRecycleBin() {
     const std::wstring* path = navigator_.current();
     if (!path) return;
     const std::wstring file = *path;
-    // Recycle Bin, so it's recoverable; the file list must end with two nulls.
+    // Recycle Bin, so it's recoverable; the file list must end with two nulls. A file that can't
+    // go there (a network share, or bigger than the bin) would be deleted for good without asking,
+    // so FOF_WANTNUKEWARNING makes Windows ask first in that case only.
     std::wstring from = file;
     from.push_back(L'\0');
     SHFILEOPSTRUCTW operation{};
     operation.hwnd = hwnd_;
     operation.wFunc = FO_DELETE;
     operation.pFrom = from.c_str();
-    operation.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+    operation.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOF_SILENT;
     if (SHFileOperationW(&operation) != 0 || operation.fAnyOperationsAborted) return;
     pipeline_->invalidate(file);
     forgetGpu(file);
