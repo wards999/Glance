@@ -4,10 +4,14 @@ on:
   push:
     paths:
       - 'windows/**'
+      - 'Sources/CMpv/**'
+      - 'LICENSE'
+      - 'THIRD-PARTY-NOTICES.md'
       - '.github/workflows/build-windows.yml'
   pull_request:
     paths:
       - 'windows/**'
+      - 'Sources/CMpv/**'
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +21,7 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -42,6 +46,54 @@ jobs:
           Copy-Item pdfium/bin/pdfium.dll windows/build/Release/
           Copy-Item pdfium/LICENSE windows/build/Release/pdfium-LICENSE.txt
           Copy-Item pdfium/licenses windows/build/Release/pdfium-licenses -Recurse
+
+      - name: Run tests
+        run: windows/build/Release/glance-tests.exe
+
+      - name: Add libmpv (pinned build, hash-checked)
+        shell: pwsh
+        run: |
+          # mpv's engine for video, prebuilt by shinchiro/mpv-winbuild-cmake; Glance keeps its own
+          # copy as the windows-deps-20261021 release asset. Both the download and the DLL inside
+          # are checked against their SHA-256, so a changed file fails the build.
+          $url = 'https://github.com/wards999/Glance/releases/download/windows-deps-20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z'
+          $expected = 'EFC719EFF3DC5954B4A5EFC800632808BCEC01CC9034940DD14E5EB7FE9EA633'
+          Invoke-WebRequest $url -OutFile mpv.7z
+          $actual = (Get-FileHash mpv.7z -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "mpv.7z is $actual, expected the pinned $expected" }
+          7z e -y -ompv mpv.7z libmpv-2.dll | Out-Null
+          $dll = (Get-FileHash mpv/libmpv-2.dll -Algorithm SHA256).Hash
+          if ($dll -ne '04E4D27DC385DC18DDD93FBE69C75E635B864F3C6EC53A9122DF54C2F7842F4A') { throw "libmpv-2.dll is $dll" }
+
+      - name: Make the download (Glance-windows.zip)
+        shell: pwsh
+        run: |
+          # Built from a clean folder every time, so nothing from a test run (Glance.ini...) can
+          # end up in the download.
+          $version = (Select-String -Path windows/src/Version.h -Pattern 'GLANCE_VERSION_TEXT "(.+)"').Matches[0].Groups[1].Value
+          $out = 'package/Glance'
+          New-Item -ItemType Directory $out | Out-Null
+          $built = 'windows/build/Release'
+          Copy-Item "$built/Glance.exe", "$built/GlanceThumbnails.dll", "$built/pdfium.dll", "$built/pdfium-LICENSE.txt", mpv/libmpv-2.dll $out
+          Copy-Item "$built/pdfium-licenses" $out -Recurse
+          Copy-Item LICENSE "$out/LICENSE.txt"
+          Copy-Item THIRD-PARTY-NOTICES.md "$out/THIRD-PARTY-NOTICES.txt"
+          (Get-Content windows/README.txt -Raw).Replace('Glance VERSION for Windows', "Glance $version for Windows") |
+              Set-Content "$out/README.txt" -NoNewline -Encoding ascii
+          # Exactly these files, nothing more or less.
+          $expected = @('Glance.exe', 'GlanceThumbnails.dll', 'LICENSE.txt', 'README.txt', 'THIRD-PARTY-NOTICES.txt',
+                        'libmpv-2.dll', 'pdfium-LICENSE.txt', 'pdfium.dll', 'pdfium-licenses') | Sort-Object
+          $actual = Get-ChildItem $out | ForEach-Object Name | Sort-Object
+          if (Compare-Object $expected $actual) { throw "Unexpected files in the download: $($actual -join ', ')" }
+          Compress-Archive -Path $out -DestinationPath Glance-windows.zip
+          "Glance ${version}: $((Get-ChildItem $out -Recurse -File).Count) files, $([int]((Get-Item Glance-windows.zip).Length / 1MB)) MB"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Glance-windows-zip
+          path: Glance-windows.zip
+          compression-level: 0
+          retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
