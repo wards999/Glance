@@ -1738,10 +1738,11 @@ void Viewer::mouseActivity(POINT point) {
     viewSize(width, height);
     const double scale = GetDpiForWindow(hwnd_) / 96.0;
     if (showingVideo_) {
-        // A video's controls appear whenever the mouse moves, as in most players; the info
-        // shows while the mouse is in the top-left corner.
+        // A video's controls appear when the mouse moves near the bottom, as over pictures (and
+        // stay while it's on them, paused or scrubbing; see syncVideoControls); the info shows
+        // while the mouse is in the top-left corner.
         if (settings_.infoInCorner && !dragging_) cornerInfo_ = point.x < 160 * scale && point.y < 120 * scale;
-        barVisible_ = settings_.showControls;
+        barVisible_ = settings_.showControls && !dragging_ && point.y > height - 110 * scale;
         syncVideoControls();
         SetTimer(hwnd_, kIdleTimer, kIdleDelayMs, nullptr);
         return;

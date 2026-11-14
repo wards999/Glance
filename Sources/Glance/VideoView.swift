@@ -404,9 +404,12 @@ final class VideoView: NSView {
         updateControls()
     }
 
-    /// Mouse moved: show the controls, then hide them (and in full screen the pointer) after a rest.
-    private func noteActivity() {
-        setControlsVisible(true)
+    /// Mouse moved: near the bottom (as over pictures), show the controls; away from it, hide them
+    /// unless they're in use. Either way, after a rest they hide, and in full screen the pointer.
+    private func noteActivity(at point: NSPoint) {
+        let fromBottom = isFlipped ? bounds.height - point.y : point.y
+        let inUse = scrubbing || draggingVolume || isPaused || (!controls.isHidden && controls.barRect.insetBy(dx: 0, dy: -8).contains(point))
+        setControlsVisible(fromBottom < 110 || inUse)
         hideTimer?.invalidate()
         hideTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             guard let self, self.isOpen else { return }
@@ -492,7 +495,7 @@ final class VideoView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        noteActivity()
+        noteActivity(at: point)
         let over = !controls.isHidden && controls.timelineHitRect.contains(point)
         videoTarget = nil  // the picture follows the pointer again
         // The keyframe first (a few milliseconds, so the picture keeps up with the mouse), then the
