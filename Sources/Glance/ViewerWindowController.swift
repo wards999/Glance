@@ -800,7 +800,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         // A video has its own bar (with Previous File and Next File); this one would cover it.
         setControlsVisible(settings.showControls && !showingVideo && pdfBoundary == 0 && point.y < 110)
         controlsHideTimer?.invalidate()
-        controlsHideTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+        controlsHideTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: false) { [weak self] _ in
             guard let self, let window = self.window else { return }
             let mouse = self.controlBar.convert(window.mouseLocationOutsideOfEventStream, from: nil)
             if self.controlBar.bounds.contains(mouse) { return }

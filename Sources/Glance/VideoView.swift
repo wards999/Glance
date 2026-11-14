@@ -411,7 +411,7 @@ final class VideoView: NSView {
         let inUse = scrubbing || draggingVolume || isPaused || (!controls.isHidden && controls.barRect.insetBy(dx: 0, dy: -8).contains(point))
         setControlsVisible(fromBottom < 110 || inUse)
         hideTimer?.invalidate()
-        hideTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+        hideTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: false) { [weak self] _ in
             guard let self, self.isOpen else { return }
             let mouse = self.convert(self.window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
             if self.scrubbing || self.draggingVolume || self.isPaused || self.controls.barRect.insetBy(dx: 0, dy: -8).contains(mouse) { return }
