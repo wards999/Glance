@@ -377,6 +377,9 @@ std::shared_ptr<Animation> Decoder::decodeAnimation(const std::wstring& path, si
 
         UINT w = 0, h = 0;
         converter->GetSize(&w, &h);
+        // Only the part over the canvas is drawn, so a frame claiming to be bigger (a damaged
+        // file: up to 65,535 x 65,535, which is 17 GB) ends the animation here.
+        if (size_t(w) * h * 4 > frameBytes) break;
         patch.resize(size_t(w) * h * 4);
         if (FAILED(converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(patch.size()), patch.data()))) break;
         if (disposal == 3) saved = canvas;  // "restore to previous" needs the canvas as it was
