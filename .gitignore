@@ -5,3 +5,4 @@ build/
 xcuserdata/
 .DS_Store
 windows/build/
+__pycache__/

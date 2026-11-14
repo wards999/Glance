@@ -37,7 +37,7 @@ Corresponding source:
 - FFmpeg and the other libraries, and how IINA builds them: <https://github.com/iina/iina> (see
   `other/download_libs.sh` and IINA's build documentation) and each library's own project.
 
-## mpv client API headers (`windows/third_party/mpv/`, `Sources/CMpv/include/mpv/`)
+## mpv client API headers (`Sources/CMpv/include/mpv/`, used by both versions)
 
 `client.h`, `render.h` and `render_gl.h` from mpv, under the ISC licence stated at the top of each
 file.

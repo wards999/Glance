@@ -2,8 +2,8 @@
 
 #include "Navigator.h"
 
-#include "../third_party/mpv/client.h"
-#include "../third_party/mpv/render.h"
+#include "../../Sources/CMpv/include/mpv/client.h"
+#include "../../Sources/CMpv/include/mpv/render.h"
 
 #include <commdlg.h>
 
