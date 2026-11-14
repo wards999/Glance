@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <new>
+#include <string>
 
 namespace Editing {
 
@@ -193,7 +194,15 @@ bool save(const Decoded& upright, const std::wstring& path, const GUID& containe
         }
         if (ok) {
             ComPtr<IWICMetadataQueryWriter> tags;
-            if (SUCCEEDED(frame->GetMetadataQueryWriter(tags.put()))) setOrientation(tags.get(), 1);
+            if (SUCCEEDED(frame->GetMetadataQueryWriter(tags.put()))) {
+                setOrientation(tags.get(), 1);
+                // The EXIF pixel size came from the original, so it's wrong after a crop (as on
+                // the Mac, drop it). Not every file has it; a failure here changes nothing.
+                const wchar_t* exif = container == GUID_ContainerFormatJpeg ? L"/app1/ifd/exif" : L"/ifd/exif";
+                for (const wchar_t* tag : {L"/{ushort=40962}", L"/{ushort=40963}"}) {
+                    tags->RemoveMetadataByName((std::wstring(exif) + tag).c_str());
+                }
+            }
         }
 
         ComPtr<IWICBitmap> bitmap;
